@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "app": {
+    "release_api": "https://api.github.com/repos/Jjunior-san/C2-VIDEODOWNLOADER/releases/latest",
+    "installer_asset": "C2VideoDownloaderSetup.exe",
+    "installer_url": "https://github.com/Jjunior-san/C2-VIDEODOWNLOADER/releases/latest/download/C2VideoDownloaderSetup.exe"
+  },
+  "dependencies": {
+    "yt_dlp": {
+      "enabled": true,
+      "channel": "nightly",
+      "bootstrap_url": "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.exe",
+      "update_interval_hours": 24
+    },
+    "deno": {
+      "enabled": true,
+      "release_api": "https://api.github.com/repos/denoland/deno/releases/latest",
+      "asset_name": "deno-x86_64-pc-windows-msvc.zip",
+      "bootstrap_url": "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip",
+      "update_interval_hours": 168
+    }
+  }
+}
