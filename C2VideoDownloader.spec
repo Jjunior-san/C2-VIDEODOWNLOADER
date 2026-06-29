@@ -14,7 +14,7 @@ hiddenimports = [
 ]
 
 a = Analysis(
-    ['youtube_downloader_app.py'],
+    ['c2_launcher.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,
