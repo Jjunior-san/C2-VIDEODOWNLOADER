@@ -1,0 +1,86 @@
+name: Build and publish Windows installer
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: c2-video-downloader-release
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Run tests
+        shell: powershell
+        run: |
+          python -m pip install pytest
+          python -m pytest -q
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build installer
+        shell: powershell
+        run: .\build_installer.ps1
+
+      - name: Read application version
+        id: version
+        shell: powershell
+        run: |
+          $version = python -c "from app_config import APP_VERSION; print(APP_VERSION)"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: C2VideoDownloader-${{ steps.version.outputs.version }}
+          path: |
+            installer/C2VideoDownloaderSetup.exe
+            installer/SHA256SUMS.txt
+
+      - name: Create or update GitHub Release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git fetch --tags --force
+          if (git rev-parse $env:TAG 2>$null) {
+            git tag -f $env:TAG $env:GITHUB_SHA
+            git push origin "refs/tags/$env:TAG" --force
+          } else {
+            git tag $env:TAG $env:GITHUB_SHA
+            git push origin "refs/tags/$env:TAG"
+          }
+
+          gh release view $env:TAG 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:TAG `
+              --title "C² Video Downloader $env:VERSION" `
+              --notes "Instalador automático para Windows 64 bits. Inclui atualização interna do aplicativo, yt-dlp nightly e Deno." `
+              --latest
+          }
+
+          gh release upload $env:TAG `
+            installer/C2VideoDownloaderSetup.exe `
+            installer/SHA256SUMS.txt `
+            --clobber
