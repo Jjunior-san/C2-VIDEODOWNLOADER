@@ -1,2 +1,2 @@
 imageio-ffmpeg>=0.6.0
-pyinstaller>=6.11
+pyinstaller>=6.21.0
