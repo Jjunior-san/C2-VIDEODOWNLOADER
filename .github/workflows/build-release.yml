@@ -63,24 +63,59 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          git fetch --tags --force
-          if (git rev-parse $env:TAG 2>$null) {
-            git tag -f $env:TAG $env:GITHUB_SHA
-            git push origin "refs/tags/$env:TAG" --force
-          } else {
-            git tag $env:TAG $env:GITHUB_SHA
-            git push origin "refs/tags/$env:TAG"
+          $ErrorActionPreference = "Stop"
+          if (Test-Path Variable:PSNativeCommandUseErrorActionPreference) {
+            $PSNativeCommandUseErrorActionPreference = $false
           }
 
-          gh release view $env:TAG 2>$null
+          git fetch --tags --force
           if ($LASTEXITCODE -ne 0) {
+            throw "Falha ao buscar as tags do repositório."
+          }
+
+          git show-ref --verify --quiet "refs/tags/$env:TAG"
+          $tagExists = ($LASTEXITCODE -eq 0)
+
+          if ($tagExists) {
+            git tag -f $env:TAG $env:GITHUB_SHA
+            if ($LASTEXITCODE -ne 0) {
+              throw "Falha ao atualizar a tag $env:TAG."
+            }
+            git push origin "refs/tags/$env:TAG" --force
+            if ($LASTEXITCODE -ne 0) {
+              throw "Falha ao publicar a tag atualizada $env:TAG."
+            }
+          }
+          else {
+            git tag $env:TAG $env:GITHUB_SHA
+            if ($LASTEXITCODE -ne 0) {
+              throw "Falha ao criar a tag $env:TAG."
+            }
+            git push origin "refs/tags/$env:TAG"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Falha ao publicar a tag $env:TAG."
+            }
+          }
+
+          gh release view $env:TAG --repo $env:GITHUB_REPOSITORY *> $null
+          $releaseExists = ($LASTEXITCODE -eq 0)
+
+          if (-not $releaseExists) {
             gh release create $env:TAG `
+              --repo $env:GITHUB_REPOSITORY `
               --title "C² Video Downloader $env:VERSION" `
               --notes "Instalador automático para Windows 64 bits. Inclui atualização interna do aplicativo, yt-dlp nightly e Deno." `
               --latest
+            if ($LASTEXITCODE -ne 0) {
+              throw "Falha ao criar o GitHub Release $env:TAG."
+            }
           }
 
           gh release upload $env:TAG `
             installer/C2VideoDownloaderSetup.exe `
             installer/SHA256SUMS.txt `
+            --repo $env:GITHUB_REPOSITORY `
             --clobber
+          if ($LASTEXITCODE -ne 0) {
+            throw "Falha ao enviar os arquivos para o GitHub Release $env:TAG."
+          }
