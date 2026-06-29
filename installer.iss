@@ -5,7 +5,7 @@
 
 #define MyAppName "C² - Video Downloader"
 #ifndef MyAppVersion
-#define MyAppVersion "1.1.3"
+#define MyAppVersion "1.1.4"
 #endif
 #define MyAppPublisher "C2 Sistemas"
 #define MyAppURL "https://github.com/Jjunior-san/C2-VIDEODOWNLOADER"
