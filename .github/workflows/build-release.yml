@@ -97,7 +97,7 @@ jobs:
             }
           }
 
-          gh release view $env:TAG --repo $env:GITHUB_REPOSITORY *> $null
+          cmd.exe /d /c "gh release view `"$env:TAG`" --repo `"$env:GITHUB_REPOSITORY`" >nul 2>&1"
           $releaseExists = ($LASTEXITCODE -eq 0)
 
           if (-not $releaseExists) {
