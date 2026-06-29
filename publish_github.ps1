@@ -1,8 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 # No PowerShell 7, comandos nativos que escrevem em STDERR podem ser
-# convertidos em erros do PowerShell. O script valida $LASTEXITCODE de forma
-# explicita, portanto desabilitamos esse comportamento durante a publicacao.
+# convertidos em erros do PowerShell. O script valida $LASTEXITCODE.
 $PreviousNativeErrorPreference = $null
 $HasNativeErrorPreference = Test-Path Variable:PSNativeCommandUseErrorActionPreference
 if ($HasNativeErrorPreference) {
@@ -12,12 +11,12 @@ if ($HasNativeErrorPreference) {
 
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Repository = "https://github.com/Jjunior-san/C2-VIDEODOWNLOADER.git"
+$ReleaseVersion = "1.1.3"
 
 function Invoke-Git {
     param(
         [Parameter(Mandatory = $true)]
         [string[]] $Arguments,
-
         [string] $FailureMessage = "O comando Git falhou."
     )
 
@@ -40,13 +39,11 @@ try {
         Invoke-Git -Arguments @("init") -FailureMessage "Nao foi possivel inicializar o repositorio."
     }
 
-    # Configuracao local do repositorio. Nao altera a configuracao global do Git.
     Invoke-Git -Arguments @("config", "user.name", "Jjunior-san") `
         -FailureMessage "Nao foi possivel configurar o nome do autor."
     Invoke-Git -Arguments @("config", "user.email", "jjunior.ssan@gmail.com") `
         -FailureMessage "Nao foi possivel configurar o e-mail do autor."
 
-    # Nao executamos 'git remote get-url origin' antes de confirmar que o remoto existe.
     $RemoteNames = @(& git.exe remote)
     if ($LASTEXITCODE -ne 0) {
         throw "Nao foi possivel consultar os remotos do repositorio."
@@ -71,7 +68,10 @@ try {
         }
     }
 
-    Write-Host "=== Criando commit ===" -ForegroundColor Cyan
+    Invoke-Git -Arguments @("branch", "-M", "main") `
+        -FailureMessage "Nao foi possivel definir a branch main."
+
+    Write-Host "=== Registrando a versao local ===" -ForegroundColor Cyan
 
     Invoke-Git -Arguments @("add", "--all") `
         -FailureMessage "Nao foi possivel adicionar os arquivos ao Git."
@@ -82,15 +82,48 @@ try {
     }
 
     if ($StatusLines.Count -gt 0) {
-        Invoke-Git -Arguments @("commit", "-m", "release: C2 Video Downloader 1.1.3") `
-            -FailureMessage "Nao foi possivel criar o commit inicial."
+        Invoke-Git -Arguments @("commit", "-m", "release: C2 Video Downloader $ReleaseVersion") `
+            -FailureMessage "Nao foi possivel criar o commit da versao."
     }
     else {
-        Write-Host "Nenhuma alteracao nova para registrar."
+        Write-Host "A versao local ja esta registrada em um commit."
     }
 
-    Invoke-Git -Arguments @("branch", "-M", "main") `
-        -FailureMessage "Nao foi possivel definir a branch main."
+    Write-Host "=== Sincronizando o historico remoto ===" -ForegroundColor Cyan
+
+    & git.exe fetch origin main
+    if ($LASTEXITCODE -ne 0) {
+        throw "Nao foi possivel obter a branch main do GitHub. Verifique a conexao e a autenticacao."
+    }
+
+    # Se origin/main ainda nao for ancestral da versao local, o remoto possui
+    # commits ausentes nesta pasta. Criamos um backup e um merge que preserva
+    # integralmente os arquivos locais da versao nova, sem apagar o historico remoto.
+    & git.exe merge-base --is-ancestor origin/main main
+    $AncestorResult = $LASTEXITCODE
+
+    if ($AncestorResult -eq 1) {
+        $BackupBranch = "backup-release-$ReleaseVersion-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        Write-Host "Criando backup local: $BackupBranch"
+        Invoke-Git -Arguments @("branch", $BackupBranch) `
+            -FailureMessage "Nao foi possivel criar a branch de backup."
+
+        Write-Host "Integrando o historico remoto e preservando os arquivos da versao $ReleaseVersion..."
+        Invoke-Git -Arguments @(
+            "merge",
+            "--strategy=ours",
+            "--allow-unrelated-histories",
+            "-m",
+            "chore: synchronize remote history before release $ReleaseVersion",
+            "origin/main"
+        ) -FailureMessage "Nao foi possivel integrar o historico remoto."
+    }
+    elseif ($AncestorResult -ne 0) {
+        throw "Nao foi possivel comparar o historico local com origin/main."
+    }
+    else {
+        Write-Host "O historico remoto ja esta integrado."
+    }
 
     Write-Host "=== Publicando no GitHub ===" -ForegroundColor Cyan
     & git.exe push -u origin main
@@ -98,7 +131,7 @@ try {
         throw @"
 Nao foi possivel enviar os arquivos ao GitHub.
 
-Verifique se sua conta esta autenticada no Git Credential Manager. Como alternativa, execute:
+O script ja sincronizou o historico. Verifique a conexao e a autenticacao:
     gh auth login --web
 
 Depois execute novamente:
