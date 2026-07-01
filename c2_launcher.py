@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+from pathlib import Path
 from tkinter import PhotoImage, messagebox
 from tkinter import ttk
 
 import youtube_downloader_app as app
 from app_config import APP_NAME, APP_VERSION
+from jw_org_downloader import (
+    convert_to_m4a,
+    download_item,
+    is_jw_category_url,
+    resolve_category_items,
+)
 
 
 _original_maintenance_done = app.DownloadApp._maintenance_done
@@ -101,9 +108,107 @@ def _maintenance_done_with_feedback(self, payload: object) -> None:
     self._c2_force_check = False
 
 
+def _download_with_jw_categories(
+    self,
+    urls: list[str],
+    folder: Path,
+    format_choice: str,
+) -> None:
+    """Processa categorias do JW.ORG e mantém o fluxo padrão para outras URLs."""
+    failures = 0
+    attempted = 0
+    try:
+        status = self.dependencies.ensure(self.queue_log, force=False)
+        self.dependency_status = status
+
+        for source_index, url in enumerate(urls, start=1):
+            self.queue_log(f"[{source_index}/{len(urls)}] Processando: {url}")
+
+            if is_jw_category_url(url):
+                try:
+                    items = resolve_category_items(
+                        url,
+                        format_choice,
+                        include_subcategories=bool(self.playlist_var.get()),
+                        logger=self.queue_log,
+                    )
+                    self.queue_log(
+                        f"JW.ORG: {len(items)} mídia(s) encontrada(s) na categoria."
+                    )
+                except Exception as exc:
+                    failures += 1
+                    attempted += 1
+                    self.queue_log(f"Erro ao consultar a categoria do JW.ORG: {exc}")
+                    continue
+
+                for item_index, item in enumerate(items, start=1):
+                    attempted += 1
+                    try:
+                        output_file = download_item(
+                            item,
+                            folder,
+                            item_index,
+                            len(items),
+                            logger=self.queue_log,
+                        )
+                        if format_choice == "Apenas áudio (M4A)":
+                            convert_to_m4a(
+                                output_file,
+                                app.FFMPEG_PATH,
+                                logger=self.queue_log,
+                            )
+                        else:
+                            self._ensure_player_compatibility(output_file)
+                    except Exception as exc:
+                        failures += 1
+                        self.queue_log(f"Erro no item '{item.title}': {exc}")
+                continue
+
+            attempted += 1
+            command = self._build_command(
+                status.yt_dlp_path,
+                folder,
+                format_choice,
+                url,
+            )
+            return_code, output_files = self._run_downloader(command)
+            if return_code != 0:
+                failures += 1
+                continue
+
+            if format_choice != "Apenas áudio (M4A)":
+                conversion_failed = False
+                for output_file in output_files:
+                    try:
+                        self._ensure_player_compatibility(output_file)
+                    except Exception as exc:
+                        conversion_failed = True
+                        self.queue_log(
+                            f"Erro ao tornar o vídeo compatível ({output_file.name}): {exc}"
+                        )
+                if conversion_failed:
+                    failures += 1
+
+        if failures:
+            self.queue_log(
+                f"Concluído com falha em {failures} de {attempted} item(ns)."
+            )
+        else:
+            self.queue_log("Concluído com sucesso.")
+    except Exception as exc:
+        self.queue_log(f"Erro: {exc}")
+    finally:
+        self.event_queue.put(("download_finished", None))
+
+
+app.SUPPORTED_HINT = (
+    "YouTube, Instagram, Facebook, TikTok, Vimeo, X/Twitter, Twitch, "
+    "Dailymotion, categorias de vídeos do JW.ORG e outros players suportados."
+)
 app.DownloadApp._build_site_logo = _build_fixed_site_logo
 app.DownloadApp._maintenance_worker = _maintenance_worker_with_feedback
 app.DownloadApp._maintenance_done = _maintenance_done_with_feedback
+app.DownloadApp._download = _download_with_jw_categories
 
 
 if __name__ == "__main__":
