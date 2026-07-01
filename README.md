@@ -103,6 +103,33 @@ A partir da versão **1.1.2**, o formato padrão é **Melhor MP4 compatível**. 
 
 A conversão somente acontece quando o arquivo não está em um perfil amplamente compatível. Arquivos H.264/AAC adequados não são recodificados.
 
+## Categorias de vídeos do JW.ORG
+
+A partir da versão **1.2.0**, o aplicativo reconhece endereços de categorias em português como:
+
+```text
+https://www.jw.org/pt/biblioteca/videos/#pt/categories/StudioMonthlyPrograms
+```
+
+Para baixar a lista:
+
+1. cole o endereço da categoria no campo de URLs;
+2. mantenha **Baixar playlist/álbum** marcado para também percorrer subcategorias;
+3. escolha a qualidade desejada;
+4. selecione a pasta e clique em **Baixar**.
+
+O suporte especial ao JW.ORG:
+
+- consulta o catálogo público oficial de mídia;
+- aceita **Melhor qualidade**, **Melhor MP4 compatível**, 1080p, 720p, 480p e 360p;
+- pode gerar áudio M4A;
+- usa títulos legíveis e numeração sequencial nos arquivos;
+- ignora arquivos completos que já estejam na pasta;
+- tenta novamente downloads interrompidos ou com tamanho incorreto;
+- remove mídias duplicadas encontradas em subcategorias.
+
+Atualmente, a detecção automática de categorias está configurada para endereços em português do Brasil. Links individuais do JW.ORG continuam sendo processados pelo fluxo normal do `yt-dlp`.
+
 ## Preferências do usuário
 
 A última pasta de download, o formato escolhido, a opção de playlist/álbum e o navegador de cookies são gravados em:
@@ -113,9 +140,10 @@ A última pasta de download, o formato escolhido, a opção de playlist/álbum e
 
 A pasta selecionada é salva imediatamente ao usar **Escolher**, novamente ao iniciar um download e ao fechar o aplicativo.
 
-## Versão 1.1.3
+## Versão 1.2.0
 
-- usa no cabeçalho a identidade visual do site **c2sistemas.com**;
-- corrige a imagem que ficava congelada em `C_`;
-- reproduz no aplicativo o efeito de digitação de **SISTEMAS**, com cursor e slogan;
-- mantém as correções de MP4 H.264/AAC e memorização da última pasta.
+- adiciona download em lote de categorias de vídeos do JW.ORG em português;
+- percorre subcategorias quando a opção de playlist/álbum está ativa;
+- seleciona automaticamente a versão correspondente à qualidade escolhida;
+- mantém o fluxo atual para YouTube, Instagram, Facebook, TikTok e demais sites;
+- inclui testes automatizados de reconhecimento de URL e seleção de resolução.
