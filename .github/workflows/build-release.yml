@@ -1,5 +1,6 @@
 name: Build and publish Windows installer
 
+# Repositório público: publicação automática da versão estável.
 on:
   push:
     branches:
