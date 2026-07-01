@@ -2,8 +2,9 @@ name: Build and publish Windows installer
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
+    branches:
+      - main
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -14,39 +15,42 @@ concurrency:
 
 jobs:
   build:
+    name: Build Windows installer
     runs-on: windows-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
           cache: pip
 
-      - name: Run tests
-        shell: powershell
+      - name: Run automated tests
+        shell: pwsh
         run: |
-          python -m pip install pytest
+          python -m pip install --upgrade pip pytest
           python -m pytest -q
 
       - name: Install Inno Setup
-        shell: powershell
+        shell: pwsh
         run: choco install innosetup --yes --no-progress
 
-      - name: Build installer
-        shell: powershell
+      - name: Build application and installer
+        shell: pwsh
         run: .\build_installer.ps1
 
       - name: Read application version
         id: version
-        shell: powershell
+        shell: pwsh
         run: |
           $version = python -c "from app_config import APP_VERSION; print(APP_VERSION)"
-          "version=$version" >> $env:GITHUB_OUTPUT
-          "tag=v$version" >> $env:GITHUB_OUTPUT
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -55,59 +59,29 @@ jobs:
           path: |
             installer/C2VideoDownloaderSetup.exe
             installer/SHA256SUMS.txt
+          if-no-files-found: error
 
       - name: Create or update GitHub Release
-        shell: powershell
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           $ErrorActionPreference = "Stop"
-          if (Test-Path Variable:PSNativeCommandUseErrorActionPreference) {
-            $PSNativeCommandUseErrorActionPreference = $false
-          }
 
-          git fetch --tags --force
-          if ($LASTEXITCODE -ne 0) {
-            throw "Falha ao buscar as tags do repositório."
-          }
-
-          git show-ref --verify --quiet "refs/tags/$env:TAG"
-          $tagExists = ($LASTEXITCODE -eq 0)
-
-          if ($tagExists) {
-            git tag -f $env:TAG $env:GITHUB_SHA
-            if ($LASTEXITCODE -ne 0) {
-              throw "Falha ao atualizar a tag $env:TAG."
-            }
-            git push origin "refs/tags/$env:TAG" --force
-            if ($LASTEXITCODE -ne 0) {
-              throw "Falha ao publicar a tag atualizada $env:TAG."
-            }
-          }
-          else {
-            git tag $env:TAG $env:GITHUB_SHA
-            if ($LASTEXITCODE -ne 0) {
-              throw "Falha ao criar a tag $env:TAG."
-            }
-            git push origin "refs/tags/$env:TAG"
-            if ($LASTEXITCODE -ne 0) {
-              throw "Falha ao publicar a tag $env:TAG."
-            }
-          }
-
-          cmd.exe /d /c "gh release view `"$env:TAG`" --repo `"$env:GITHUB_REPOSITORY`" >nul 2>&1"
+          gh release view $env:TAG --repo $env:GITHUB_REPOSITORY *> $null
           $releaseExists = ($LASTEXITCODE -eq 0)
 
           if (-not $releaseExists) {
             gh release create $env:TAG `
               --repo $env:GITHUB_REPOSITORY `
+              --target $env:GITHUB_SHA `
               --title "C² Video Downloader $env:VERSION" `
-              --notes "Instalador automático para Windows 64 bits. Inclui atualização interna do aplicativo, yt-dlp nightly e Deno." `
+              --notes "Instalador automático para Windows 64 bits. Inclui download em lote de categorias do JW.ORG, atualização interna do aplicativo, yt-dlp nightly e Deno." `
               --latest
             if ($LASTEXITCODE -ne 0) {
-              throw "Falha ao criar o GitHub Release $env:TAG."
+              throw "Falha ao criar a Release $env:TAG."
             }
           }
 
@@ -117,5 +91,5 @@ jobs:
             --repo $env:GITHUB_REPOSITORY `
             --clobber
           if ($LASTEXITCODE -ne 0) {
-            throw "Falha ao enviar os arquivos para o GitHub Release $env:TAG."
+            throw "Falha ao enviar os arquivos para a Release $env:TAG."
           }
