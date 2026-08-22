@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import queue
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from tkinter import BooleanVar, Canvas, END, PhotoImage, StringVar, Tk, filedialog, messagebox
 from tkinter import ttk
@@ -29,6 +31,14 @@ except (ImportError, RuntimeError):
 
 SETTINGS_FILE = DATA_DIR / "settings.json"
 OUTPUT_MARKER = "__C2_OUTPUT__:"
+PROGRESS_MARKER = "__C2_PROGRESS__:"
+PROGRESS_TEMPLATE = (
+    "download:"
+    f"{PROGRESS_MARKER}"
+    "%(progress.downloaded_bytes)s|%(progress.total_bytes)s|"
+    "%(progress.total_bytes_estimate)s|%(progress.speed)s|"
+    "%(progress.eta)s|%(progress._percent_str)s"
+)
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 DOWNLOAD_FORMATS = [
     "Melhor MP4 compatível",
@@ -45,6 +55,69 @@ SUPPORTED_HINT = (
     "YouTube, Instagram, Facebook, TikTok, Vimeo, X/Twitter, Twitch, "
     "Dailymotion e outros players suportados pelo yt-dlp."
 )
+
+
+def _progress_number(value: str) -> float | None:
+    try:
+        number = float(value.strip())
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and number >= 0 else None
+
+
+def parse_ytdlp_progress(line: str, elapsed: float) -> dict[str, object] | None:
+    if not line.startswith(PROGRESS_MARKER):
+        return None
+    fields = line[len(PROGRESS_MARKER):].split("|", 5)
+    if len(fields) != 6:
+        return None
+
+    downloaded = _progress_number(fields[0]) or 0.0
+    exact_total = _progress_number(fields[1])
+    estimated_total = _progress_number(fields[2])
+    total = exact_total or estimated_total
+    speed = _progress_number(fields[3])
+    eta = _progress_number(fields[4])
+    percent_text = fields[5].strip().rstrip("%").strip()
+    percent = _progress_number(percent_text)
+    if percent is None and total:
+        percent = downloaded * 100 / total
+    percent = max(0.0, min(100.0, percent or 0.0))
+
+    return {
+        "downloaded": downloaded,
+        "total": total,
+        "total_is_estimate": exact_total is None and estimated_total is not None,
+        "speed": speed,
+        "average_speed": downloaded / max(elapsed, 0.001),
+        "eta": eta,
+        "percent": percent,
+    }
+
+
+def format_bytes(value: float | int | None) -> str:
+    if value is None:
+        return "desconhecido"
+    size = max(0.0, float(value))
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            decimals = 0 if unit == "B" else 1
+            return f"{size:.{decimals}f} {unit}".replace(".", ",")
+        size /= 1024
+    return f"{size:.1f} TB".replace(".", ",")
+
+
+def format_duration(value: float | int | None) -> str:
+    if value is None or not math.isfinite(float(value)) or float(value) < 0:
+        return "calculando"
+    seconds = int(round(float(value)))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours:d}h {minutes:02d}min"
+    if minutes:
+        return f"{minutes:d}min {seconds:02d}s"
+    return f"{seconds:d}s"
 
 
 def resource_path(relative_path: str) -> Path:
@@ -102,6 +175,10 @@ class DownloadApp:
         self.cookies_browser_var = StringVar(value=saved_browser)
         self.cookies_file_var = StringVar()
         self.update_status_var = StringVar(value="Componentes ainda não verificados")
+        self.download_item_var = StringVar(value="Nenhum download em andamento")
+        self.download_metrics_var = StringVar(
+            value="Progresso, velocidade, tamanho e tempo restante aparecerão aqui."
+        )
 
         self.busy = False
         self.maintenance_busy = False
@@ -119,6 +196,10 @@ class DownloadApp:
         self.logo_blink_count = 0
         self.available_update: AppUpdate | None = None
         self.dependency_status: DependencyStatus | None = None
+        self.download_job_started_at = 0.0
+        self.download_item_started_at = 0.0
+        self.download_item_index = 1
+        self.download_item_total = 1
 
         self.dependencies = DependencyManager()
         self.app_updater = ApplicationUpdater(self.dependencies)
@@ -213,8 +294,19 @@ class DownloadApp:
 
         ttk.Label(frame, textvariable=self.update_status_var, foreground="#555555").pack(anchor="w", pady=(0, 8))
 
-        self.progress = ttk.Progressbar(frame, mode="indeterminate")
-        self.progress.pack(fill="x", pady=(0, 12))
+        ttk.Label(
+            frame,
+            textvariable=self.download_item_var,
+            font=("Segoe UI", 9, "bold"),
+        ).pack(anchor="w", pady=(0, 4))
+        self.progress = ttk.Progressbar(frame, mode="determinate", maximum=100, value=0)
+        self.progress.pack(fill="x", pady=(0, 4))
+        ttk.Label(
+            frame,
+            textvariable=self.download_metrics_var,
+            foreground="#3f4f5f",
+            wraplength=820,
+        ).pack(anchor="w", pady=(0, 12))
 
         ttk.Label(frame, text="Log").pack(anchor="w")
         log_frame = ttk.Frame(frame)
@@ -390,6 +482,111 @@ class DownloadApp:
     def queue_log(self, text: str) -> None:
         self.log_queue.put(text)
 
+    def _set_indeterminate_progress(self, label: str) -> None:
+        self.progress.stop()
+        self.progress.configure(mode="indeterminate", maximum=100, value=0)
+        self.progress.start(10)
+        self.download_item_var.set(label)
+        self.download_metrics_var.set("Aguarde enquanto a operação é preparada...")
+
+    def _begin_download_item(self, index: int, total: int, label: str) -> None:
+        self.download_item_index = max(1, int(index))
+        self.download_item_total = max(self.download_item_index, int(total))
+        self.download_item_started_at = time.monotonic()
+        self._last_media_progress_emit = 0.0
+        self.event_queue.put(
+            (
+                "media_context",
+                {
+                    "index": self.download_item_index,
+                    "total": self.download_item_total,
+                    "label": label,
+                },
+            )
+        )
+
+    def _emit_media_progress(self, payload: dict[str, object]) -> None:
+        now = time.monotonic()
+        percent = float(payload.get("percent") or 0.0)
+        if percent < 100 and now - getattr(self, "_last_media_progress_emit", 0.0) < 0.2:
+            return
+        self._last_media_progress_emit = now
+        enriched = dict(payload)
+        enriched["index"] = self.download_item_index
+        enriched["item_total"] = self.download_item_total
+        self.event_queue.put(("media_progress", enriched))
+
+    def _report_direct_progress(self, downloaded: int, total: int | None) -> None:
+        elapsed = max(0.001, time.monotonic() - self.download_item_started_at)
+        percent = downloaded * 100 / total if total else 0.0
+        average_speed = downloaded / elapsed
+        eta = (total - downloaded) / average_speed if total and average_speed > 0 else None
+        self._emit_media_progress(
+            {
+                "downloaded": float(downloaded),
+                "total": float(total) if total else None,
+                "total_is_estimate": False,
+                "speed": average_speed,
+                "average_speed": average_speed,
+                "eta": eta,
+                "percent": percent,
+            }
+        )
+
+    def _handle_media_context(self, payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        index = max(1, int(payload.get("index") or 1))
+        total = max(index, int(payload.get("total") or index))
+        label = str(payload.get("label") or "Mídia")
+        self.progress.stop()
+        self.progress.configure(mode="determinate", maximum=100)
+        self.progress["value"] = (index - 1) * 100 / total
+        self.download_item_var.set(f"Item {index}/{total} — {label}")
+        self.download_metrics_var.set("Lendo tamanho e preparando o fluxo de mídia...")
+
+    def _handle_media_progress(self, payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        index = max(1, int(payload.get("index") or 1))
+        item_total = max(index, int(payload.get("item_total") or index))
+        percent = max(0.0, min(100.0, float(payload.get("percent") or 0.0)))
+        overall = ((index - 1) + percent / 100) * 100 / item_total
+        self.progress.stop()
+        self.progress.configure(mode="determinate", maximum=100)
+        self.progress["value"] = overall
+
+        downloaded = float(payload.get("downloaded") or 0.0)
+        total_value = payload.get("total")
+        total = float(total_value) if total_value is not None else None
+        average_speed = payload.get("average_speed")
+        average_speed_value = float(average_speed) if average_speed is not None else None
+        current_speed = payload.get("speed")
+        current_speed_value = (
+            float(current_speed) if current_speed is not None else average_speed_value
+        )
+        file_eta_value = payload.get("eta")
+        file_eta = float(file_eta_value) if file_eta_value is not None else None
+        if file_eta is None and total and average_speed_value and average_speed_value > 0:
+            file_eta = max(0.0, total - downloaded) / average_speed_value
+
+        job_eta = None
+        elapsed_job = time.monotonic() - self.download_job_started_at
+        if self.download_job_started_at and overall > 0.01:
+            job_eta = elapsed_job * (100 - overall) / overall
+
+        total_prefix = "~" if payload.get("total_is_estimate") else ""
+        metrics = [
+            f"arquivo {percent:.1f}%".replace(".", ","),
+            f"trabalho {overall:.1f}%".replace(".", ","),
+            f"{format_bytes(downloaded)} / {total_prefix}{format_bytes(total)}",
+            f"atual {format_bytes(current_speed_value)}/s",
+            f"média {format_bytes(average_speed_value)}/s",
+            f"arquivo {format_duration(file_eta)}",
+            f"trabalho ~{format_duration(job_eta)}",
+        ]
+        self.download_metrics_var.set("  •  ".join(metrics))
+
     def _poll_queues(self) -> None:
         try:
             while True:
@@ -411,6 +608,19 @@ class DownloadApp:
                     if total:
                         percentage = received * 100 / total
                         self.update_status_var.set(f"Baixando atualização: {percentage:.0f}%")
+                        self.progress.stop()
+                        self.progress.configure(mode="determinate", maximum=100)
+                        self.progress["value"] = percentage
+                        self.download_item_var.set("Atualização do aplicativo")
+                        self.download_metrics_var.set(
+                            f"{percentage:.1f}%  •  {format_bytes(received)} / {format_bytes(total)}".replace(
+                                ".", ","
+                            )
+                        )
+                elif event == "media_context":
+                    self._handle_media_context(payload)
+                elif event == "media_progress":
+                    self._handle_media_progress(payload)
                 elif event == "application_installer_ready":
                     self._install_application_update(Path(str(payload)))
                 elif event == "download_finished":
@@ -431,7 +641,8 @@ class DownloadApp:
         self.maintenance_busy = True
         self.update_button.configure(state="disabled")
         self.update_status_var.set("Verificando componentes e atualizações...")
-        self.progress.start(10)
+        if not self.busy:
+            self._set_indeterminate_progress("Verificando componentes e atualizações")
         threading.Thread(target=self._maintenance_worker, args=(force,), daemon=True).start()
 
     def _maintenance_worker(self, force: bool) -> None:
@@ -451,6 +662,11 @@ class DownloadApp:
         self.maintenance_busy = False
         if not self.busy:
             self.progress.stop()
+            self.progress.configure(mode="determinate", value=0)
+            self.download_item_var.set("Nenhum download em andamento")
+            self.download_metrics_var.set(
+                "Progresso, velocidade, tamanho e tempo restante aparecerão aqui."
+            )
         self.update_button.configure(state="normal")
         if isinstance(payload, DependencyStatus):
             self.dependency_status = payload
@@ -462,6 +678,9 @@ class DownloadApp:
         self.maintenance_busy = False
         if not self.busy:
             self.progress.stop()
+            self.progress.configure(mode="determinate", value=0)
+            self.download_item_var.set("Falha ao verificar componentes")
+            self.download_metrics_var.set(message)
         self.update_button.configure(state="normal")
         self.update_status_var.set("Falha na preparação dos componentes")
         self.queue_log(f"Erro na atualização de componentes: {message}")
@@ -483,7 +702,10 @@ class DownloadApp:
 
     def _download_application_update(self, update: AppUpdate) -> None:
         self.update_button.configure(state="disabled")
-        self.progress.start(10)
+        self.progress.stop()
+        self.progress.configure(mode="determinate", maximum=100, value=0)
+        self.download_item_var.set("Atualização do aplicativo")
+        self.download_metrics_var.set("Preparando o download do instalador...")
         self.update_status_var.set(f"Baixando versão {update.version}...")
 
         def worker() -> None:
@@ -530,7 +752,11 @@ class DownloadApp:
         self._save_preferences()
         self.busy = True
         self.download_button.configure(state="disabled")
-        self.progress.start(10)
+        self.download_job_started_at = time.monotonic()
+        self.progress.stop()
+        self.progress.configure(mode="determinate", maximum=100, value=0)
+        self.download_item_var.set("Preparando downloads")
+        self.download_metrics_var.set("Calculando informações da fila...")
         format_choice = self.resolution_var.get()
         self.queue_log(f"Iniciando {len(urls)} download(s) em: {folder} ({format_choice})")
         threading.Thread(target=self._download, args=(urls, folder, format_choice), daemon=True).start()
@@ -546,6 +772,7 @@ class DownloadApp:
             self.dependency_status = status
             for index, url in enumerate(urls, start=1):
                 self.queue_log(f"[{index}/{len(urls)}] Processando: {url}")
+                self._begin_download_item(index, len(urls), url)
                 command = self._build_command(status.yt_dlp_path, folder, format_choice, url)
                 return_code, output_files = self._run_downloader(command)
                 if return_code != 0:
@@ -612,6 +839,8 @@ class DownloadApp:
             str(engine),
             "--newline",
             "--no-color",
+            "--progress-template",
+            PROGRESS_TEMPLATE,
             "--encoding",
             "utf-8",
             "--windows-filenames",
@@ -654,6 +883,7 @@ class DownloadApp:
 
     def _run_downloader(self, command: list[str]) -> tuple[int, list[Path]]:
         output_files: list[Path] = []
+        progress_started_at: float | None = None
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
@@ -673,6 +903,19 @@ class DownloadApp:
                 output_path = cleaned[len(OUTPUT_MARKER):].strip()
                 if output_path:
                     output_files.append(Path(output_path))
+                continue
+            if cleaned.startswith(PROGRESS_MARKER) and progress_started_at is None:
+                progress_started_at = time.monotonic()
+            progress = parse_ytdlp_progress(
+                cleaned,
+                elapsed=(
+                    time.monotonic() - progress_started_at
+                    if progress_started_at is not None
+                    else 0.0
+                ),
+            )
+            if progress is not None:
+                self._emit_media_progress(progress)
                 continue
             self.queue_log(cleaned)
         return process.wait(), output_files
@@ -778,8 +1021,12 @@ class DownloadApp:
 
     def _finish_download(self) -> None:
         self.busy = False
-        if not self.maintenance_busy:
-            self.progress.stop()
+        self.progress.stop()
+        self.progress.configure(mode="determinate", maximum=100, value=100)
+        self.download_item_var.set("Trabalho de download finalizado")
+        self.download_metrics_var.set(
+            f"100,0%  •  tempo total {format_duration(time.monotonic() - self.download_job_started_at)}"
+        )
         self.download_button.configure(state="normal")
 
 

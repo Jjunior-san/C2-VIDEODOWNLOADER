@@ -132,7 +132,11 @@ def _download_with_jw_categories(
             download_url: str,
             filename_template: str | None = None,
             include_cookies: bool = True,
+            item_index: int = 1,
+            item_total: int = 1,
+            item_label: str = "Mídia",
         ) -> bool:
+            self._begin_download_item(item_index, item_total, item_label)
             command = self._build_command(
                 status.yt_dlp_path,
                 folder,
@@ -181,12 +185,14 @@ def _download_with_jw_categories(
                 for item_index, item in enumerate(items, start=1):
                     attempted += 1
                     try:
+                        self._begin_download_item(item_index, len(items), item.title)
                         output_file = download_item(
                             item,
                             folder,
                             item_index,
                             len(items),
                             logger=self.queue_log,
+                            progress=self._report_direct_progress,
                         )
                         if format_choice == "Apenas áudio (M4A)":
                             convert_to_m4a(
@@ -240,6 +246,9 @@ def _download_with_jw_categories(
                             video.content_url,
                             filename_template,
                             include_cookies=False,
+                            item_index=episode_index,
+                            item_total=len(episode_urls),
+                            item_label=video.title,
                         ):
                             failures += 1
                     except Exception as exc:
@@ -253,6 +262,7 @@ def _download_with_jw_categories(
             download_url = url
             filename_template = None
             include_cookies = True
+            item_label = url
             if is_kanald_url(url):
                 try:
                     self.queue_log("Kanal D: identificando a fonte oficial do vídeo...")
@@ -260,6 +270,7 @@ def _download_with_jw_categories(
                     download_url = video.content_url
                     filename_template = kanald_output_template(video)
                     include_cookies = False
+                    item_label = video.title
                     self.queue_log(f"Kanal D: vídeo encontrado — {video.title}.")
                 except Exception as exc:
                     failures += 1
@@ -270,6 +281,9 @@ def _download_with_jw_categories(
                 download_url,
                 filename_template,
                 include_cookies=include_cookies,
+                item_index=source_index,
+                item_total=len(urls),
+                item_label=item_label,
             ):
                 failures += 1
 

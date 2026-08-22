@@ -184,3 +184,11 @@ A pasta selecionada é salva imediatamente ao usar **Escolher**, novamente ao in
 - numera os episódios na ordem apresentada pela página;
 - não tenta copiar cookies do Chrome para fontes públicas do Kanal D;
 - mantém cookies ativos para os demais sites que precisem de autenticação.
+
+## Versão 1.3.2
+
+- troca a animação contínua por progresso percentual durante os downloads;
+- mostra tamanho recebido e total estimado do arquivo atual;
+- exibe velocidade instantânea, velocidade média e ETA do arquivo;
+- calcula a porcentagem e a previsão de término do trabalho completo;
+- atualiza a estimativa global conforme cada item da playlist avança.

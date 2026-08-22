@@ -122,6 +122,8 @@ class KanalDCommandTests(unittest.TestCase):
         )
         self.assertNotIn("--cookies-from-browser", command)
         self.assertNotIn("--cookies", command)
+        self.assertIn("--progress-template", command)
+        self.assertTrue(any("__C2_PROGRESS__" in part for part in command))
 
 
 if __name__ == "__main__":

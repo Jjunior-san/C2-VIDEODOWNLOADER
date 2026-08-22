@@ -28,7 +28,7 @@ API_URLS = (
     "?detailed=1&clientType=www",
 )
 MAX_JSON_BYTES = 32 * 1024 * 1024
-USER_AGENT = "C2-Video-Downloader/1.3.1 (+https://c2sistemas.com)"
+USER_AGENT = "C2-Video-Downloader/1.3.2 (+https://c2sistemas.com)"
 VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".webm"}
 AUDIO_EXTENSIONS = {".m4a", ".mp3", ".aac", ".opus", ".ogg"}
 
@@ -368,6 +368,7 @@ def download_item(
     index: int,
     total: int,
     logger: Callable[[str], None] | None = None,
+    progress: Callable[[int, int | None], None] | None = None,
     retries: int = 3,
 ) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
@@ -384,6 +385,9 @@ def download_item(
         if not item.filesize or destination.stat().st_size == item.filesize:
             if logger:
                 logger(f"JW.ORG [{index}/{total}]: já existe, ignorando {destination.name}")
+            if progress:
+                existing_size = destination.stat().st_size
+                progress(existing_size, item.filesize or existing_size)
             return destination
 
     last_error: Exception | None = None
@@ -405,11 +409,18 @@ def download_item(
                 },
             )
             with urlopen(request, timeout=120) as response, temporary.open("wb") as output:
+                expected_size = item.filesize or _positive_int(
+                    response.headers.get("Content-Length")
+                )
+                received = 0
                 while True:
                     chunk = response.read(1024 * 1024)
                     if not chunk:
                         break
                     output.write(chunk)
+                    received += len(chunk)
+                    if progress:
+                        progress(received, expected_size)
 
             if not temporary.exists() or temporary.stat().st_size == 0:
                 raise JWOrgError("o servidor retornou um arquivo vazio")
