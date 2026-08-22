@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 KANALD_HOSTS = {"kanald.com.tr", "www.kanald.com.tr"}
@@ -13,7 +13,7 @@ MAX_HTML_BYTES = 8 * 1024 * 1024
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36 C2-Video-Downloader/1.3"
+    "Chrome/131.0.0.0 Safari/537.36 C2-Video-Downloader/1.3.1"
 )
 MEDIA_ID_PATTERN = re.compile(
     r'(?:data-id|data-tiak-reference-id)=["\'](?P<id>[0-9a-f]{24})["\']'
@@ -37,6 +37,12 @@ class KanalDVideo:
     title: str
     media_id: str
     content_url: str
+
+
+@dataclass(frozen=True)
+class KanalDCollection:
+    source_url: str
+    episode_urls: tuple[str, ...]
 
 
 class _JsonLdParser(HTMLParser):
@@ -65,12 +71,33 @@ class _JsonLdParser(HTMLParser):
             self._parts = []
 
 
+class _EpisodeLinkParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.hrefs: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "a":
+            return
+        attributes = {name.lower(): (value or "") for name, value in attrs}
+        href = attributes.get("href", "").strip()
+        if href:
+            self.hrefs.append(href)
+
+
 def is_kanald_url(url: str) -> bool:
     parsed = urlparse(url.strip())
     return (
         parsed.scheme in {"http", "https"}
         and (parsed.hostname or "").lower() in KANALD_HOSTS
     )
+
+
+def is_kanald_collection_url(url: str) -> bool:
+    if not is_kanald_url(url):
+        return False
+    path = urlparse(url.strip()).path.rstrip("/").lower()
+    return path.endswith("/bolumler")
 
 
 def _iter_video_objects(value: object):
@@ -108,6 +135,40 @@ def output_template(video: KanalDVideo) -> str:
     title = _safe_filename_part(video.title, 180).replace("%", "%%")
     media_id = _safe_filename_part(video.media_id, 60).replace("%", "%%")
     return f"{title} [{media_id}].%(ext)s"
+
+
+def parse_kanald_collection(page_url: str, html: str) -> KanalDCollection:
+    if not is_kanald_collection_url(page_url):
+        raise KanalDError("O endereço informado não é uma lista de episódios do Kanal D.")
+
+    page = urlparse(page_url)
+    episode_prefix = page.path.rstrip("/") + "/"
+    parser = _EpisodeLinkParser()
+    parser.feed(html)
+
+    seen: set[str] = set()
+    episode_urls: list[str] = []
+    for href in parser.hrefs:
+        absolute = urljoin(page_url, href)
+        parsed = urlparse(absolute)
+        if (parsed.hostname or "").lower() not in KANALD_HOSTS:
+            continue
+        if not parsed.path.startswith(episode_prefix):
+            continue
+        slug = parsed.path[len(episode_prefix):].strip("/")
+        if not slug or "/" in slug:
+            continue
+        normalized = parsed._replace(query="", fragment="").geturl()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        episode_urls.append(normalized)
+        if len(episode_urls) >= 250:
+            break
+
+    if not episode_urls:
+        raise KanalDError("Nenhum episódio foi encontrado nessa lista do Kanal D.")
+    return KanalDCollection(source_url=page_url, episode_urls=tuple(episode_urls))
 
 
 def parse_kanald_page(page_url: str, html: str) -> KanalDVideo:
@@ -153,7 +214,7 @@ def parse_kanald_page(page_url: str, html: str) -> KanalDVideo:
     return KanalDVideo(title=title, media_id=media_id, content_url=selected_url)
 
 
-def resolve_kanald_video(url: str, timeout: int = 45) -> KanalDVideo:
+def _fetch_kanald_html(url: str, timeout: int) -> tuple[str, str]:
     if not is_kanald_url(url):
         raise KanalDError("O endereço informado não pertence ao site Kanal D.")
 
@@ -180,4 +241,16 @@ def resolve_kanald_video(url: str, timeout: int = 45) -> KanalDVideo:
     if len(body) > MAX_HTML_BYTES:
         raise KanalDError("A página do Kanal D excedeu o limite de tamanho permitido.")
     html = body.decode(charset, errors="replace")
+    return final_url, html
+
+
+def resolve_kanald_video(url: str, timeout: int = 45) -> KanalDVideo:
+    final_url, html = _fetch_kanald_html(url, timeout)
     return parse_kanald_page(final_url, html)
+
+
+def resolve_kanald_collection(url: str, timeout: int = 45) -> KanalDCollection:
+    if not is_kanald_collection_url(url):
+        raise KanalDError("O endereço informado não é uma lista de episódios do Kanal D.")
+    final_url, html = _fetch_kanald_html(url, timeout)
+    return parse_kanald_collection(final_url, html)

@@ -120,6 +120,12 @@ site disponibiliza versões de 360p, 480p, 720p e 1080p. O resolvedor aceita
 somente fontes HTTPS de domínios de mídia conhecidos do Kanal D/Dailymotion e
 não tenta contornar DRM ou bloqueios geográficos.
 
+Listas de temporada também são aceitas. Mantenha **Baixar playlist/álbum**
+marcado para baixar todos os episódios retornados pela página, na ordem em que
+ela os apresenta. Os arquivos recebem numeração sequencial. Como as fontes HLS
+do Kanal D são públicas, cookies selecionados para outros sites são ignorados
+nesse fluxo; isso evita falhas quando o Chrome está aberto.
+
 ## Categorias de vídeos do JW.ORG
 
 A partir da versão **1.2.0**, o aplicativo reconhece endereços de categorias em português como:
@@ -171,3 +177,10 @@ A pasta selecionada é salva imediatamente ao usar **Escolher**, novamente ao in
 - resolve o HLS oficial publicado no `VideoObject` da página;
 - preserva título e identificador do conteúdo no nome do arquivo;
 - inclui testes para domínio, metadados, fonte permitida e página inválida.
+
+## Versão 1.3.1
+
+- adiciona download de listas de temporada do Kanal D;
+- numera os episódios na ordem apresentada pela página;
+- não tenta copiar cookies do Chrome para fontes públicas do Kanal D;
+- mantém cookies ativos para os demais sites que precisem de autenticação.

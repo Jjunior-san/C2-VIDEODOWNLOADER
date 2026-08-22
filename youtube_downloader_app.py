@@ -581,6 +581,7 @@ class DownloadApp:
         url: str,
         *,
         output_template: str | None = None,
+        include_cookies: bool = True,
     ) -> list[str]:
         def compatible_selector(height: int | None = None) -> str:
             height_filter = f"[height<={height}]" if height else ""
@@ -640,12 +641,13 @@ class DownloadApp:
         if format_choice == "Apenas áudio (M4A)":
             command.extend(["--extract-audio", "--audio-format", "m4a", "--audio-quality", "0"])
 
-        browser = self.cookies_browser_var.get().strip().lower()
-        if browser and browser != "nenhum":
-            command.extend(["--cookies-from-browser", browser])
-        cookies_file = self.cookies_file_var.get().strip()
-        if cookies_file:
-            command.extend(["--cookies", cookies_file])
+        if include_cookies:
+            browser = self.cookies_browser_var.get().strip().lower()
+            if browser and browser != "nenhum":
+                command.extend(["--cookies-from-browser", browser])
+            cookies_file = self.cookies_file_var.get().strip()
+            if cookies_file:
+                command.extend(["--cookies", cookies_file])
 
         command.extend(["--", url])
         return command

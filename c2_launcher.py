@@ -13,8 +13,10 @@ from jw_org_downloader import (
     resolve_category_items,
 )
 from kanald_downloader import (
+    is_kanald_collection_url,
     is_kanald_url,
     output_template as kanald_output_template,
+    resolve_kanald_collection,
     resolve_kanald_video,
 )
 
@@ -126,6 +128,36 @@ def _download_with_jw_categories(
         status = self.dependencies.ensure(self.queue_log, force=False)
         self.dependency_status = status
 
+        def run_ytdlp(
+            download_url: str,
+            filename_template: str | None = None,
+            include_cookies: bool = True,
+        ) -> bool:
+            command = self._build_command(
+                status.yt_dlp_path,
+                folder,
+                format_choice,
+                download_url,
+                output_template=filename_template,
+                include_cookies=include_cookies,
+            )
+            return_code, output_files = self._run_downloader(command)
+            if return_code != 0:
+                return False
+            if format_choice == "Apenas áudio (M4A)":
+                return True
+
+            conversion_failed = False
+            for output_file in output_files:
+                try:
+                    self._ensure_player_compatibility(output_file)
+                except Exception as exc:
+                    conversion_failed = True
+                    self.queue_log(
+                        f"Erro ao tornar o vídeo compatível ({output_file.name}): {exc}"
+                    )
+            return not conversion_failed
+
         for source_index, url in enumerate(urls, start=1):
             self.queue_log(f"[{source_index}/{len(urls)}] Processando: {url}")
 
@@ -169,45 +201,77 @@ def _download_with_jw_categories(
                         self.queue_log(f"Erro no item '{item.title}': {exc}")
                 continue
 
+            if is_kanald_collection_url(url):
+                try:
+                    self.queue_log("Kanal D: identificando os episódios da temporada...")
+                    collection = resolve_kanald_collection(url)
+                    episode_urls = list(collection.episode_urls)
+                    if not self.playlist_var.get():
+                        episode_urls = episode_urls[:1]
+                        self.queue_log(
+                            "Kanal D: a opção playlist/álbum está desmarcada; "
+                            "somente o primeiro episódio será baixado."
+                        )
+                    self.queue_log(
+                        f"Kanal D: {len(episode_urls)} episódio(s) encontrado(s)."
+                    )
+                except Exception as exc:
+                    failures += 1
+                    attempted += 1
+                    self.queue_log(f"Erro ao consultar a temporada do Kanal D: {exc}")
+                    continue
+
+                width = max(2, len(str(len(episode_urls))))
+                for episode_index, episode_url in enumerate(episode_urls, start=1):
+                    attempted += 1
+                    try:
+                        self.queue_log(
+                            f"Kanal D [{episode_index}/{len(episode_urls)}]: "
+                            "identificando o vídeo..."
+                        )
+                        video = resolve_kanald_video(episode_url)
+                        filename_template = (
+                            f"{episode_index:0{width}d} - {kanald_output_template(video)}"
+                        )
+                        self.queue_log(
+                            f"Kanal D [{episode_index}/{len(episode_urls)}]: {video.title}"
+                        )
+                        if not run_ytdlp(
+                            video.content_url,
+                            filename_template,
+                            include_cookies=False,
+                        ):
+                            failures += 1
+                    except Exception as exc:
+                        failures += 1
+                        self.queue_log(
+                            f"Erro no episódio {episode_index} do Kanal D: {exc}"
+                        )
+                continue
+
             attempted += 1
             download_url = url
             filename_template = None
+            include_cookies = True
             if is_kanald_url(url):
                 try:
                     self.queue_log("Kanal D: identificando a fonte oficial do vídeo...")
                     video = resolve_kanald_video(url)
                     download_url = video.content_url
                     filename_template = kanald_output_template(video)
+                    include_cookies = False
                     self.queue_log(f"Kanal D: vídeo encontrado — {video.title}.")
                 except Exception as exc:
                     failures += 1
                     self.queue_log(f"Erro ao consultar o vídeo do Kanal D: {exc}")
                     continue
 
-            command = self._build_command(
-                status.yt_dlp_path,
-                folder,
-                format_choice,
+            if not run_ytdlp(
                 download_url,
-                output_template=filename_template,
-            )
-            return_code, output_files = self._run_downloader(command)
-            if return_code != 0:
+                filename_template,
+                include_cookies=include_cookies,
+            ):
                 failures += 1
-                continue
-
-            if format_choice != "Apenas áudio (M4A)":
-                conversion_failed = False
-                for output_file in output_files:
-                    try:
-                        self._ensure_player_compatibility(output_file)
-                    except Exception as exc:
-                        conversion_failed = True
-                        self.queue_log(
-                            f"Erro ao tornar o vídeo compatível ({output_file.name}): {exc}"
-                        )
-                if conversion_failed:
-                    failures += 1
 
         if failures:
             self.queue_log(
