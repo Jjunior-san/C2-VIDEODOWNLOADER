@@ -79,7 +79,7 @@ jobs:
               --repo $env:GITHUB_REPOSITORY `
               --target $env:GITHUB_SHA `
               --title "C² Video Downloader $env:VERSION" `
-              --notes "Instalador automático para Windows 64 bits. Inclui download em lote de categorias do JW.ORG, atualização interna do aplicativo, yt-dlp nightly e Deno." `
+              --notes "Instalador automático para Windows 64 bits. Inclui suporte ao Kanal D, download em lote de categorias do JW.ORG, atualização interna do aplicativo, yt-dlp nightly e Deno." `
               --latest
             if ($LASTEXITCODE -ne 0) {
               throw "Falha ao criar a Release $env:TAG."

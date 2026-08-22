@@ -12,6 +12,11 @@ from jw_org_downloader import (
     is_jw_category_url,
     resolve_category_items,
 )
+from kanald_downloader import (
+    is_kanald_url,
+    output_template as kanald_output_template,
+    resolve_kanald_video,
+)
 
 
 _original_maintenance_done = app.DownloadApp._maintenance_done
@@ -165,11 +170,26 @@ def _download_with_jw_categories(
                 continue
 
             attempted += 1
+            download_url = url
+            filename_template = None
+            if is_kanald_url(url):
+                try:
+                    self.queue_log("Kanal D: identificando a fonte oficial do vídeo...")
+                    video = resolve_kanald_video(url)
+                    download_url = video.content_url
+                    filename_template = kanald_output_template(video)
+                    self.queue_log(f"Kanal D: vídeo encontrado — {video.title}.")
+                except Exception as exc:
+                    failures += 1
+                    self.queue_log(f"Erro ao consultar o vídeo do Kanal D: {exc}")
+                    continue
+
             command = self._build_command(
                 status.yt_dlp_path,
                 folder,
                 format_choice,
-                url,
+                download_url,
+                output_template=filename_template,
             )
             return_code, output_files = self._run_downloader(command)
             if return_code != 0:
@@ -203,7 +223,7 @@ def _download_with_jw_categories(
 
 app.SUPPORTED_HINT = (
     "YouTube, Instagram, Facebook, TikTok, Vimeo, X/Twitter, Twitch, "
-    "Dailymotion, categorias de vídeos do JW.ORG e outros players suportados."
+    "Dailymotion, Kanal D, categorias de vídeos do JW.ORG e outros players suportados."
 )
 app.DownloadApp._build_site_logo = _build_fixed_site_logo
 app.DownloadApp._maintenance_worker = _maintenance_worker_with_feedback

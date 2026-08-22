@@ -103,6 +103,23 @@ A partir da versão **1.1.2**, o formato padrão é **Melhor MP4 compatível**. 
 
 A conversão somente acontece quando o arquivo não está em um perfil amplamente compatível. Arquivos H.264/AAC adequados não são recodificados.
 
+## Vídeos do Kanal D
+
+A partir da versão **1.3.0**, o aplicativo reconhece páginas de episódios e
+clipes de `kanald.com.tr`. O resolvedor lê a fonte HLS oficial publicada na
+página e preserva o título do conteúdo no nome do arquivo.
+
+O exemplo abaixo pode ser colado diretamente no campo de URLs:
+
+```text
+https://www.kanald.com.tr/uzak-sehir/bolumler/uzak-sehir-22-bolum
+```
+
+As opções de qualidade da interface continuam válidas. No episódio acima, o
+site disponibiliza versões de 360p, 480p, 720p e 1080p. O resolvedor aceita
+somente fontes HTTPS de domínios de mídia conhecidos do Kanal D/Dailymotion e
+não tenta contornar DRM ou bloqueios geográficos.
+
 ## Categorias de vídeos do JW.ORG
 
 A partir da versão **1.2.0**, o aplicativo reconhece endereços de categorias em português como:
@@ -147,3 +164,10 @@ A pasta selecionada é salva imediatamente ao usar **Escolher**, novamente ao in
 - seleciona automaticamente a versão correspondente à qualidade escolhida;
 - mantém o fluxo atual para YouTube, Instagram, Facebook, TikTok e demais sites;
 - inclui testes automatizados de reconhecimento de URL e seleção de resolução.
+
+## Versão 1.3.0
+
+- adiciona suporte nativo às páginas de vídeo do Kanal D;
+- resolve o HLS oficial publicado no `VideoObject` da página;
+- preserva título e identificador do conteúdo no nome do arquivo;
+- inclui testes para domínio, metadados, fonte permitida e página inválida.

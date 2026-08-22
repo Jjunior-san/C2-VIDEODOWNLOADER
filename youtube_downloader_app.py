@@ -573,7 +573,15 @@ class DownloadApp:
         finally:
             self.event_queue.put(("download_finished", None))
 
-    def _build_command(self, engine: Path, folder: Path, format_choice: str, url: str) -> list[str]:
+    def _build_command(
+        self,
+        engine: Path,
+        folder: Path,
+        format_choice: str,
+        url: str,
+        *,
+        output_template: str | None = None,
+    ) -> list[str]:
         def compatible_selector(height: int | None = None) -> str:
             height_filter = f"[height<={height}]" if height else ""
             return (
@@ -594,7 +602,10 @@ class DownloadApp:
             "Apenas áudio (M4A)": "ba/bestaudio/best",
         }
         selected_format = format_map.get(format_choice, compatible_selector())
-        output_template = "%(playlist_index|)s%(playlist_index& - )s%(title).180s [%(id)s].%(ext)s"
+        selected_output_template = output_template or (
+            "%(playlist_index|)s%(playlist_index& - )s"
+            "%(title).180s [%(id)s].%(ext)s"
+        )
 
         command = [
             str(engine),
@@ -617,7 +628,7 @@ class DownloadApp:
             "-P",
             str(folder),
             "-o",
-            output_template,
+            selected_output_template,
             "-f",
             selected_format,
         ]
