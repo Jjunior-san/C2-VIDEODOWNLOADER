@@ -71,6 +71,32 @@ class KanalDPageTests(unittest.TestCase):
             "Uzak Şehir 22. Bölüm [6805f38384687ed42a4b48a0].%(ext)s",
         )
 
+    def test_extracts_video_when_json_ld_contains_raw_newline(self) -> None:
+        html = r'''
+        <html><body>
+          <div data-id="69119c4f9974e8ffe8aafae8"></div>
+          <script type="application/ld+json">
+          {
+            "@context": "https://schema.org",
+            "@type": "https://schema.org/VideoObject",
+            "name": "Uzak Şehir 37. Bölüm",
+            "description": "linha inválida
+            dentro de uma string JSON",
+            "contentUrl": "https://kanaldvod.duhnet.tv/hls/g/NE/us_37_bolum/us_37_bolum.smil/playlist.m3u8"
+          }
+          </script>
+        </body></html>
+        '''
+
+        video = parse_kanald_page(PAGE_URL, html)
+        self.assertEqual(video.title, "Uzak Şehir 37. Bölüm")
+        self.assertEqual(video.media_id, "69119c4f9974e8ffe8aafae8")
+        self.assertEqual(
+            video.content_url,
+            "https://kanaldvod.duhnet.tv/hls/g/NE/us_37_bolum/"
+            "us_37_bolum.smil/playlist.m3u8",
+        )
+
     def test_rejects_untrusted_media_host(self) -> None:
         html = SAMPLE_HTML.replace("kanaldvod.duhnet.tv", "example.com")
         with self.assertRaises(KanalDError):

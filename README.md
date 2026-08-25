@@ -192,3 +192,9 @@ A pasta selecionada é salva imediatamente ao usar **Escolher**, novamente ao in
 - exibe velocidade instantânea, velocidade média e ETA do arquivo;
 - calcula a porcentagem e a previsão de término do trabalho completo;
 - atualiza a estimativa global conforme cada item da playlist avança.
+
+## Versão 1.3.3
+
+- corrige a identificação de vídeos em páginas recentes do Kanal D;
+- tolera blocos `VideoObject` malformados pelo próprio site;
+- valida os episódios 37 e 38 de Uzak Şehir em HLS até 1080p.

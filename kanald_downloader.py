@@ -13,7 +13,7 @@ MAX_HTML_BYTES = 8 * 1024 * 1024
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36 C2-Video-Downloader/1.3.2"
+    "Chrome/131.0.0.0 Safari/537.36 C2-Video-Downloader/1.3.3"
 )
 MEDIA_ID_PATTERN = re.compile(
     r'(?:data-id|data-tiak-reference-id)=["\'](?P<id>[0-9a-f]{24})["\']'
@@ -112,6 +112,36 @@ def _iter_video_objects(value: object):
             yield from _iter_video_objects(child)
 
 
+def _extract_json_ld_string(block: str, field: str) -> str:
+    match = re.search(
+        rf'"{re.escape(field)}"\s*:\s*"(?P<value>(?:\\.|[^"\\])*)"',
+        block,
+        re.IGNORECASE,
+    )
+    if not match:
+        return ""
+    raw_value = match.group("value")
+    try:
+        return str(json.loads(f'"{raw_value}"')).strip()
+    except (TypeError, ValueError):
+        return raw_value.replace(r"\/", "/").strip()
+
+
+def _extract_malformed_video_object(block: str) -> dict[str, object] | None:
+    object_type = _extract_json_ld_string(block, "@type").rsplit("/", 1)[-1]
+    if object_type.lower() != "videoobject":
+        return None
+
+    content_url = _validate_content_url(_extract_json_ld_string(block, "contentUrl"))
+    if not content_url:
+        return None
+    return {
+        "@type": "VideoObject",
+        "name": _extract_json_ld_string(block, "name"),
+        "contentUrl": content_url,
+    }
+
+
 def _validate_content_url(value: object) -> str | None:
     url = str(value or "").strip()
     parsed = urlparse(url)
@@ -184,7 +214,8 @@ def parse_kanald_page(page_url: str, html: str) -> KanalDVideo:
         try:
             data = json.loads(block)
         except (TypeError, ValueError):
-            continue
+            fallback = _extract_malformed_video_object(block)
+            data = fallback if fallback else {}
         for candidate in _iter_video_objects(data):
             content_url = _validate_content_url(candidate.get("contentUrl"))
             if content_url:
