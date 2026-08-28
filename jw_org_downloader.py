@@ -31,7 +31,7 @@ API_URLS = (
     "?detailed=1&clientType=www",
 )
 MAX_JSON_BYTES = 32 * 1024 * 1024
-USER_AGENT = "C2-Video-Downloader/1.3.4 (+https://c2sistemas.com)"
+USER_AGENT = "C2-Video-Downloader/1.3.5 (+https://c2sistemas.com)"
 VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".webm"}
 AUDIO_EXTENSIONS = {".m4a", ".mp3", ".aac", ".opus", ".ogg"}
 

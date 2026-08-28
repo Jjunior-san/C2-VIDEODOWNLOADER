@@ -226,3 +226,21 @@ o motor tenta continuar onde o servidor e o formato permitirem. Não há persist
 automática da fila entre aberturas.
 
 Taxas são exibidas em bytes por segundo: KB/s e MB/s, não em kilobits por segundo (kbps).
+
+## Versão 1.3.5
+
+- cabeçalho compacto, logo menor e remoção da lista de sites, slogan e textos repetidos;
+- abas **Downloads** e **Configurações**, mantendo progresso, pausa e atividade juntos;
+- janela inicial limitada à área útil do monitor, com rolagem em telas pequenas ou com escala de texto alta;
+- playlists continuam depois de vídeos privados, removidos ou indisponíveis, com avisos na atividade;
+- o YouTube não inclui na fila os itens indisponíveis que a própria playlist oculta;
+- os arquivos baixados de uma playlist parcial também passam pela finalização de compatibilidade;
+- o resumo diferencia conclusão parcial, falha total e ausência de arquivos disponíveis;
+- testes com a CLI real do yt-dlp para uma playlist com dois vídeos válidos, um privado e um removido, além de testes de layout em diferentes tamanhos e escalas.
+
+As opções de cookies, fragmentos simultâneos e atualização agora ficam em **Configurações**.
+O aplicativo usa as opções da interface, sem carregar configurações externas do yt-dlp.
+Vídeos não listados, mas acessíveis pelo link, continuam elegíveis. Conteúdos privados ou
+removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem no registro
+para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
+arquivo incompleto.

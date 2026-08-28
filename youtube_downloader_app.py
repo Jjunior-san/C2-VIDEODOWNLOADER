@@ -10,11 +10,12 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from tkinter import BooleanVar, Canvas, END, PhotoImage, StringVar, Tk, filedialog, messagebox
+from tkinter import BooleanVar, END, StringVar, Tk, filedialog, messagebox
 from tkinter import ttk
 
 from app_config import APP_MUTEX, APP_NAME, APP_VERSION
-from download_control import DownloadControl
+from download_control import DownloadCancelled, DownloadControl
+from ui_layout import ScrollablePage, build_brand, fit_window, wrapping_label
 from media_conversion import codec_arguments, duration_from_probe, run_conversion, stream_compatibility
 from c2_update import (
     ApplicationUpdater,
@@ -58,12 +59,6 @@ DOWNLOAD_FORMATS = [
     "Apenas áudio (M4A)",
 ]
 BROWSERS = ["Nenhum", "Chrome", "Edge", "Firefox", "Brave", "Opera", "Vivaldi"]
-
-SUPPORTED_HINT = (
-    "YouTube, Instagram, Facebook, TikTok, Vimeo, X/Twitter, Twitch, "
-    "Dailymotion e outros players suportados pelo yt-dlp."
-)
-
 
 def _progress_number(value: str) -> float | None:
     try:
@@ -222,8 +217,7 @@ class DownloadApp:
     def __init__(self, root: Tk) -> None:
         self.root = root
         self.root.title(f"{APP_NAME} {APP_VERSION}")
-        self.root.geometry("920x800")
-        self.root.minsize(850, 760)
+        fit_window(self.root)
 
         icon_path = resource_path("assets/c2.ico")
         if icon_path.exists():
@@ -255,23 +249,13 @@ class DownloadApp:
         self.update_status_var = StringVar(value="Componentes ainda não verificados")
         self.download_item_var = StringVar(value="Nenhum download em andamento")
         self.download_metrics_var = StringVar(
-            value="Progresso, velocidade, tamanho e tempo restante aparecerão aqui."
+            value="Aguardando início do download."
         )
 
         self.busy = False
         self.maintenance_busy = False
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.event_queue: queue.Queue[tuple[str, object]] = queue.Queue()
-        self.logo_image = None
-        self.logo_source_image = None
-        self.logo_canvas: Canvas | None = None
-        self.logo_text_item: int | None = None
-        self.logo_exponent_item: int | None = None
-        self.logo_tagline_item: int | None = None
-        self.logo_target = "SISTEMAS"
-        self.logo_index = 0
-        self.logo_cursor_visible = True
-        self.logo_blink_count = 0
         self.available_update: AppUpdate | None = None
         self.dependency_status: DependencyStatus | None = None
         self.download_job_started_at = 0.0
@@ -288,237 +272,117 @@ class DownloadApp:
         self.root.after(700, self.start_maintenance)
 
     def _build_ui(self) -> None:
-        frame = ttk.Frame(self.root, padding=18)
-        frame.pack(fill="both", expand=True)
-
-        header = ttk.Frame(frame)
-        header.pack(fill="x", pady=(0, 12))
+        shell = ttk.Frame(self.root, padding=12)
+        shell.pack(fill="both", expand=True)
+        header = ttk.Frame(shell)
+        header.pack(fill="x", pady=(0, 10))
         try:
-            self._build_site_logo(header).pack(side="left", padx=(0, 14))
+            self._build_site_logo(header).pack(side="left", padx=(0, 12))
         except Exception as exc:
-            self.queue_log(f"Aviso: não foi possível carregar a logo animada ({exc}).")
-        title_box = ttk.Frame(header)
-        title_box.pack(side="left", fill="x", expand=True)
-        ttk.Label(title_box, text=APP_NAME, font=("Segoe UI", 18, "bold")).pack(anchor="w")
-        ttk.Label(title_box, text=SUPPORTED_HINT, foreground="#555555", wraplength=650).pack(anchor="w")
-        ttk.Label(title_box, text=f"Versão {APP_VERSION}", foreground="#666666").pack(anchor="w")
+            self.queue_log(f"Aviso: não foi possível carregar a logo ({exc}).")
+        ttk.Separator(header, orient="vertical").pack(side="left", fill="y", padx=(0, 12))
+        ttk.Label(header, text="Video Downloader", font=("Segoe UI", 15, "bold"),
+                  foreground="#172b4d").pack(side="left")
 
-        ttk.Label(
-            frame,
-            text="Baixe apenas mídias que sejam suas, livres, ou que você tenha permissão para baixar.",
-            foreground="#8a5a00",
-        ).pack(anchor="w", pady=(0, 12))
+        self.tabs = ttk.Notebook(shell)
+        self.tabs.pack(fill="both", expand=True)
+        self.download_page = ScrollablePage(self.tabs)
+        self.settings_page = ScrollablePage(self.tabs)
+        self.tabs.add(self.download_page, text="  Downloads  ")
+        self.tabs.add(self.settings_page, text="  Configurações  ")
+        frame = self.download_page.body
 
-        ttk.Label(frame, text="URLs de vídeos, posts, reels, playlists ou players (uma por linha)").pack(anchor="w")
-        self.url_text = self._make_text(frame, height=5)
-        self.url_text.pack(fill="x", pady=(4, 12))
+        ttk.Label(frame, text="Links dos vídeos ou playlists", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        url_row = ttk.Frame(frame)
+        url_row.pack(fill="x", pady=(4, 10))
+        self.url_text = self._make_text(url_row, height=3)
+        self.url_text.pack(side="left", fill="x", expand=True)
+        url_scroll = ttk.Scrollbar(url_row, command=self.url_text.yview)
+        url_scroll.pack(side="right", fill="y")
+        self.url_text.configure(yscrollcommand=url_scroll.set)
 
         ttk.Label(frame, text="Pasta de destino").pack(anchor="w")
         folder_row = ttk.Frame(frame)
-        folder_row.pack(fill="x", pady=(4, 12))
+        folder_row.pack(fill="x", pady=(4, 10))
         ttk.Entry(folder_row, textvariable=self.folder_var).pack(side="left", fill="x", expand=True)
         ttk.Button(folder_row, text="Escolher", command=self.choose_folder).pack(side="left", padx=(8, 0))
 
-        options = ttk.Frame(frame)
-        options.pack(fill="x", pady=(0, 12))
-        ttk.Checkbutton(options, text="Baixar playlist/álbum", variable=self.playlist_var).pack(side="left")
-
         format_frame = ttk.Frame(frame)
-        format_frame.pack(fill="x", pady=(0, 12))
+        format_frame.pack(fill="x", pady=(0, 10))
         ttk.Label(format_frame, text="Formato:").pack(side="left", padx=(0, 8))
-        formats = DOWNLOAD_FORMATS
         ttk.Combobox(
-            format_frame,
-            textvariable=self.resolution_var,
-            values=formats,
-            state="readonly",
-            width=28,
+            format_frame, textvariable=self.resolution_var,
+            values=DOWNLOAD_FORMATS, state="readonly", width=24,
         ).pack(side="left")
-
-        ttk.Label(format_frame, text="Fragmentos simultâneos (HLS/DASH):").pack(side="left", padx=(16, 6))
-        ttk.Combobox(
-            format_frame, textvariable=self.fragments_var,
-            values=FRAGMENT_CHOICES, state="readonly", width=3,
-        ).pack(side="left")
-
-        cookies_frame = ttk.LabelFrame(frame, text="Acesso a sites com login")
-        cookies_frame.pack(fill="x", pady=(0, 12))
-
-        browser_row = ttk.Frame(cookies_frame)
-        browser_row.pack(fill="x", padx=10, pady=(8, 6))
-        ttk.Label(browser_row, text="Usar cookies do navegador:").pack(side="left", padx=(0, 8))
-        browsers = BROWSERS
-        ttk.Combobox(
-            browser_row,
-            textvariable=self.cookies_browser_var,
-            values=browsers,
-            state="readonly",
-            width=14,
-        ).pack(side="left")
-        ttk.Label(
-            browser_row,
-            text="Feche o navegador antes de usar cookies do Chrome/Edge.",
-            foreground="#666666",
-        ).pack(side="left", padx=(12, 0))
-
-        file_row = ttk.Frame(cookies_frame)
-        file_row.pack(fill="x", padx=10, pady=(0, 10))
-        ttk.Label(file_row, text="Ou arquivo cookies.txt:").pack(side="left", padx=(0, 8))
-        ttk.Entry(file_row, textvariable=self.cookies_file_var).pack(side="left", fill="x", expand=True)
-        ttk.Button(file_row, text="Selecionar", command=self.choose_cookies_file).pack(side="left", padx=(8, 0))
-        ttk.Button(file_row, text="Limpar", command=lambda: self.cookies_file_var.set("")).pack(side="left", padx=(8, 0))
+        ttk.Checkbutton(format_frame, text="Baixar playlist/álbum", variable=self.playlist_var).pack(side="left", padx=(12, 0))
 
         actions = ttk.Frame(frame)
-        actions.pack(fill="x", pady=(0, 8))
+        actions.pack(fill="x", pady=(0, 12))
         self.download_button = ttk.Button(actions, text="Baixar", command=self.start_download)
         self.download_button.pack(side="left")
         self.pause_button = ttk.Button(actions, text="Pausar", command=self.toggle_pause, state="disabled")
         self.pause_button.pack(side="left", padx=(8, 0))
-        ttk.Button(actions, text="Limpar log", command=self.clear_log).pack(side="left", padx=(8, 0))
-        self.update_button = ttk.Button(actions, text="Verificar atualizações", command=lambda: self.start_maintenance(True))
-        self.update_button.pack(side="right")
+        ttk.Button(actions, text="Limpar log", command=self.clear_log).pack(side="right")
 
-        ttk.Label(frame, textvariable=self.update_status_var, foreground="#555555").pack(anchor="w", pady=(0, 8))
+        progress_frame = ttk.LabelFrame(frame, text="Progresso", padding=10)
+        progress_frame.pack(fill="x", pady=(0, 10))
+        wrapping_label(progress_frame, textvariable=self.download_item_var, font=("Segoe UI", 9, "bold"))
+        self.progress = ttk.Progressbar(progress_frame, mode="determinate", maximum=100, value=0)
+        self.progress.pack(fill="x", pady=(0, 8))
+        wrapping_label(progress_frame, textvariable=self.download_metrics_var, foreground="#3f4f5f")
 
-        ttk.Label(
-            frame,
-            textvariable=self.download_item_var,
-            font=("Segoe UI", 9, "bold"),
-        ).pack(anchor="w", pady=(0, 4))
-        self.progress = ttk.Progressbar(frame, mode="determinate", maximum=100, value=0)
-        self.progress.pack(fill="x", pady=(0, 4))
-        metrics_label = ttk.Label(
-            frame, textvariable=self.download_metrics_var, foreground="#3f4f5f",
-            wraplength=820, justify="left",
-        )
-        metrics_label.pack(fill="x", pady=(0, 12))
-        metrics_label.bind("<Configure>", lambda event: metrics_label.configure(wraplength=max(200, event.width)))
-
-        ttk.Label(frame, text="Log").pack(anchor="w")
+        ttk.Label(frame, text="Atividade").pack(anchor="w", pady=(0, 4))
         log_frame = ttk.Frame(frame)
         log_frame.pack(fill="both", expand=True)
-        self.log = self._make_text(log_frame, height=12)
+        self.log = self._make_text(log_frame, height=5)
         self.log.pack(side="left", fill="both", expand=True)
         scrollbar = ttk.Scrollbar(log_frame, command=self.log.yview)
         scrollbar.pack(side="right", fill="y")
         self.log.configure(yscrollcommand=scrollbar.set, state="disabled")
 
-    def _build_site_logo(self, parent) -> Canvas:
-        """Renderiza no desktop a mesma identidade animada usada no site da C²."""
-        background = ttk.Style().lookup("TFrame", "background") or self.root.cget("background")
-        canvas = Canvas(
-            parent,
-            width=238,
-            height=76,
-            background=background,
-            highlightthickness=0,
-            borderwidth=0,
-            takefocus=False,
-        )
-        logo_path = resource_path("assets/c2_logo_horizontal.png")
-        if not logo_path.exists():
-            raise FileNotFoundError(logo_path)
+        settings = self.settings_page.body
+        speed_frame = ttk.LabelFrame(settings, text="Desempenho", padding=10)
+        speed_frame.pack(fill="x", pady=(0, 12))
+        speed_row = ttk.Frame(speed_frame)
+        speed_row.pack(fill="x", pady=(0, 8))
+        ttk.Label(speed_row, text="Fragmentos simultâneos:").pack(side="left", padx=(0, 8))
+        ttk.Combobox(speed_row, textvariable=self.fragments_var, values=FRAGMENT_CHOICES,
+                     state="readonly", width=3).pack(side="left")
+        wrapping_label(speed_frame, text="HLS/DASH: use 4 normalmente; reduza para 1 ou 2 se houver falhas de conexão.", foreground="#596579")
 
-        # A imagem original do site é animada. O PNG antigo foi capturado no
-        # primeiro quadro (C_), por isso recortamos apenas o símbolo oficial e
-        # recriamos a digitação abaixo em Tkinter.
-        self.logo_source_image = PhotoImage(file=str(logo_path))
-        self.logo_image = PhotoImage(width=76, height=76)
-        self.logo_image.tk.call(
-            self.logo_image,
-            "copy",
-            self.logo_source_image,
-            "-from",
-            58,
-            48,
-            305,
-            327,
-            "-to",
-            7,
-            3,
-            "-subsample",
-            4,
-            4,
-        )
-        canvas.create_image(0, 38, image=self.logo_image, anchor="w")
-        self.logo_exponent_item = canvas.create_text(
-            57,
-            7,
-            text="2",
-            anchor="nw",
-            font=("Segoe UI", 13, "bold"),
-            fill="#00aeda",
-            state="hidden",
-        )
-        self.logo_text_item = canvas.create_text(
-            82,
-            28,
-            text="_",
-            anchor="w",
-            font=("Consolas", 23, "bold"),
-            fill="#0b1730",
-        )
-        self.logo_tagline_item = canvas.create_text(
-            84,
-            57,
-            text="SOLUÇÕES EM TECNOLOGIA",
-            anchor="w",
-            font=("Segoe UI", 7, "bold"),
-            fill="#0056b3",
-            state="hidden",
-        )
-        self.logo_canvas = canvas
-        self.root.after(350, self._logo_type_step)
-        return canvas
+        cookies_frame = ttk.LabelFrame(settings, text="Acesso a sites com login", padding=10)
+        cookies_frame.pack(fill="x", pady=(0, 12))
+        browser_row = ttk.Frame(cookies_frame)
+        browser_row.pack(fill="x", pady=(0, 8))
+        ttk.Label(browser_row, text="Cookies do navegador:").pack(side="left", padx=(0, 8))
+        ttk.Combobox(browser_row, textvariable=self.cookies_browser_var, values=BROWSERS,
+                     state="readonly", width=14).pack(side="left")
+        wrapping_label(cookies_frame, text="Feche o Chrome/Edge antes de usar seus cookies. Fontes públicas do Kanal D não precisam deles.", foreground="#596579")
+        ttk.Label(cookies_frame, text="Ou arquivo cookies.txt:").pack(anchor="w")
+        file_row = ttk.Frame(cookies_frame)
+        file_row.pack(fill="x", pady=(4, 0))
+        ttk.Entry(file_row, textvariable=self.cookies_file_var, width=12).pack(side="left", fill="x", expand=True)
+        ttk.Button(file_row, text="Selecionar", command=self.choose_cookies_file).pack(side="left", padx=(8, 0))
+        ttk.Button(file_row, text="Limpar", command=lambda: self.cookies_file_var.set("")).pack(side="left", padx=(8, 0))
 
-    def _render_site_logo(self) -> None:
-        if not self.logo_canvas or self.logo_text_item is None:
-            return
-        typed = self.logo_target[: self.logo_index]
-        cursor = "_" if self.logo_cursor_visible else " "
-        self.logo_canvas.itemconfigure(self.logo_text_item, text=f"{typed}{cursor}")
-        if self.logo_exponent_item is not None:
-            self.logo_canvas.itemconfigure(
-                self.logo_exponent_item,
-                state="normal" if self.logo_index else "hidden",
-            )
-        if self.logo_tagline_item is not None:
-            self.logo_canvas.itemconfigure(
-                self.logo_tagline_item,
-                state="normal" if self.logo_index >= 2 else "hidden",
-            )
+        about_frame = ttk.LabelFrame(settings, text="Aplicativo", padding=10)
+        about_frame.pack(fill="x")
+        wrapping_label(about_frame, text=f"{APP_NAME} • Versão {APP_VERSION}", font=("Segoe UI", 10, "bold"))
+        wrapping_label(about_frame, textvariable=self.update_status_var, foreground="#596579")
+        self.update_button = ttk.Button(about_frame, text="Verificar atualizações", command=lambda: self.start_maintenance(True))
+        self.update_button.pack(anchor="w", pady=(0, 12))
+        wrapping_label(about_frame, text="Nas playlists, itens privados, removidos ou indisponíveis não interrompem os próximos vídeos. Veja os avisos no registro de atividade.", foreground="#596579")
+        wrapping_label(about_frame, text="Cole um link por linha. Baixe apenas mídias suas, livres ou que você tenha permissão para baixar.", foreground="#596579")
 
-    def _logo_type_step(self) -> None:
-        if not self.root.winfo_exists():
-            return
-        self.logo_cursor_visible = True
-        if self.logo_index < len(self.logo_target):
-            self.logo_index += 1
-            self._render_site_logo()
-            self.root.after(105, self._logo_type_step)
-            return
-        self.logo_blink_count = 0
-        self.root.after(500, self._logo_pause_blink)
-
-    def _logo_pause_blink(self) -> None:
-        if not self.root.winfo_exists():
-            return
-        self.logo_cursor_visible = not self.logo_cursor_visible
-        self.logo_blink_count += 1
-        self._render_site_logo()
-        if self.logo_blink_count < 6:
-            self.root.after(430, self._logo_pause_blink)
-            return
-        self.logo_index = 0
-        self.logo_cursor_visible = True
-        self._render_site_logo()
-        self.root.after(500, self._logo_type_step)
+    def _build_site_logo(self, parent) -> ttk.Frame:
+        return build_brand(parent, resource_path("assets/c2_logo_horizontal.png"))
 
     @staticmethod
     def _make_text(parent, height: int):
         from tkinter import Text
 
-        return Text(parent, height=height, wrap="word")
+        return Text(parent, height=height, width=1, wrap="word", font=("Segoe UI", 9),
+                    relief="solid", borderwidth=1, padx=8, pady=6)
 
     def choose_folder(self) -> None:
         initial = Path(self.folder_var.get().strip() or str(Path.home()))
@@ -921,6 +785,7 @@ class DownloadApp:
 
     def _download(self, urls: list[str], folder: Path, format_choice: str) -> None:
         failures = 0
+        self.download_completed_files = 0
         try:
             status = self.dependencies.ensure(self.queue_log, force=False)
             self.dependency_status = status
@@ -929,31 +794,43 @@ class DownloadApp:
                 self._begin_download_item(index, len(urls), url)
                 command = self._build_command(status.yt_dlp_path, folder, format_choice, url)
                 return_code, output_files = self._run_downloader(command)
-                if return_code != 0:
+                if not self._finalize_downloaded_files(return_code, output_files, format_choice):
                     failures += 1
-                    continue
-
-                if format_choice != "Apenas áudio (M4A)":
-                    conversion_failed = False
-                    for output_file in output_files:
-                        try:
-                            self._ensure_player_compatibility(output_file)
-                        except Exception as exc:
-                            conversion_failed = True
-                            self.queue_log(
-                                f"Erro ao tornar o vídeo compatível ({output_file.name}): {exc}"
-                            )
-                    if conversion_failed:
-                        failures += 1
             if failures:
                 self.queue_log(f"Concluído com falha em {failures} de {len(urls)} item(ns).")
+            elif not self.download_completed_files:
+                self.queue_log("Nenhum arquivo disponível para baixar nesta fila.")
             else:
                 self.queue_log("Concluído com sucesso.")
         except Exception as exc:
             failures += 1
             self.queue_log(f"Erro: {exc}")
         finally:
-            self.event_queue.put(("download_finished", {"failures": failures}))
+            self.event_queue.put(("download_finished", {
+                "failures": failures, "completed": self.download_completed_files,
+            }))
+
+    def _finalize_downloaded_files(self, return_code: int, output_files: list[Path], format_choice: str) -> bool:
+        # yt-dlp can return 1 for ONE unavailable playlist entry after saving
+        # other entries successfully. Those files must still be finalized.
+        failed = return_code != 0
+        for output_file in dict.fromkeys(output_files):
+            try:
+                self.download_control.checkpoint()
+                if format_choice != "Apenas áudio (M4A)":
+                    self._ensure_player_compatibility(output_file)
+                self.download_completed_files = getattr(self, "download_completed_files", 0) + 1
+            except DownloadCancelled:
+                raise
+            except Exception as exc:
+                failed = True
+                self.queue_log(f"Erro ao tornar o vídeo compatível ({output_file.name}): {exc}")
+        if return_code != 0:
+            self.queue_log(
+                "Um ou mais itens não puderam ser baixados. Os arquivos concluídos foram preservados; "
+                "a fila continua com os próximos disponíveis. Consulte os detalhes acima."
+            )
+        return not failed
 
     def _build_command(
         self,
@@ -992,6 +869,8 @@ class DownloadApp:
 
         command = [
             str(engine),
+            "--ignore-config",
+            "--no-abort-on-error",
             "--newline",
             "--no-color",
             "--progress",
@@ -1027,7 +906,9 @@ class DownloadApp:
             selected_format,
         ]
 
-        if not self.playlist_var.get():
+        if self.playlist_var.get():
+            command.extend(["--yes-playlist", "--compat-options", "no-youtube-unavailable-videos"])
+        else:
             command.append("--no-playlist")
         if FFMPEG_PATH:
             command.extend(["--ffmpeg-location", FFMPEG_PATH])
@@ -1182,13 +1063,21 @@ class DownloadApp:
         self.pause_button.configure(state="disabled", text="Pausar")
         self.progress.stop()
         failures = int(payload.get("failures", 0)) if isinstance(payload, dict) else 0
+        completed = payload.get("completed") if isinstance(payload, dict) else None
         self.progress.configure(mode="determinate", maximum=100)
         if not failures:
-            self.progress["value"] = 100
-        self.download_item_var.set("Trabalho finalizado com falhas" if failures else "Trabalho finalizado com sucesso")
+            self.progress["value"] = 0 if completed == 0 else 100
+        if failures:
+            result = "Trabalho finalizado com avisos" if completed else "Trabalho finalizado com falhas"
+        elif completed == 0:
+            result = "Nenhum arquivo disponível para baixar"
+        else:
+            result = "Trabalho finalizado com sucesso"
+        self.download_item_var.set(result)
         self.download_metrics_var.set(
-            f"Tempo ativo: {format_duration(self._download_clock() - self.download_job_started_at)}"
-            + ("  •  Consulte o log para tentar novamente os itens com falha." if failures else "")
+            (f"Arquivos concluídos: {completed}  •  " if completed is not None else "")
+            + f"Tempo ativo: {format_duration(self._download_clock() - self.download_job_started_at)}"
+            + ("  •  Consulte a atividade para ver os itens não baixados." if failures else "")
         )
         self.download_button.configure(state="normal")
 

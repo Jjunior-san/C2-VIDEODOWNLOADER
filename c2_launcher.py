@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from tkinter import PhotoImage, messagebox
-from tkinter import ttk
+from tkinter import messagebox
 
 import youtube_downloader_app as app
 from app_config import APP_NAME, APP_VERSION
@@ -23,59 +22,6 @@ from kanald_downloader import (
 
 
 _original_maintenance_done = app.DownloadApp._maintenance_done
-
-
-def _build_fixed_site_logo(self, parent) -> ttk.Frame:
-    """Exibe a identidade C² sem coordenadas compartilhadas ou sobreposição."""
-    brand = ttk.Frame(parent)
-
-    symbol_holder = ttk.Frame(brand, width=72, height=72)
-    symbol_holder.pack(side="left", anchor="n")
-    symbol_holder.pack_propagate(False)
-
-    logo_path = app.resource_path("assets/c2_logo_horizontal.png")
-    if not logo_path.exists():
-        raise FileNotFoundError(logo_path)
-
-    # O arquivo usado no site contém o primeiro quadro da animação. Somente o
-    # símbolo é recortado; nome e slogan ficam em widgets independentes. Isso
-    # impede sobreposição em diferentes escalas de DPI do Windows.
-    self.logo_source_image = PhotoImage(file=str(logo_path))
-    self.logo_image = PhotoImage(width=68, height=68)
-    self.logo_image.tk.call(
-        self.logo_image,
-        "copy",
-        self.logo_source_image,
-        "-from",
-        58,
-        48,
-        305,
-        327,
-        "-to",
-        0,
-        0,
-        "-subsample",
-        4,
-        4,
-    )
-    ttk.Label(symbol_holder, image=self.logo_image).pack(anchor="center", pady=(2, 0))
-
-    wordmark = ttk.Frame(brand)
-    wordmark.pack(side="left", padx=(10, 0), anchor="center")
-    ttk.Label(
-        wordmark,
-        text="C² SISTEMAS",
-        font=("Segoe UI", 17, "bold"),
-        foreground="#0b1730",
-    ).pack(anchor="w")
-    ttk.Label(
-        wordmark,
-        text="SOLUÇÕES EM TECNOLOGIA",
-        font=("Segoe UI", 7, "bold"),
-        foreground="#0056b3",
-    ).pack(anchor="w", pady=(2, 0))
-
-    return brand
 
 
 def _maintenance_worker_with_feedback(self, force: bool) -> None:
@@ -125,6 +71,7 @@ def _download_with_jw_categories(
     """Processa categorias do JW.ORG e mantém o fluxo padrão para outras URLs."""
     failures = 0
     attempted = 0
+    self.download_completed_files = 0
     try:
         status = self.dependencies.ensure(self.queue_log, force=False)
         self.dependency_status = status
@@ -147,23 +94,7 @@ def _download_with_jw_categories(
                 include_cookies=include_cookies,
             )
             return_code, output_files = self._run_downloader(command)
-            if return_code != 0:
-                return False
-            if format_choice == "Apenas áudio (M4A)":
-                return True
-
-            conversion_failed = False
-            for output_file in output_files:
-                try:
-                    self._ensure_player_compatibility(output_file)
-                except DownloadCancelled:
-                    raise
-                except Exception as exc:
-                    conversion_failed = True
-                    self.queue_log(
-                        f"Erro ao tornar o vídeo compatível ({output_file.name}): {exc}"
-                    )
-            return not conversion_failed
+            return self._finalize_downloaded_files(return_code, output_files, format_choice)
 
         for source_index, url in enumerate(urls, start=1):
             self.download_control.checkpoint()
@@ -210,6 +141,7 @@ def _download_with_jw_categories(
                             )
                         else:
                             self._ensure_player_compatibility(output_file)
+                        self.download_completed_files += 1
                     except DownloadCancelled:
                         raise
                     except Exception as exc:
@@ -302,8 +234,11 @@ def _download_with_jw_categories(
 
         if failures:
             self.queue_log(
-                f"Concluído com falha em {failures} de {attempted} item(ns)."
+                f"Fila processada: {self.download_completed_files} arquivo(s) concluído(s); "
+                f"{failures} de {attempted} entrada(s) com itens não baixados ou erros."
             )
+        elif not self.download_completed_files:
+            self.queue_log("Nenhum arquivo disponível para baixar nesta fila.")
         else:
             self.queue_log("Concluído com sucesso.")
     except DownloadCancelled as exc:
@@ -313,14 +248,11 @@ def _download_with_jw_categories(
         failures += 1
         self.queue_log(f"Erro: {exc}")
     finally:
-        self.event_queue.put(("download_finished", {"failures": failures}))
+        self.event_queue.put(("download_finished", {
+            "failures": failures, "completed": self.download_completed_files,
+        }))
 
 
-app.SUPPORTED_HINT = (
-    "YouTube, Instagram, Facebook, TikTok, Vimeo, X/Twitter, Twitch, "
-    "Dailymotion, Kanal D, categorias de vídeos do JW.ORG e outros players suportados."
-)
-app.DownloadApp._build_site_logo = _build_fixed_site_logo
 app.DownloadApp._maintenance_worker = _maintenance_worker_with_feedback
 app.DownloadApp._maintenance_done = _maintenance_done_with_feedback
 app.DownloadApp._download = _download_with_jw_categories
