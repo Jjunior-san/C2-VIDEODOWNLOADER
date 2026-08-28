@@ -8,11 +8,14 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from tkinter import BooleanVar, Canvas, END, PhotoImage, StringVar, Tk, filedialog, messagebox
 from tkinter import ttk
 
 from app_config import APP_MUTEX, APP_NAME, APP_VERSION
+from download_control import DownloadControl
+from media_conversion import codec_arguments, duration_from_probe, run_conversion, stream_compatibility
 from c2_update import (
     ApplicationUpdater,
     AppUpdate,
@@ -32,12 +35,17 @@ except (ImportError, RuntimeError):
 SETTINGS_FILE = DATA_DIR / "settings.json"
 OUTPUT_MARKER = "__C2_OUTPUT__:"
 PROGRESS_MARKER = "__C2_PROGRESS__:"
+POSTPROCESS_MARKER = "__C2_POSTPROCESS__:"
+FRAGMENT_CHOICES = (1, 2, 4, 8)
 PROGRESS_TEMPLATE = (
     "download:"
     f"{PROGRESS_MARKER}"
     "%(progress.downloaded_bytes)s|%(progress.total_bytes)s|"
     "%(progress.total_bytes_estimate)s|%(progress.speed)s|"
-    "%(progress.eta)s|%(progress._percent_str)s"
+    "%(progress.eta)s|%(progress._percent_str)s|"
+    "%(progress.elapsed)s|%(progress.fragment_index)s|%(progress.fragment_count)s|"
+    "%(info.filesize_approx)s|%(info.duration)s|%(info.tbr)s|"
+    "%(progress.status)s|%(progress.filename)s"
 )
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 DOWNLOAD_FORMATS = [
@@ -65,24 +73,49 @@ def _progress_number(value: str) -> float | None:
     return number if math.isfinite(number) and number >= 0 else None
 
 
+def fragment_count(value: object) -> int:
+    try:
+        number = int(str(value))
+    except (TypeError, ValueError):
+        return 4
+    return number if number in FRAGMENT_CHOICES else 4
+
+
 def parse_ytdlp_progress(line: str, elapsed: float) -> dict[str, object] | None:
     if not line.startswith(PROGRESS_MARKER):
         return None
-    fields = line[len(PROGRESS_MARKER):].split("|", 5)
-    if len(fields) != 6:
+    fields = line[len(PROGRESS_MARKER):].split("|", 13)
+    if len(fields) < 6:
         return None
+    fields += ["NA"] * (14 - len(fields))
 
     downloaded = _progress_number(fields[0]) or 0.0
     exact_total = _progress_number(fields[1])
     estimated_total = _progress_number(fields[2])
+    fragment_index = _progress_number(fields[7])
+    fragment_total = _progress_number(fields[8])
+    if not exact_total and not estimated_total:
+        estimated_total = _progress_number(fields[9])
+        duration = _progress_number(fields[10])
+        bitrate = _progress_number(fields[11])
+        if not estimated_total and duration and bitrate:
+            estimated_total = duration * bitrate * 125
+        if not estimated_total and fragment_index and fragment_total:
+            estimated_total = downloaded * fragment_total / fragment_index
     total = exact_total or estimated_total
+    if total is not None:
+        total = max(downloaded, total)
     speed = _progress_number(fields[3])
     eta = _progress_number(fields[4])
     percent_text = fields[5].strip().rstrip("%").strip()
     percent = _progress_number(percent_text)
     if percent is None and total:
         percent = downloaded * 100 / total
+    if percent is None and fragment_total and fragment_index is not None:
+        percent = fragment_index * 100 / fragment_total
     percent = max(0.0, min(100.0, percent or 0.0))
+    if fields[12] == "downloading":
+        percent = min(99.9, percent)
 
     return {
         "downloaded": downloaded,
@@ -92,7 +125,49 @@ def parse_ytdlp_progress(line: str, elapsed: float) -> dict[str, object] | None:
         "average_speed": downloaded / max(elapsed, 0.001),
         "eta": eta,
         "percent": percent,
+        "percent_known": total is not None or _progress_number(percent_text) is not None or fragment_total is not None,
+        "status": fields[12],
+        "filename": fields[13],
     }
+
+
+class ProgressTracker:
+    """Exclude resumed bytes and paused time from the transfer average."""
+
+    def __init__(self) -> None:
+        self.started: float | None = None
+        self.first_bytes = 0.0
+        self.last_bytes = 0.0
+        self.last_time = 0.0
+        self.current_speed: float | None = None
+        self.filename = ""
+
+    def parse(self, line: str, now: float) -> dict[str, object] | None:
+        payload = parse_ytdlp_progress(line, elapsed=1)
+        if payload is None:
+            return None
+        downloaded = float(payload["downloaded"])
+        filename = str(payload["filename"])
+        if self.started is None or downloaded < self.last_bytes or filename != self.filename:
+            self.started = now
+            self.first_bytes = downloaded
+            self.filename = filename
+            self.last_bytes = downloaded
+            self.last_time = now
+            self.current_speed = None
+        elapsed = max(0.0, now - self.started)
+        average = (downloaded - self.first_bytes) / elapsed if elapsed >= 0.25 else None
+        payload["average_speed"] = average
+        if now - self.last_time >= 0.25:
+            self.current_speed = max(0.0, downloaded - self.last_bytes) / (now - self.last_time)
+            self.last_time = now
+            self.last_bytes = downloaded
+        if self.current_speed is not None:
+            payload["speed"] = self.current_speed
+        # The engine's wall clock includes pauses. Use our active-time average for ETA.
+        total = payload["total"]
+        payload["eta"] = (max(0.0, float(total) - downloaded) / average) if total and average else None
+        return payload
 
 
 def format_bytes(value: float | int | None) -> str:
@@ -147,8 +222,8 @@ class DownloadApp:
     def __init__(self, root: Tk) -> None:
         self.root = root
         self.root.title(f"{APP_NAME} {APP_VERSION}")
-        self.root.geometry("860x720")
-        self.root.minsize(760, 640)
+        self.root.geometry("920x800")
+        self.root.minsize(850, 760)
 
         icon_path = resource_path("assets/c2.ico")
         if icon_path.exists():
@@ -174,6 +249,9 @@ class DownloadApp:
         self.resolution_var = StringVar(value=saved_format)
         self.cookies_browser_var = StringVar(value=saved_browser)
         self.cookies_file_var = StringVar()
+        self.fragments_var = StringVar(value=str(fragment_count(self.user_settings.get("concurrent_fragments", 4))))
+        self.download_fragments = fragment_count(self.fragments_var.get())
+        self.download_control = DownloadControl()
         self.update_status_var = StringVar(value="Componentes ainda não verificados")
         self.download_item_var = StringVar(value="Nenhum download em andamento")
         self.download_metrics_var = StringVar(
@@ -257,6 +335,12 @@ class DownloadApp:
             width=28,
         ).pack(side="left")
 
+        ttk.Label(format_frame, text="Fragmentos simultâneos (HLS/DASH):").pack(side="left", padx=(16, 6))
+        ttk.Combobox(
+            format_frame, textvariable=self.fragments_var,
+            values=FRAGMENT_CHOICES, state="readonly", width=3,
+        ).pack(side="left")
+
         cookies_frame = ttk.LabelFrame(frame, text="Acesso a sites com login")
         cookies_frame.pack(fill="x", pady=(0, 12))
 
@@ -288,6 +372,8 @@ class DownloadApp:
         actions.pack(fill="x", pady=(0, 8))
         self.download_button = ttk.Button(actions, text="Baixar", command=self.start_download)
         self.download_button.pack(side="left")
+        self.pause_button = ttk.Button(actions, text="Pausar", command=self.toggle_pause, state="disabled")
+        self.pause_button.pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="Limpar log", command=self.clear_log).pack(side="left", padx=(8, 0))
         self.update_button = ttk.Button(actions, text="Verificar atualizações", command=lambda: self.start_maintenance(True))
         self.update_button.pack(side="right")
@@ -301,12 +387,12 @@ class DownloadApp:
         ).pack(anchor="w", pady=(0, 4))
         self.progress = ttk.Progressbar(frame, mode="determinate", maximum=100, value=0)
         self.progress.pack(fill="x", pady=(0, 4))
-        ttk.Label(
-            frame,
-            textvariable=self.download_metrics_var,
-            foreground="#3f4f5f",
-            wraplength=820,
-        ).pack(anchor="w", pady=(0, 12))
+        metrics_label = ttk.Label(
+            frame, textvariable=self.download_metrics_var, foreground="#3f4f5f",
+            wraplength=820, justify="left",
+        )
+        metrics_label.pack(fill="x", pady=(0, 12))
+        metrics_label.bind("<Configure>", lambda event: metrics_label.configure(wraplength=max(200, event.width)))
 
         ttk.Label(frame, text="Log").pack(anchor="w")
         log_frame = ttk.Frame(frame)
@@ -449,6 +535,7 @@ class DownloadApp:
             "format": self.resolution_var.get(),
             "playlist": bool(self.playlist_var.get()),
             "cookies_browser": self.cookies_browser_var.get(),
+            "concurrent_fragments": fragment_count(self.fragments_var.get()),
         }
         try:
             save_user_settings(settings)
@@ -457,8 +544,44 @@ class DownloadApp:
             self.queue_log(f"Aviso: não foi possível salvar as preferências ({exc}).")
 
     def _on_close(self) -> None:
+        if self.busy:
+            if not messagebox.askyesno(
+                APP_NAME, "Há um trabalho em andamento. Sair e interrompê-lo?\n\n"
+                "Os arquivos parciais serão mantidos para uma nova tentativa.",
+            ):
+                return
+            try:
+                self.download_control.cancel()
+            except Exception as exc:
+                messagebox.showerror(APP_NAME, f"Não foi possível interromper o trabalho: {exc}")
+                return
         self._save_preferences()
         self.root.destroy()
+
+    def toggle_pause(self) -> None:
+        if not self.busy:
+            return
+        try:
+            if self.download_control.paused:
+                self.download_control.resume()
+                self.pause_button.configure(text="Pausar")
+                self.download_metrics_var.set(self._metrics_before_pause)
+                self.queue_log("Continuando o trabalho do ponto em que foi pausado.")
+            else:
+                self.download_control.pause()
+                self._metrics_before_pause = self.download_metrics_var.get()
+                self.progress.stop()
+                self.pause_button.configure(text="Continuar")
+                self.download_metrics_var.set(
+                    "PAUSADO — arquivos preservados. Clique em Continuar para retomar.\n"
+                    + self._metrics_before_pause
+                )
+                self.queue_log("Trabalho pausado. O tempo da pausa não entra nas estimativas.")
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Não foi possível pausar/continuar: {exc}")
+
+    def _download_clock(self) -> float:
+        return self.download_control.clock()
 
     def choose_cookies_file(self) -> None:
         selected = filedialog.askopenfilename(
@@ -490,9 +613,10 @@ class DownloadApp:
         self.download_metrics_var.set("Aguarde enquanto a operação é preparada...")
 
     def _begin_download_item(self, index: int, total: int, label: str) -> None:
+        self.download_control.checkpoint()
         self.download_item_index = max(1, int(index))
         self.download_item_total = max(self.download_item_index, int(total))
-        self.download_item_started_at = time.monotonic()
+        self.download_item_started_at = self._download_clock()
         self._last_media_progress_emit = 0.0
         self.event_queue.put(
             (
@@ -517,7 +641,8 @@ class DownloadApp:
         self.event_queue.put(("media_progress", enriched))
 
     def _report_direct_progress(self, downloaded: int, total: int | None) -> None:
-        elapsed = max(0.001, time.monotonic() - self.download_item_started_at)
+        self.download_control.checkpoint()
+        elapsed = max(0.001, self._download_clock() - self.download_item_started_at)
         percent = downloaded * 100 / total if total else 0.0
         average_speed = downloaded / elapsed
         eta = (total - downloaded) / average_speed if total and average_speed > 0 else None
@@ -536,6 +661,8 @@ class DownloadApp:
     def _handle_media_context(self, payload: object) -> None:
         if not isinstance(payload, dict):
             return
+        if self.download_control.paused:
+            return
         index = max(1, int(payload.get("index") or 1))
         total = max(index, int(payload.get("total") or index))
         label = str(payload.get("label") or "Mídia")
@@ -547,6 +674,8 @@ class DownloadApp:
 
     def _handle_media_progress(self, payload: object) -> None:
         if not isinstance(payload, dict):
+            return
+        if self.download_control.paused:
             return
         index = max(1, int(payload.get("index") or 1))
         item_total = max(index, int(payload.get("item_total") or index))
@@ -571,21 +700,40 @@ class DownloadApp:
             file_eta = max(0.0, total - downloaded) / average_speed_value
 
         job_eta = None
-        elapsed_job = time.monotonic() - self.download_job_started_at
+        elapsed_job = self._download_clock() - self.download_job_started_at
         if self.download_job_started_at and overall > 0.01:
             job_eta = elapsed_job * (100 - overall) / overall
 
-        total_prefix = "~" if payload.get("total_is_estimate") else ""
-        metrics = [
-            f"arquivo {percent:.1f}%".replace(".", ","),
-            f"trabalho {overall:.1f}%".replace(".", ","),
-            f"{format_bytes(downloaded)} / {total_prefix}{format_bytes(total)}",
-            f"atual {format_bytes(current_speed_value)}/s",
-            f"média {format_bytes(average_speed_value)}/s",
-            f"arquivo {format_duration(file_eta)}",
-            f"trabalho ~{format_duration(job_eta)}",
-        ]
-        self.download_metrics_var.set("  •  ".join(metrics))
+        total_label = "Total estimado" if payload.get("total_is_estimate") else "Total"
+        def rate(value):
+            return f"{format_bytes(value)}/s" if value is not None else "calculando"
+        percentage = f"{percent:.1f}%".replace(".", ",") if payload.get("percent_known", True) else "calculando"
+        queue_percentage = f"{overall:.1f}%".replace(".", ",")
+        self.download_metrics_var.set(
+            f"Arquivo: {percentage}  •  Recebido: {format_bytes(downloaded)}  •  "
+            f"{total_label}: {format_bytes(total)}\n"
+            f"Velocidade atual: {rate(current_speed_value)}  •  Média: {rate(average_speed_value)}\n"
+            f"Restante no arquivo: {format_duration(file_eta)}  •  "
+            f"Fila: ~{queue_percentage} / ~{format_duration(job_eta)} (estimativa de download)"
+        )
+
+    def _handle_conversion_progress(self, payload: object) -> None:
+        if not isinstance(payload, dict) or self.download_control.paused:
+            return
+        percent = payload.get("percent")
+        self.progress.stop()
+        self.download_item_var.set(str(payload.get("label") or "Finalizando mídia"))
+        if percent is None:
+            self.progress.configure(mode="indeterminate", maximum=100, value=0)
+            self.progress.start(15)
+            self.download_metrics_var.set("Download recebido. Finalizando o arquivo; aguarde...")
+        else:
+            self.progress.configure(mode="determinate", maximum=100, value=float(percent))
+            self.download_metrics_var.set(
+                f"Finalização: {float(percent):.1f}%  •  "
+                f"Tempo restante nesta etapa: ~{format_duration(payload.get('eta'))}\n"
+                "Processamento local — não é transferência pela internet."
+            )
 
     def _poll_queues(self) -> None:
         try:
@@ -621,10 +769,12 @@ class DownloadApp:
                     self._handle_media_context(payload)
                 elif event == "media_progress":
                     self._handle_media_progress(payload)
+                elif event == "conversion_progress":
+                    self._handle_conversion_progress(payload)
                 elif event == "application_installer_ready":
                     self._install_application_update(Path(str(payload)))
                 elif event == "download_finished":
-                    self._finish_download()
+                    self._finish_download(payload)
                 elif event == "application_update_error":
                     self.progress.stop()
                     self.update_button.configure(state="normal")
@@ -751,14 +901,18 @@ class DownloadApp:
         self.folder_var.set(str(folder))
         self._save_preferences()
         self.busy = True
+        self.download_control = DownloadControl()
+        self.download_fragments = fragment_count(self.fragments_var.get())
+        self.pause_button.configure(state="normal", text="Pausar")
         self.download_button.configure(state="disabled")
-        self.download_job_started_at = time.monotonic()
+        self.download_job_started_at = self._download_clock()
         self.progress.stop()
         self.progress.configure(mode="determinate", maximum=100, value=0)
         self.download_item_var.set("Preparando downloads")
         self.download_metrics_var.set("Calculando informações da fila...")
         format_choice = self.resolution_var.get()
         self.queue_log(f"Iniciando {len(urls)} download(s) em: {folder} ({format_choice})")
+        self.queue_log(f"HLS/DASH: até {self.download_fragments} fragmentos simultâneos.")
         threading.Thread(target=self._download, args=(urls, folder, format_choice), daemon=True).start()
 
     def _get_urls(self) -> list[str]:
@@ -796,9 +950,10 @@ class DownloadApp:
             else:
                 self.queue_log("Concluído com sucesso.")
         except Exception as exc:
+            failures += 1
             self.queue_log(f"Erro: {exc}")
         finally:
-            self.event_queue.put(("download_finished", None))
+            self.event_queue.put(("download_finished", {"failures": failures}))
 
     def _build_command(
         self,
@@ -839,8 +994,16 @@ class DownloadApp:
             str(engine),
             "--newline",
             "--no-color",
+            "--progress",
+            "--no-quiet",
+            "--progress-delta",
+            "0.5",
+            "--concurrent-fragments",
+            str(fragment_count(getattr(self, "download_fragments", 4))),
             "--progress-template",
             PROGRESS_TEMPLATE,
+            "--progress-template",
+            f"postprocess:{POSTPROCESS_MARKER}%(progress.status)s|%(progress.postprocessor)s",
             "--encoding",
             "utf-8",
             "--windows-filenames",
@@ -849,6 +1012,7 @@ class DownloadApp:
             "10",
             "--fragment-retries",
             "10",
+            "--abort-on-unavailable-fragments",
             "--merge-output-format",
             "mp4",
             "--remote-components",
@@ -883,8 +1047,8 @@ class DownloadApp:
 
     def _run_downloader(self, command: list[str]) -> tuple[int, list[Path]]:
         output_files: list[Path] = []
-        progress_started_at: float | None = None
-        process = subprocess.Popen(
+        tracker = ProgressTracker()
+        process = self.download_control.popen(
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -894,34 +1058,38 @@ class DownloadApp:
             creationflags=CREATE_NO_WINDOW,
             env=self.dependencies.runtime_environment(),
         )
-        assert process.stdout is not None
-        for line in process.stdout:
-            cleaned = line.rstrip()
-            if not cleaned:
-                continue
-            if cleaned.startswith(OUTPUT_MARKER):
-                output_path = cleaned[len(OUTPUT_MARKER):].strip()
-                if output_path:
-                    output_files.append(Path(output_path))
-                continue
-            if cleaned.startswith(PROGRESS_MARKER) and progress_started_at is None:
-                progress_started_at = time.monotonic()
-            progress = parse_ytdlp_progress(
-                cleaned,
-                elapsed=(
-                    time.monotonic() - progress_started_at
-                    if progress_started_at is not None
-                    else 0.0
-                ),
-            )
-            if progress is not None:
-                self._emit_media_progress(progress)
-                continue
-            self.queue_log(cleaned)
-        return process.wait(), output_files
+        try:
+            assert process.stdout is not None
+            for line in process.stdout:
+                self.download_control.checkpoint()
+                cleaned = line.rstrip()
+                if not cleaned:
+                    continue
+                if cleaned.startswith(OUTPUT_MARKER):
+                    output_path = cleaned[len(OUTPUT_MARKER):].strip()
+                    if output_path:
+                        output_files.append(Path(output_path))
+                    continue
+                if cleaned.startswith(POSTPROCESS_MARKER):
+                    self.event_queue.put(("conversion_progress", {"label": "Finalizando mídia"}))
+                    continue
+                progress = tracker.parse(cleaned, now=self._download_clock())
+                if progress is not None:
+                    self._emit_media_progress(progress)
+                    continue
+                self.queue_log(cleaned)
+            self.download_control.checkpoint()
+            return process.wait(), output_files
+        finally:
+            if process.poll() is None:
+                self.download_control.cancel()
+            process.wait()
+            if process.stdout:
+                process.stdout.close()
+            self.download_control.release(process)
 
     @staticmethod
-    def _stream_details(media_path: Path) -> tuple[str, str]:
+    def _stream_details(media_path: Path) -> tuple[str, str, float | None]:
         if not FFMPEG_PATH:
             raise RuntimeError("FFmpeg não está disponível.")
         completed = subprocess.run(
@@ -936,8 +1104,8 @@ class DownloadApp:
         )
         lines = completed.stdout.splitlines()
         video_line = next((line.strip().lower() for line in lines if "video:" in line.lower()), "")
-        audio_line = next((line.strip().lower() for line in lines if "audio:" in line.lower()), "")
-        return video_line, audio_line
+        audio_line = "\n".join(line.strip().lower() for line in lines if "audio:" in line.lower())
+        return video_line, audio_line, duration_from_probe(completed.stdout)
 
     def _ensure_player_compatibility(self, media_path: Path) -> Path:
         if not media_path.exists() or media_path.suffix.lower() not in VIDEO_EXTENSIONS:
@@ -945,25 +1113,27 @@ class DownloadApp:
         if not FFMPEG_PATH:
             raise RuntimeError("FFmpeg não foi encontrado para validar o vídeo.")
 
-        video_line, audio_line = self._stream_details(media_path)
+        self.download_control.checkpoint()
+        video_line, audio_line, duration = self._stream_details(media_path)
         if not video_line:
             return media_path
 
-        video_ok = "video: h264" in video_line and "yuv420p" in video_line
-        audio_ok = not audio_line or (
-            "audio: aac" in audio_line
-            and "he-aac" not in audio_line
-            and "he_aac" not in audio_line
-        )
+        video_ok, audio_ok = stream_compatibility(video_line, audio_line)
         if video_ok and audio_ok and media_path.suffix.lower() == ".mp4":
             return media_path
 
         destination = media_path.with_suffix(".mp4")
-        temporary = destination.with_name(f".{destination.stem}.c2-convertendo.mp4")
-        temporary.unlink(missing_ok=True)
-        self.queue_log(
-            f"Convertendo para MP4 compatível (H.264/AAC): {media_path.name}"
-        )
+        if destination != media_path and destination.exists():
+            destination = destination.with_name(f"{destination.stem}.c2-{uuid.uuid4().hex[:8]}.mp4")
+        temporary = destination.with_name(f".c2-{uuid.uuid4().hex}.mp4")
+        if video_ok and audio_ok:
+            phase = "Empacotando MP4 sem recodificar"
+        elif video_ok:
+            phase = "Convertendo apenas o áudio; preservando o vídeo"
+        else:
+            phase = "Convertendo vídeo para H.264"
+        self.queue_log(f"{phase}: {media_path.name}")
+        self.event_queue.put(("conversion_progress", {"label": phase}))
 
         command = [
             FFMPEG_PATH,
@@ -971,6 +1141,10 @@ class DownloadApp:
             "-hide_banner",
             "-loglevel",
             "warning",
+            "-nostdin",
+            "-nostats",
+            "-progress",
+            "pipe:1",
             "-i",
             str(media_path),
             "-map",
@@ -979,53 +1153,42 @@ class DownloadApp:
             "0:a?",
             "-map_metadata",
             "0",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "medium",
-            "-crf",
-            "20",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-profile:a",
-            "aac_low",
-            "-b:a",
-            "160k",
+            *codec_arguments(video_ok, audio_ok),
             "-movflags",
             "+faststart",
             str(temporary),
         ]
-        completed = subprocess.run(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            creationflags=CREATE_NO_WINDOW,
-            timeout=7200,
-        )
-        if completed.returncode != 0 or not temporary.exists() or temporary.stat().st_size == 0:
+        try:
+            run_conversion(
+                command, self.download_control, duration,
+                lambda payload: self.event_queue.put(("conversion_progress", dict(payload, label=phase))),
+                creationflags=CREATE_NO_WINDOW,
+            )
+            if not temporary.exists() or temporary.stat().st_size == 0:
+                raise RuntimeError("O FFmpeg não produziu um arquivo válido.")
+            self.download_control.checkpoint()
+            os.replace(temporary, destination)
+        finally:
             temporary.unlink(missing_ok=True)
-            details = completed.stdout.strip().splitlines()
-            last_line = details[-1] if details else f"código {completed.returncode}"
-            raise RuntimeError(last_line)
 
-        os.replace(temporary, destination)
         if media_path != destination:
             media_path.unlink(missing_ok=True)
         self.queue_log(f"Vídeo compatível gerado: {destination.name}")
         return destination
 
-    def _finish_download(self) -> None:
+    def _finish_download(self, payload: object = None) -> None:
         self.busy = False
+        self.download_control.resume()
+        self.pause_button.configure(state="disabled", text="Pausar")
         self.progress.stop()
-        self.progress.configure(mode="determinate", maximum=100, value=100)
-        self.download_item_var.set("Trabalho de download finalizado")
+        failures = int(payload.get("failures", 0)) if isinstance(payload, dict) else 0
+        self.progress.configure(mode="determinate", maximum=100)
+        if not failures:
+            self.progress["value"] = 100
+        self.download_item_var.set("Trabalho finalizado com falhas" if failures else "Trabalho finalizado com sucesso")
         self.download_metrics_var.set(
-            f"100,0%  •  tempo total {format_duration(time.monotonic() - self.download_job_started_at)}"
+            f"Tempo ativo: {format_duration(self._download_clock() - self.download_job_started_at)}"
+            + ("  •  Consulte o log para tentar novamente os itens com falha." if failures else "")
         )
         self.download_button.configure(state="normal")
 

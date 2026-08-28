@@ -12,6 +12,7 @@ def test_user_settings_roundtrip(tmp_path: Path, monkeypatch):
         "format": "Melhor MP4 compatível",
         "playlist": True,
         "cookies_browser": "Firefox",
+        "concurrent_fragments": 8,
     }
 
     app.save_user_settings(expected)

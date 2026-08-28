@@ -149,6 +149,8 @@ class KanalDCommandTests(unittest.TestCase):
         self.assertNotIn("--cookies-from-browser", command)
         self.assertNotIn("--cookies", command)
         self.assertIn("--progress-template", command)
+        self.assertIn("--progress", command)
+        self.assertEqual(command[command.index("--concurrent-fragments") + 1], "4")
         self.assertTrue(any("__C2_PROGRESS__" in part for part in command))
 
 

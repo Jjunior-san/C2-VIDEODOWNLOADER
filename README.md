@@ -198,3 +198,31 @@ A pasta selecionada é salva imediatamente ao usar **Escolher**, novamente ao in
 - corrige a identificação de vídeos em páginas recentes do Kanal D;
 - tolera blocos `VideoObject` malformados pelo próprio site;
 - valida os episódios 37 e 38 de Uzak Şehir em HLS até 1080p.
+
+## Versão 1.3.4
+
+- corrige a ausência de progresso causada pela combinação de --print sem --progress;
+- mostra recebido, total exato/estimado, velocidade atual/média em KB/s ou MB/s e tempo restante;
+- baixa até 4 fragmentos HLS/DASH simultaneamente, ajustáveis para 1, 2, 4 ou 8;
+- inclui o botão **Pausar / Continuar**, inclusive durante a finalização pelo FFmpeg;
+- exclui o tempo pausado e os bytes já existentes da média de transferência;
+- preserva vídeo/áudio compatíveis sem recodificação e mostra a etapa de finalização separadamente;
+- preserva o arquivo original quando uma conversão falha e evita sobrescrever outro MP4;
+- testa a linha de comando real do yt-dlp, a transferência paralela e a pausa/retomada.
+
+### Desempenho e pausa
+
+O número de fragmentos controla partes de um mesmo vídeo, não episódios simultâneos.
+Comece com 4; use 1 ou 2 se o servidor limitar conexões ou ocorrerem falhas. A melhora
+depende da conexão e do servidor. Em HLS, o tamanho total pode ser apenas estimado
+e é refinado durante a transferência. A estimativa da fila não inclui com precisão
+conversões futuras, pois os arquivos restantes ainda não foram analisados.
+
+**Pausar** mantém a sessão e os arquivos abertos; **Continuar** retoma o trabalho.
+Pausas longas podem exigir novas tentativas de conexão. Para preservar essa sessão,
+mantenha o aplicativo aberto. Se sair, confirme a interrupção: os arquivos parciais
+do yt-dlp ficam na pasta. Ao iniciar novamente com a mesma URL, formato e pasta,
+o motor tenta continuar onde o servidor e o formato permitirem. Não há persistência
+automática da fila entre aberturas.
+
+Taxas são exibidas em bytes por segundo: KB/s e MB/s, não em kilobits por segundo (kbps).

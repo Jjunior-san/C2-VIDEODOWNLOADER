@@ -5,12 +5,15 @@ import os
 import re
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
+from download_control import DownloadControl
+from media_conversion import run_conversion
 
 JW_CATEGORY_PATTERN = re.compile(
     r"^(?P<locale>[a-z]{2}(?:-[a-z]{2})?)/categories/"
@@ -28,7 +31,7 @@ API_URLS = (
     "?detailed=1&clientType=www",
 )
 MAX_JSON_BYTES = 32 * 1024 * 1024
-USER_AGENT = "C2-Video-Downloader/1.3.3 (+https://c2sistemas.com)"
+USER_AGENT = "C2-Video-Downloader/1.3.4 (+https://c2sistemas.com)"
 VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".webm"}
 AUDIO_EXTENSIONS = {".m4a", ".mp3", ".aac", ".opus", ".ogg"}
 
@@ -451,6 +454,8 @@ def convert_to_m4a(
     media_path: Path,
     ffmpeg_path: str | Path | None,
     logger: Callable[[str], None] | None = None,
+    control: DownloadControl | None = None,
+    progress: Callable[[dict[str, object]], None] | None = None,
 ) -> Path:
     if media_path.suffix.lower() == ".m4a":
         return media_path
@@ -458,47 +463,48 @@ def convert_to_m4a(
         raise JWOrgError("FFmpeg não está disponível para gerar o arquivo M4A.")
 
     destination = media_path.with_suffix(".m4a")
-    temporary = destination.with_name(f".{destination.stem}.c2-audio.m4a")
-    temporary.unlink(missing_ok=True)
+    if destination.exists():
+        destination = destination.with_name(f"{destination.stem}.c2-{uuid.uuid4().hex[:8]}.m4a")
+    temporary = destination.with_name(f".c2-{uuid.uuid4().hex}.m4a")
     if logger:
         logger(f"Extraindo áudio M4A: {media_path.name}")
 
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-    completed = subprocess.run(
-        [
-            str(ffmpeg_path),
-            "-y",
-            "-hide_banner",
-            "-loglevel",
-            "warning",
-            "-i",
-            str(media_path),
-            "-vn",
-            "-c:a",
-            "aac",
-            "-profile:a",
-            "aac_low",
-            "-b:a",
-            "160k",
-            "-movflags",
-            "+faststart",
-            str(temporary),
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        creationflags=creationflags,
-        timeout=7200,
-    )
-    if completed.returncode != 0 or not temporary.exists() or temporary.stat().st_size == 0:
+    command = [
+        str(ffmpeg_path),
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-nostdin",
+        "-nostats",
+        "-progress",
+        "pipe:1",
+        "-i",
+        str(media_path),
+        "-vn",
+        "-c:a",
+        "aac",
+        "-profile:a",
+        "aac_low",
+        "-b:a",
+        "160k",
+        "-movflags",
+        "+faststart",
+        str(temporary),
+    ]
+    job_control = control or DownloadControl()
+    try:
+        run_conversion(
+            command, job_control, None, progress or (lambda payload: None),
+            creationflags=creationflags,
+        )
+        if not temporary.exists() or temporary.stat().st_size == 0:
+            raise JWOrgError("Não foi possível gerar o M4A: arquivo vazio.")
+        job_control.checkpoint()
+        os.replace(temporary, destination)
+    finally:
         temporary.unlink(missing_ok=True)
-        details = completed.stdout.strip().splitlines()
-        last_line = details[-1] if details else f"código {completed.returncode}"
-        raise JWOrgError(f"Não foi possível gerar o M4A: {last_line}")
-
-    os.replace(temporary, destination)
     if media_path != destination:
         media_path.unlink(missing_ok=True)
     if logger:

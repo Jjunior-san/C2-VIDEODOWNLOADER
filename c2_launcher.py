@@ -6,6 +6,7 @@ from tkinter import ttk
 
 import youtube_downloader_app as app
 from app_config import APP_NAME, APP_VERSION
+from download_control import DownloadCancelled
 from jw_org_downloader import (
     convert_to_m4a,
     download_item,
@@ -155,6 +156,8 @@ def _download_with_jw_categories(
             for output_file in output_files:
                 try:
                     self._ensure_player_compatibility(output_file)
+                except DownloadCancelled:
+                    raise
                 except Exception as exc:
                     conversion_failed = True
                     self.queue_log(
@@ -163,6 +166,7 @@ def _download_with_jw_categories(
             return not conversion_failed
 
         for source_index, url in enumerate(urls, start=1):
+            self.download_control.checkpoint()
             self.queue_log(f"[{source_index}/{len(urls)}] Processando: {url}")
 
             if is_jw_category_url(url):
@@ -199,9 +203,15 @@ def _download_with_jw_categories(
                                 output_file,
                                 app.FFMPEG_PATH,
                                 logger=self.queue_log,
+                                control=self.download_control,
+                                progress=lambda payload: self.event_queue.put((
+                                    "conversion_progress", dict(payload, label="Extraindo áudio M4A"),
+                                )),
                             )
                         else:
                             self._ensure_player_compatibility(output_file)
+                    except DownloadCancelled:
+                        raise
                     except Exception as exc:
                         failures += 1
                         self.queue_log(f"Erro no item '{item.title}': {exc}")
@@ -229,6 +239,7 @@ def _download_with_jw_categories(
 
                 width = max(2, len(str(len(episode_urls))))
                 for episode_index, episode_url in enumerate(episode_urls, start=1):
+                    self.download_control.checkpoint()
                     attempted += 1
                     try:
                         self.queue_log(
@@ -251,6 +262,8 @@ def _download_with_jw_categories(
                             item_label=video.title,
                         ):
                             failures += 1
+                    except DownloadCancelled:
+                        raise
                     except Exception as exc:
                         failures += 1
                         self.queue_log(
@@ -293,10 +306,14 @@ def _download_with_jw_categories(
             )
         else:
             self.queue_log("Concluído com sucesso.")
+    except DownloadCancelled as exc:
+        failures += 1
+        self.queue_log(str(exc))
     except Exception as exc:
+        failures += 1
         self.queue_log(f"Erro: {exc}")
     finally:
-        self.event_queue.put(("download_finished", None))
+        self.event_queue.put(("download_finished", {"failures": failures}))
 
 
 app.SUPPORTED_HINT = (
