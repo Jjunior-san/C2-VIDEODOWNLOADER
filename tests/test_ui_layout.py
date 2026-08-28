@@ -1,4 +1,4 @@
-from tkinter import TclError, Tk
+from tkinter import TclError, Tk, Toplevel
 
 import pytest
 
@@ -17,18 +17,29 @@ def test_geometry_fits_work_area_including_native_frame(area):
     assert area[1] <= y < y + height + 40 <= area[3]
 
 
-@pytest.fixture(params=[1.0, 1.5, 2.0])
-def window(monkeypatch, request):
-    monkeypatch.setattr(app, "load_user_settings", lambda: {})
-    monkeypatch.setattr(app.DownloadApp, "start_maintenance", lambda *args: None)
+@pytest.fixture(scope="module")
+def desktop():
     try:
         root = Tk()
     except TclError as exc:
         pytest.skip(f"Tk desktop unavailable: {exc}")
     root.withdraw()
+    yield root
+    root.destroy()
+
+
+@pytest.fixture(params=[1.0, 1.5, 2.0])
+def window(monkeypatch, request, tmp_path, desktop):
+    monkeypatch.setattr(app, "load_user_settings", lambda: {})
+    monkeypatch.setattr(app.DownloadApp, "start_maintenance", lambda *args: None)
+    monkeypatch.setattr(app, "QUEUE_FILE", tmp_path / "downloads.sqlite3")
+    root = Toplevel(desktop)
+    root.withdraw()
     root.tk.call("tk", "scaling", request.param * 96 / 72)
     instance = app.DownloadApp(root)
     yield root, instance
+    for timer in root.tk.call("after", "info"):
+        root.after_cancel(timer)
     root.destroy()  # No writes to the user's settings or background downloads.
 
 
@@ -42,8 +53,8 @@ def test_compact_window_keeps_controls_reachable(window, geometry):
     root.update()
     assert root.winfo_width() == int(geometry.split("x")[0])
     assert root.winfo_height() == int(geometry.split("x")[1])
-    assert len(instance.tabs.tabs()) == 2
-    for page in (instance.download_page, instance.settings_page):
+    assert len(instance.tabs.tabs()) == 3
+    for page in (instance.download_page, instance.settings_page, instance.activity_page):
         instance.tabs.select(page)
         root.update()
         assert page.winfo_width() <= root.winfo_width()
@@ -57,12 +68,12 @@ def test_compact_window_keeps_controls_reachable(window, geometry):
             canvas.yview_moveto(1)
             root.update()
             assert canvas.yview()[1] == 1
-    instance.tabs.select(instance.download_page)
+    instance.tabs.select(instance.activity_page)
     root.update()
     # Keyboard navigation also scrolls offscreen controls into view.
     instance.log.focus_force()
     root.update()
-    assert instance.log.winfo_rooty() >= instance.download_page.canvas.winfo_rooty()
+    assert instance.log.winfo_rooty() >= instance.activity_page.canvas.winfo_rooty()
 
 
 def test_completion_distinguishes_partial_empty_and_failed_jobs(window):
@@ -77,3 +88,43 @@ def test_completion_distinguishes_partial_empty_and_failed_jobs(window):
         instance._finish_download({"failures": failures, "completed": completed})
         assert instance.download_item_var.get() == expected
         assert f"Arquivos concluídos: {completed}" in instance.download_metrics_var.get()
+
+
+def test_queue_table_selections_retry_and_stop_race(window):
+    from download_queue import queue_item
+    _, instance = window
+    items = [queue_item(f"https://example.com/{i}", str(i)) for i in range(3)]
+    items[1]["status"] = "failed"
+    instance.queue_repository.replace(items, instance._capture_options(), [])
+    instance._refresh_queue()
+    instance._toggle_items([items[0]["id"]])
+    assert not instance.queue_repository.snapshot()["items"][0]["enabled"]
+    instance.episode_tree.selection_set(items[1]["id"])
+    instance.retry_failed()
+    assert instance.queue_repository.snapshot()["items"][1]["status"] == "pending"
+    instance.episode_tree.selection_set(items[2]["id"])
+    instance.cancel_selected()
+    assert instance.queue_repository.snapshot()["items"][2]["status"] == "cancelled"
+    instance.download_control.cancel()
+    instance._start_saved_queue = lambda: pytest.fail("Stopping discovery must prevent automatic download")
+    instance._queue_prepared(True)
+
+
+def test_queue_progress_uses_episode_count_and_preserves_fraction_during_conversion(window):
+    from download_queue import queue_item
+    _, instance = window
+    items = [queue_item(f"https://example.com/{i}", str(i)) for i in range(4)]
+    items[0]["status"] = "completed"
+    items[1]["status"] = "downloading"
+    items[3]["enabled"] = False
+    instance.queue_repository.replace(items, instance._capture_options(), [])
+    instance._refresh_queue()
+    instance.queue_running = True
+    instance.queue_initial_done = 1
+    instance.download_job_started_at = instance._download_clock() - 10
+    instance._handle_media_context({"index": 1, "total": 1, "queue_id": items[1]["id"], "label": "Episode 2"})
+    assert "2/3" in instance.download_item_var.get()
+    instance._handle_media_progress({"index": 1, "item_total": 1, "queue_id": items[1]["id"], "percent": 50})
+    assert float(instance.progress["value"]) == 50
+    instance._handle_conversion_progress({"percent": 100})
+    assert float(instance.progress["value"]) == 50

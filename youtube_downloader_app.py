@@ -15,7 +15,10 @@ from tkinter import ttk
 
 from app_config import APP_MUTEX, APP_NAME, APP_VERSION
 from download_control import DownloadCancelled, DownloadControl
-from ui_layout import ScrollablePage, build_brand, fit_window, wrapping_label
+from ui_layout import ScrollablePage, build_brand, configure_fonts, fit_window, wrapping_label
+from download_queue import QueueRepository, queue_summary
+from queue_ui import QueueUI
+from queue_service import cookie_arguments
 from media_conversion import codec_arguments, duration_from_probe, run_conversion, stream_compatibility
 from c2_update import (
     ApplicationUpdater,
@@ -34,6 +37,7 @@ except (ImportError, RuntimeError):
     FFMPEG_PATH = None
 
 SETTINGS_FILE = DATA_DIR / "settings.json"
+QUEUE_FILE = DATA_DIR / "downloads.sqlite3"
 OUTPUT_MARKER = "__C2_OUTPUT__:"
 PROGRESS_MARKER = "__C2_PROGRESS__:"
 POSTPROCESS_MARKER = "__C2_POSTPROCESS__:"
@@ -213,9 +217,10 @@ def save_user_settings(settings: dict[str, object]) -> None:
     os.replace(temporary, SETTINGS_FILE)
 
 
-class DownloadApp:
+class DownloadApp(QueueUI):
     def __init__(self, root: Tk) -> None:
         self.root = root
+        self.text_family, self.display_family = configure_fonts(root)
         self.root.title(f"{APP_NAME} {APP_VERSION}")
         fit_window(self.root)
 
@@ -262,11 +267,33 @@ class DownloadApp:
         self.download_item_started_at = 0.0
         self.download_item_index = 1
         self.download_item_total = 1
+        self.queue_items = []
+        self.active_queue_id = None
+        self.queue_running = False
+        self.download_options = None
+        self.ffmpeg_path = FFMPEG_PATH
 
         self.dependencies = DependencyManager()
         self.app_updater = ApplicationUpdater(self.dependencies)
+        queue_error = None
+        try:
+            self.queue_repository = QueueRepository(QUEUE_FILE)
+        except Exception as exc:
+            self.queue_repository = None
+            queue_error = str(exc)
 
         self._build_ui()
+        try:
+            if self.queue_repository is not None:
+                self._restore_queue()
+        except Exception as exc:
+            self.queue_repository = None
+            queue_error = str(exc)
+        if queue_error:
+            self.download_button.configure(state="disabled")
+            self.analyze_button.configure(state="disabled")
+            self.queue_count.configure(text="Não foi possível abrir a fila salva. Consulte a aba Atividade.")
+            self.queue_log(f"Fila preservada em {QUEUE_FILE}. Erro ao ler/gravar: {queue_error}")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll_queues()
         self.root.after(700, self.start_maintenance)
@@ -281,21 +308,25 @@ class DownloadApp:
         except Exception as exc:
             self.queue_log(f"Aviso: não foi possível carregar a logo ({exc}).")
         ttk.Separator(header, orient="vertical").pack(side="left", fill="y", padx=(0, 12))
-        ttk.Label(header, text="Video Downloader", font=("Segoe UI", 15, "bold"),
-                  foreground="#172b4d").pack(side="left")
+        title = ttk.Label(header, text="Video Downloader", font=(self.display_family, 15, "bold"),
+                          width=1, foreground="#172b4d", wraplength=300)
+        title.pack(side="left", fill="x", expand=True)
+        title.bind("<Configure>", lambda event: title.configure(wraplength=max(1, event.width)))
 
         self.tabs = ttk.Notebook(shell)
         self.tabs.pack(fill="both", expand=True)
         self.download_page = ScrollablePage(self.tabs)
         self.settings_page = ScrollablePage(self.tabs)
+        self.activity_page = ScrollablePage(self.tabs)
         self.tabs.add(self.download_page, text="  Downloads  ")
         self.tabs.add(self.settings_page, text="  Configurações  ")
+        self.tabs.add(self.activity_page, text="  Atividade  ")
         frame = self.download_page.body
 
-        ttk.Label(frame, text="Links dos vídeos ou playlists", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        ttk.Label(frame, text="Links dos vídeos ou playlists", font=(self.text_family, 10, "bold")).pack(anchor="w")
         url_row = ttk.Frame(frame)
         url_row.pack(fill="x", pady=(4, 10))
-        self.url_text = self._make_text(url_row, height=3)
+        self.url_text = self._make_text(url_row, height=2)
         self.url_text.pack(side="left", fill="x", expand=True)
         url_scroll = ttk.Scrollbar(url_row, command=self.url_text.yview)
         url_scroll.pack(side="right", fill="y")
@@ -316,25 +347,29 @@ class DownloadApp:
         ).pack(side="left")
         ttk.Checkbutton(format_frame, text="Baixar playlist/álbum", variable=self.playlist_var).pack(side="left", padx=(12, 0))
 
-        actions = ttk.Frame(frame)
+        self._build_episode_list(frame)
+
+        actions = self.episode_actions
         actions.pack(fill="x", pady=(0, 12))
         self.download_button = ttk.Button(actions, text="Baixar", command=self.start_download)
         self.download_button.pack(side="left")
         self.pause_button = ttk.Button(actions, text="Pausar", command=self.toggle_pause, state="disabled")
         self.pause_button.pack(side="left", padx=(8, 0))
-        ttk.Button(actions, text="Limpar log", command=self.clear_log).pack(side="right")
+        self.stop_button = ttk.Button(actions, text="Parar fila", command=self.stop_queue, state="disabled")
+        self.stop_button.pack(side="left", padx=(8, 0))
 
         progress_frame = ttk.LabelFrame(frame, text="Progresso", padding=10)
         progress_frame.pack(fill="x", pady=(0, 10))
-        wrapping_label(progress_frame, textvariable=self.download_item_var, font=("Segoe UI", 9, "bold"))
+        wrapping_label(progress_frame, textvariable=self.download_item_var, font=(self.text_family, 10, "bold"))
         self.progress = ttk.Progressbar(progress_frame, mode="determinate", maximum=100, value=0)
         self.progress.pack(fill="x", pady=(0, 8))
         wrapping_label(progress_frame, textvariable=self.download_metrics_var, foreground="#3f4f5f")
 
-        ttk.Label(frame, text="Atividade").pack(anchor="w", pady=(0, 4))
-        log_frame = ttk.Frame(frame)
+        activity = self.activity_page.body
+        ttk.Button(activity, text="Limpar atividade", command=self.clear_log).pack(anchor="e", pady=(0, 8))
+        log_frame = ttk.Frame(activity)
         log_frame.pack(fill="both", expand=True)
-        self.log = self._make_text(log_frame, height=5)
+        self.log = self._make_text(log_frame, height=15)
         self.log.pack(side="left", fill="both", expand=True)
         scrollbar = ttk.Scrollbar(log_frame, command=self.log.yview)
         scrollbar.pack(side="right", fill="y")
@@ -367,7 +402,8 @@ class DownloadApp:
 
         about_frame = ttk.LabelFrame(settings, text="Aplicativo", padding=10)
         about_frame.pack(fill="x")
-        wrapping_label(about_frame, text=f"{APP_NAME} • Versão {APP_VERSION}", font=("Segoe UI", 10, "bold"))
+        wrapping_label(about_frame, text=f"{APP_NAME} • Versão {APP_VERSION}", font=(self.text_family, 10, "bold"))
+        wrapping_label(about_frame, text=f"Fontes: {self.text_family} / {self.display_family}", foreground="#596579")
         wrapping_label(about_frame, textvariable=self.update_status_var, foreground="#596579")
         self.update_button = ttk.Button(about_frame, text="Verificar atualizações", command=lambda: self.start_maintenance(True))
         self.update_button.pack(anchor="w", pady=(0, 12))
@@ -375,13 +411,12 @@ class DownloadApp:
         wrapping_label(about_frame, text="Cole um link por linha. Baixe apenas mídias suas, livres ou que você tenha permissão para baixar.", foreground="#596579")
 
     def _build_site_logo(self, parent) -> ttk.Frame:
-        return build_brand(parent, resource_path("assets/c2_logo_horizontal.png"))
+        return build_brand(parent, resource_path("assets/c2_logo_horizontal.png"), self.display_family)
 
-    @staticmethod
-    def _make_text(parent, height: int):
+    def _make_text(self, parent, height: int):
         from tkinter import Text
 
-        return Text(parent, height=height, width=1, wrap="word", font=("Segoe UI", 9),
+        return Text(parent, height=height, width=1, wrap="word", font=(self.text_family, 10),
                     relief="solid", borderwidth=1, padx=8, pady=6)
 
     def choose_folder(self) -> None:
@@ -434,7 +469,7 @@ class DownloadApp:
             else:
                 self.download_control.pause()
                 self._metrics_before_pause = self.download_metrics_var.get()
-                self.progress.stop()
+                self._stop_progress_preserving_value()
                 self.pause_button.configure(text="Continuar")
                 self.download_metrics_var.set(
                     "PAUSADO — arquivos preservados. Clique em Continuar para retomar.\n"
@@ -476,6 +511,11 @@ class DownloadApp:
         self.download_item_var.set(label)
         self.download_metrics_var.set("Aguarde enquanto a operação é preparada...")
 
+    def _stop_progress_preserving_value(self):
+        value = self.progress["value"]
+        self.progress.stop()
+        self.progress["value"] = value
+
     def _begin_download_item(self, index: int, total: int, label: str) -> None:
         self.download_control.checkpoint()
         self.download_item_index = max(1, int(index))
@@ -489,6 +529,7 @@ class DownloadApp:
                     "index": self.download_item_index,
                     "total": self.download_item_total,
                     "label": label,
+                    "queue_id": getattr(self, "active_queue_id", None),
                 },
             )
         )
@@ -502,6 +543,7 @@ class DownloadApp:
         enriched = dict(payload)
         enriched["index"] = self.download_item_index
         enriched["item_total"] = self.download_item_total
+        enriched["queue_id"] = getattr(self, "active_queue_id", None)
         self.event_queue.put(("media_progress", enriched))
 
     def _report_direct_progress(self, downloaded: int, total: int | None) -> None:
@@ -530,9 +572,15 @@ class DownloadApp:
         index = max(1, int(payload.get("index") or 1))
         total = max(index, int(payload.get("total") or index))
         label = str(payload.get("label") or "Mídia")
+        if getattr(self, "queue_running", False):
+            selected = [item for item in self.queue_items if item["enabled"]]
+            total = len(selected)
+            index = next((position for position, item in enumerate(selected, 1) if item["id"] == payload.get("queue_id")), 1)
         self.progress.stop()
         self.progress.configure(mode="determinate", maximum=100)
         self.progress["value"] = (index - 1) * 100 / total
+        if getattr(self, "queue_running", False):
+            self.progress["value"] = queue_summary(self.queue_items)["overall"]
         self.download_item_var.set(f"Item {index}/{total} — {label}")
         self.download_metrics_var.set("Lendo tamanho e preparando o fluxo de mídia...")
 
@@ -545,6 +593,13 @@ class DownloadApp:
         item_total = max(index, int(payload.get("item_total") or index))
         percent = max(0.0, min(100.0, float(payload.get("percent") or 0.0)))
         overall = ((index - 1) + percent / 100) * 100 / item_total
+        if getattr(self, "queue_running", False):
+            summary = queue_summary(self.queue_items, payload.get("queue_id"), percent)
+            overall = summary["overall"]
+            item_total = summary["total"]
+            item_id = payload.get("queue_id")
+            if item_id and self.episode_tree.exists(item_id):
+                self.episode_tree.set(item_id, "percent", f"{min(99, percent):.0f}")
         self.progress.stop()
         self.progress.configure(mode="determinate", maximum=100)
         self.progress["value"] = overall
@@ -567,6 +622,9 @@ class DownloadApp:
         elapsed_job = self._download_clock() - self.download_job_started_at
         if self.download_job_started_at and overall > 0.01:
             job_eta = elapsed_job * (100 - overall) / overall
+        if getattr(self, "queue_running", False):
+            units = overall * item_total / 100 - self.queue_initial_done
+            job_eta = elapsed_job * (item_total * (1 - overall / 100)) / units if units > 0.01 else None
 
         total_label = "Total estimado" if payload.get("total_is_estimate") else "Total"
         def rate(value):
@@ -578,21 +636,23 @@ class DownloadApp:
             f"{total_label}: {format_bytes(total)}\n"
             f"Velocidade atual: {rate(current_speed_value)}  •  Média: {rate(average_speed_value)}\n"
             f"Restante no arquivo: {format_duration(file_eta)}  •  "
-            f"Fila: ~{queue_percentage} / ~{format_duration(job_eta)} (estimativa de download)"
+            f"Fila: ~{queue_percentage}% / ~{format_duration(job_eta)} (estimativa; inclui itens processados)"
         )
 
     def _handle_conversion_progress(self, payload: object) -> None:
         if not isinstance(payload, dict) or self.download_control.paused:
             return
         percent = payload.get("percent")
-        self.progress.stop()
+        self._stop_progress_preserving_value()
         self.download_item_var.set(str(payload.get("label") or "Finalizando mídia"))
         if percent is None:
-            self.progress.configure(mode="indeterminate", maximum=100, value=0)
-            self.progress.start(15)
+            if not getattr(self, "queue_running", False):
+                self.progress.configure(mode="indeterminate", maximum=100, value=0)
+                self.progress.start(15)
             self.download_metrics_var.set("Download recebido. Finalizando o arquivo; aguarde...")
         else:
-            self.progress.configure(mode="determinate", maximum=100, value=float(percent))
+            if not getattr(self, "queue_running", False):
+                self.progress.configure(mode="determinate", maximum=100, value=float(percent))
             self.download_metrics_var.set(
                 f"Finalização: {float(percent):.1f}%  •  "
                 f"Tempo restante nesta etapa: ~{format_duration(payload.get('eta'))}\n"
@@ -639,6 +699,15 @@ class DownloadApp:
                     self._install_application_update(Path(str(payload)))
                 elif event == "download_finished":
                     self._finish_download(payload)
+                elif event == "queue_changed":
+                    self._refresh_queue()
+                elif event == "queue_prepared":
+                    self._queue_prepared(payload)
+                elif event == "queue_analysis_error":
+                    self._set_queue_busy(False)
+                    self.progress.stop()
+                    self.download_item_var.set("Listagem interrompida; fila anterior preservada")
+                    self.queue_log(str(payload))
                 elif event == "application_update_error":
                     self.progress.stop()
                     self.update_button.configure(state="normal")
@@ -706,6 +775,9 @@ class DownloadApp:
             return
         self.available_update = payload
         self.update_status_var.set(f"Nova versão disponível: {payload.version}")
+        if self.busy:
+            self.queue_log("Atualização disponível. Conclua ou pare a fila antes de instalar.")
+            return
         answer = messagebox.askyesno(
             APP_NAME,
             f"A versão {payload.version} está disponível.\n\n"
@@ -737,6 +809,9 @@ class DownloadApp:
         threading.Thread(target=worker, daemon=True).start()
 
     def _install_application_update(self, installer: Path) -> None:
+        if self.busy:
+            self.queue_log("Instalador pronto; conclua ou pare a fila antes de atualizar.")
+            return
         try:
             self.update_status_var.set("Abrindo instalador da atualização...")
             self.app_updater.launch_installer(installer)
@@ -747,37 +822,7 @@ class DownloadApp:
             messagebox.showerror(APP_NAME, f"Não foi possível iniciar a atualização:\n{exc}")
 
     def start_download(self) -> None:
-        if self.busy:
-            return
-
-        urls = self._get_urls()
-        folder = Path(self.folder_var.get().strip() or str(Path.home() / "Downloads"))
-        if not urls:
-            messagebox.showwarning(APP_NAME, "Informe pelo menos uma URL de mídia.")
-            return
-
-        cookies_file = self.cookies_file_var.get().strip()
-        if cookies_file and not Path(cookies_file).exists():
-            messagebox.showwarning(APP_NAME, "O arquivo cookies.txt selecionado não existe.")
-            return
-
-        folder.mkdir(parents=True, exist_ok=True)
-        self.folder_var.set(str(folder))
-        self._save_preferences()
-        self.busy = True
-        self.download_control = DownloadControl()
-        self.download_fragments = fragment_count(self.fragments_var.get())
-        self.pause_button.configure(state="normal", text="Pausar")
-        self.download_button.configure(state="disabled")
-        self.download_job_started_at = self._download_clock()
-        self.progress.stop()
-        self.progress.configure(mode="determinate", maximum=100, value=0)
-        self.download_item_var.set("Preparando downloads")
-        self.download_metrics_var.set("Calculando informações da fila...")
-        format_choice = self.resolution_var.get()
-        self.queue_log(f"Iniciando {len(urls)} download(s) em: {folder} ({format_choice})")
-        self.queue_log(f"HLS/DASH: até {self.download_fragments} fragmentos simultâneos.")
-        threading.Thread(target=self._download, args=(urls, folder, format_choice), daemon=True).start()
+        QueueUI.start_download(self)
 
     def _get_urls(self) -> list[str]:
         raw = self.url_text.get("1.0", END)
@@ -814,11 +859,13 @@ class DownloadApp:
         # yt-dlp can return 1 for ONE unavailable playlist entry after saving
         # other entries successfully. Those files must still be finalized.
         failed = return_code != 0
+        self.finalized_files = []
         for output_file in dict.fromkeys(output_files):
             try:
                 self.download_control.checkpoint()
                 if format_choice != "Apenas áudio (M4A)":
-                    self._ensure_player_compatibility(output_file)
+                    output_file = self._ensure_player_compatibility(output_file) or output_file
+                self.finalized_files.append(output_file)
                 self.download_completed_files = getattr(self, "download_completed_files", 0) + 1
             except DownloadCancelled:
                 raise
@@ -906,7 +953,8 @@ class DownloadApp:
             selected_format,
         ]
 
-        if self.playlist_var.get():
+        options = getattr(self, "download_options", None)
+        if options is None and self.playlist_var.get():
             command.extend(["--yes-playlist", "--compat-options", "no-youtube-unavailable-videos"])
         else:
             command.append("--no-playlist")
@@ -916,12 +964,10 @@ class DownloadApp:
             command.extend(["--extract-audio", "--audio-format", "m4a", "--audio-quality", "0"])
 
         if include_cookies:
-            browser = self.cookies_browser_var.get().strip().lower()
-            if browser and browser != "nenhum":
-                command.extend(["--cookies-from-browser", browser])
-            cookies_file = self.cookies_file_var.get().strip()
-            if cookies_file:
-                command.extend(["--cookies", cookies_file])
+            if options is not None:
+                command.extend(cookie_arguments(options))
+            else:
+                command.extend(cookie_arguments({"cookies_browser": self.cookies_browser_var.get(), "cookies_file": self.cookies_file_var.get()}))
 
         command.extend(["--", url])
         return command
@@ -963,7 +1009,7 @@ class DownloadApp:
             return process.wait(), output_files
         finally:
             if process.poll() is None:
-                self.download_control.cancel()
+                self.download_control.terminate_active()
             process.wait()
             if process.stdout:
                 process.stdout.close()
@@ -1061,13 +1107,19 @@ class DownloadApp:
         self.busy = False
         self.download_control.resume()
         self.pause_button.configure(state="disabled", text="Pausar")
-        self.progress.stop()
+        self._stop_progress_preserving_value()
         failures = int(payload.get("failures", 0)) if isinstance(payload, dict) else 0
         completed = payload.get("completed") if isinstance(payload, dict) else None
+        stopped = bool(payload.get("stopped")) if isinstance(payload, dict) else False
+        cancelled = int(payload.get("cancelled", 0)) if isinstance(payload, dict) else 0
         self.progress.configure(mode="determinate", maximum=100)
-        if not failures:
+        if not failures and not stopped:
             self.progress["value"] = 0 if completed == 0 else 100
-        if failures:
+        if stopped:
+            result = "Fila interrompida — clique em Continuar fila para retomar"
+        elif cancelled:
+            result = f"Fila processada — {cancelled} vídeo(s) cancelado(s)"
+        elif failures:
             result = "Trabalho finalizado com avisos" if completed else "Trabalho finalizado com falhas"
         elif completed == 0:
             result = "Nenhum arquivo disponível para baixar"
@@ -1080,6 +1132,11 @@ class DownloadApp:
             + ("  •  Consulte a atividade para ver os itens não baixados." if failures else "")
         )
         self.download_button.configure(state="normal")
+        if hasattr(self, "queue_repository"):
+            self.queue_running = False
+            self.download_options = None
+            self._set_queue_busy(False)
+            self._refresh_queue()
 
 
 def _acquire_single_instance_mutex():

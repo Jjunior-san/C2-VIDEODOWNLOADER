@@ -11,6 +11,10 @@ class DownloadCancelled(RuntimeError):
     pass
 
 
+class DownloadSkipped(DownloadCancelled):
+    pass
+
+
 class DownloadControl:
     """Controls only the subprocess tree started by this download job."""
 
@@ -21,6 +25,7 @@ class DownloadControl:
         self._paused_at: float | None = None
         self._paused_total = 0.0
         self._cancelled = False
+        self._skipped = False
 
     @property
     def paused(self) -> bool:
@@ -35,10 +40,17 @@ class DownloadControl:
 
     def checkpoint(self) -> None:
         with self._condition:
-            while self._paused_at is not None and not self._cancelled:
+            while self._paused_at is not None and not self._cancelled and not self._skipped:
                 self._condition.wait()
+            self.check_cancelled()
+
+    def check_cancelled(self) -> None:
+        """Nonblocking check for use while committing a queue state transition."""
+        with self._condition:
             if self._cancelled:
                 raise DownloadCancelled("Trabalho interrompido; arquivos parciais preservados.")
+            if self._skipped:
+                raise DownloadSkipped("Vídeo cancelado; continuando os próximos.")
 
     def popen(self, command: list[str], **kwargs) -> subprocess.Popen:
         with self._condition:
@@ -97,6 +109,22 @@ class DownloadControl:
         with self._condition:
             self._cancelled = True
             self.resume()
+            self.terminate_active()
+            self._condition.notify_all()
+
+    def skip(self) -> None:
+        with self._condition:
+            self._skipped = True
+            self.resume()
+            self.terminate_active()
+            self._condition.notify_all()
+
+    def finish_item(self) -> None:
+        with self._condition:
+            self._skipped = False
+
+    def terminate_active(self) -> None:
+        with self._condition:
             if self._process and self._process.poll() is None:
                 try:
                     root = psutil.Process(self._process.pid)
@@ -107,4 +135,3 @@ class DownloadControl:
                             pass
                 except psutil.NoSuchProcess:
                     pass
-            self._condition.notify_all()

@@ -31,7 +31,7 @@ API_URLS = (
     "?detailed=1&clientType=www",
 )
 MAX_JSON_BYTES = 32 * 1024 * 1024
-USER_AGENT = "C2-Video-Downloader/1.3.5 (+https://c2sistemas.com)"
+USER_AGENT = "C2-Video-Downloader/1.4.0 (+https://c2sistemas.com)"
 VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".webm"}
 AUDIO_EXTENSIONS = {".m4a", ".mp3", ".aac", ".opus", ".ogg"}
 
@@ -383,6 +383,7 @@ def download_item(
     )
     destination = folder / filename
     temporary = destination.with_name(f".{destination.name}.part")
+    resume_file = temporary.with_suffix(temporary.suffix + ".json")
 
     if destination.exists() and destination.stat().st_size > 0:
         if not item.filesize or destination.stat().st_size == item.filesize:
@@ -395,7 +396,6 @@ def download_item(
 
     last_error: Exception | None = None
     for attempt in range(1, retries + 1):
-        temporary.unlink(missing_ok=True)
         try:
             if logger:
                 quality = f"{item.height}p" if item.height else item.source_kind
@@ -404,26 +404,56 @@ def download_item(
                     f"({quality}, {_human_size(item.filesize)})"
                 )
 
-            request = Request(
-                item.download_url,
-                headers={
-                    "Accept": "*/*",
-                    "User-Agent": USER_AGENT,
-                },
-            )
-            with urlopen(request, timeout=120) as response, temporary.open("wb") as output:
-                expected_size = item.filesize or _positive_int(
-                    response.headers.get("Content-Length")
-                )
-                received = 0
-                while True:
-                    chunk = response.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    output.write(chunk)
-                    received += len(chunk)
-                    if progress:
-                        progress(received, expected_size)
+            offset = 0
+            resume = {}
+            try:
+                resume = json.loads(resume_file.read_text(encoding="utf-8"))
+                if resume.get("id") == item.media_id and resume.get("validator") and temporary.exists():
+                    offset = temporary.stat().st_size
+                    if offset > int(resume.get("total") or 0):
+                        offset = 0
+            except (OSError, ValueError, TypeError, AttributeError):
+                offset = 0
+            if offset and offset == resume.get("total") and (not item.filesize or offset == item.filesize):
+                os.replace(temporary, destination)
+                resume_file.unlink(missing_ok=True)
+                if progress:
+                    progress(offset, offset)
+                return destination
+            headers = {"Accept": "*/*", "User-Agent": USER_AGENT}
+            if offset:
+                headers.update({"Range": f"bytes={offset}-", "If-Range": resume["validator"]})
+            with urlopen(Request(item.download_url, headers=headers), timeout=120) as response:
+                partial = response.status == 206
+                if partial:
+                    content_range = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", response.headers.get("Content-Range", ""))
+                    if not content_range or int(content_range[1]) != offset:
+                        raise JWOrgError("o servidor retornou um intervalo inválido para continuar")
+                    expected_size = int(content_range[3])
+                else:
+                    offset = 0  # Server ignored Range or its validator changed: restart safely.
+                    expected_size = _positive_int(response.headers.get("Content-Length")) or item.filesize
+                validator = response.headers.get("ETag", "")
+                if not validator or validator.startswith("W/"):
+                    validator = response.headers.get("Last-Modified", "")
+                if partial and offset and (validator != resume["validator"] or expected_size != resume.get("total")):
+                    resume_file.unlink(missing_ok=True)
+                    raise JWOrgError("a mídia mudou no servidor; a próxima tentativa começará do início")
+                resume_file.write_text(json.dumps({"id": item.media_id, "validator": validator, "total": expected_size}), encoding="utf-8")
+                received = offset
+                if progress:
+                    progress(received, expected_size)
+                with temporary.open("ab" if partial and offset else "wb") as output:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        output.write(chunk)
+                        received += len(chunk)
+                        if progress:
+                            progress(received, expected_size)
+                if expected_size and received != expected_size:
+                    raise JWOrgError(f"arquivo incompleto: esperado {expected_size}, recebido {received}")
 
             if not temporary.exists() or temporary.stat().st_size == 0:
                 raise JWOrgError("o servidor retornou um arquivo vazio")
@@ -434,12 +464,12 @@ def download_item(
                 )
 
             os.replace(temporary, destination)
+            resume_file.unlink(missing_ok=True)
             if logger:
                 logger(f"JW.ORG [{index}/{total}]: concluído {destination.name}")
             return destination
         except (HTTPError, URLError, TimeoutError, OSError, JWOrgError) as exc:
             last_error = exc
-            temporary.unlink(missing_ok=True)
             if logger and attempt < retries:
                 logger(
                     f"JW.ORG [{index}/{total}]: tentativa {attempt} falhou; "

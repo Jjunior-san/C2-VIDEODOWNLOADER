@@ -2,8 +2,30 @@
 from __future__ import annotations
 
 import os
-from tkinter import Canvas, PhotoImage
+from tkinter import Canvas, PhotoImage, font
 from tkinter import ttk
+
+
+def choose_font(families, display=False):
+    available = {name.casefold(): name for name in families}
+    preferred = ("SF Pro Display", "SF UI Display") if display else ("SF Pro Text", "SF UI Text")
+    for name in (*preferred, "SF Pro", "San Francisco", "Segoe UI", "Arial"):
+        if name.casefold() in available:
+            return available[name.casefold()]
+    return "TkDefaultFont"
+
+
+def configure_fonts(root):
+    families = font.families(root)
+    text_family, display_family = choose_font(families), choose_font(families, True)
+    for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont", "TkCaptionFont", "TkSmallCaptionFont", "TkIconFont", "TkTooltipFont"):
+        font.nametofont(name, root=root).configure(family=text_family)
+    root.option_add("*Font", (text_family, 10))
+    style = ttk.Style(root)
+    style.configure(".", font=(text_family, 10))
+    style.configure("Treeview", font=(text_family, 10), rowheight=max(24, font.Font(root=root, family=text_family, size=10).metrics("linespace") + 8))
+    style.configure("Treeview.Heading", font=(text_family, 10, "bold"))
+    return text_family, display_family
 
 
 def desktop_work_area(root) -> tuple[int, int, int, int]:
@@ -31,7 +53,7 @@ def window_dimensions(area: tuple[int, int, int, int]) -> tuple[int, int, int, i
     left, top, right, bottom = area
     # Leave room for the native title bar, resize borders and desktop margins.
     width = min(820, max(1, right - left - 40))
-    height = min(680, max(1, bottom - top - 80))
+    height = min(720, max(1, bottom - top - 80))
     return width, height, left + (right - left - width) // 2, top + 20
 
 
@@ -122,7 +144,7 @@ def wrapping_label(parent, **kwargs):
     return label
 
 
-def build_brand(parent, logo_path):
+def build_brand(parent, logo_path, family="Segoe UI"):
     brand = ttk.Frame(parent)
     # The PNG is the first frame of the site's animation: crop the symbol only.
     brand.source_image = PhotoImage(file=str(logo_path))
@@ -132,6 +154,6 @@ def build_brand(parent, logo_path):
         "-from", 58, 48, 305, 327, "-to", 0, 0, "-subsample", 7, 7,
     )
     ttk.Label(brand, image=brand.logo_image).pack(side="left")
-    ttk.Label(brand, text="C² SISTEMAS", font=("Segoe UI", 10, "bold"),
+    ttk.Label(brand, text="C² SISTEMAS", font=(family, 10, "bold"),
               foreground="#0b1730").pack(side="left", padx=(6, 0))
     return brand

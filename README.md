@@ -222,8 +222,8 @@ conversões futuras, pois os arquivos restantes ainda não foram analisados.
 Pausas longas podem exigir novas tentativas de conexão. Para preservar essa sessão,
 mantenha o aplicativo aberto. Se sair, confirme a interrupção: os arquivos parciais
 do yt-dlp ficam na pasta. Ao iniciar novamente com a mesma URL, formato e pasta,
-o motor tenta continuar onde o servidor e o formato permitirem. Não há persistência
-automática da fila entre aberturas.
+o motor tenta continuar onde o servidor e o formato permitirem. A partir da versão
+1.4.0, a fila também é salva e recuperada automaticamente entre aberturas.
 
 Taxas são exibidas em bytes por segundo: KB/s e MB/s, não em kilobits por segundo (kbps).
 
@@ -244,3 +244,40 @@ Vídeos não listados, mas acessíveis pelo link, continuam elegíveis. Conteúd
 removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem no registro
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
+
+## Versão 1.4.0 — fila persistente e San Francisco
+
+- **Listar vídeos** expande playlists e temporadas em uma tabela com seleção individual, título, qualidade solicitada, situação e progresso;
+- **Continuar fila** baixa apenas os itens marcados e pendentes, sem repetir os concluídos;
+- **Parar fila** conserva a lista e os arquivos parciais; ao reabrir, a retomada depende de um clique, nunca começa sozinha;
+- **Cancelar selecionados** cancela vídeos específicos e continua os demais; **Repetir falhas** recoloca itens selecionados com falha/cancelados na fila, ou todas as falhas quando nenhuma linha está selecionada;
+- porcentagem e ETA global usam os vídeos selecionados, inclusive nas playlists genéricas, e excluem o trabalho concluído antes da sessão atual do cálculo de velocidade da fila;
+- finalização/conversão não leva prematuramente o progresso global a 100%; pausa e parada preservam a posição da barra;
+- fontes locais **SF Pro Text/Display** ou **SF UI Text/Display** são priorizadas em toda a interface; computadores sem elas usam Segoe UI/Arial;
+- atividade detalhada em uma aba própria, mantendo a lista e o progresso na tela principal;
+- URLs de mídia temporárias do Kanal D são renovadas ao retomar; o nome de saída fica fixo para localizar os arquivos parciais;
+- downloads diretos do JW.ORG podem continuar com HTTP Range e validação de ETag/Last-Modified; se o conteúdo mudou ou o servidor não permite retomada segura, o arquivo reinicia.
+
+### Uso da fila
+
+1. Escolha pasta, formato e opções. Cole os links e clique em **Listar vídeos**.
+2. Marque/desmarque episódios na primeira coluna e clique em **Continuar fila**.
+3. Para parar e continuar outro dia, use **Parar fila** ou feche confirmando a interrupção.
+4. Ao abrir novamente, confira a lista recuperada e clique em **Continuar fila**.
+
+O botão **Baixar**, quando ainda não existe uma lista, analisa os links e inicia os
+itens disponíveis automaticamente. Para escolher episódios antes, use **Listar vídeos**.
+As opções de uma fila ficam fixas para preservar a retomada; alterações de pasta,
+formato, cookies ou fragmentos exigem listar os links novamente.
+
+A fila fica no arquivo `downloads.sqlite3`, dentro da pasta de dados do aplicativo
+em `%LOCALAPPDATA%\C2 Sistemas\C2 Video Downloader`. São salvos links, seleções,
+configurações e estados, mas não o conteúdo de cookies. A fila mais recente é
+preservada; listar novos links substitui a lista, sem apagar os vídeos baixados.
+Um item só é marcado como concluído após a finalização. A retomada de bytes depende
+do motor, formato e servidor; conversões interrompidas podem recomeçar.
+
+Nenhum arquivo de fonte da Apple é incluído ou redistribuído no instalador. A seleção
+usa fontes já presentes no computador; o uso de San Francisco continua sujeito aos
+[termos da Apple](https://developer.apple.com/fonts/). As caixas de diálogo e a barra
+de título nativas do Windows seguem a tipografia do sistema operacional.

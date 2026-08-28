@@ -19,7 +19,7 @@ BLOB = bytes(range(256)) * 8192
 
 @pytest.fixture
 def server():
-    state = {"active": 0, "maximum": 0}
+    state = {"active": 0, "maximum": 0, "ranges": []}
     lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
@@ -42,10 +42,21 @@ def server():
                 body = BLOB[:65536]
                 content_type = "video/mp2t"
             else:
-                body = BLOB
+                body = state.get("blob", BLOB)
                 content_type = "video/mp4"
-            self.send_response(200)
+            offset = 0
+            if self.headers.get("Range"):
+                offset = int(self.headers["Range"].split("=")[1].split("-")[0])
+                if self.headers.get("If-Range") and self.headers["If-Range"] != state.get("etag", '"fixture-v1"'):
+                    offset = 0
+                state["ranges"].append(offset)
+            total_size = len(body)
+            body = body[offset:]
+            self.send_response(206 if offset else 200)
+            if offset:
+                self.send_header("Content-Range", f"bytes {offset}-{total_size - 1}/{total_size}")
             self.send_header("Content-Type", content_type)
+            self.send_header("ETag", state.get("etag", '"fixture-v1"'))
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             if is_segment:
@@ -168,3 +179,101 @@ def test_playlist_options_do_not_allow_incomplete_video_fragments(tmp_path, monk
     assert "no-youtube-unavailable-videos" in command
     assert "--abort-on-unavailable-fragments" in command
     assert "--ignore-errors" not in command
+
+
+def test_discovery_uses_actual_cli_to_expand_playlist(tmp_path, monkeypatch, server):
+    from queue_service import metadata_items, read_metadata
+    port = server[0].rsplit(":", 1)[1]
+    instance, _, _, _ = make_download(tmp_path, monkeypatch, server[0] + "/video.mp4")
+    original_popen = instance.download_control.popen
+    plugin = Path(__file__).parent / "fixtures"
+    instance.download_control.popen = lambda command, **kwargs: original_popen(
+        [sys.executable, "-m", "yt_dlp", "--plugin-dirs", str(plugin), *command[1:]], **kwargs,
+    )
+    source = f"c2fixture:playlist:{port}"
+    metadata = read_metadata(Path("yt-dlp"), source, {"playlist": True}, instance.download_control, os.environ.copy(), lambda line: None)
+    items = metadata_items(metadata, source)
+    assert len(items) == 4
+    assert all(item["source"].startswith("c2fixture:") for item in items)
+
+
+def test_persisted_queue_resumes_real_bytes_and_skips_completed_video(tmp_path, monkeypatch, server):
+    from download_queue import QueueRepository, queue_item
+    from queue_service import run_queue
+    items = [queue_item(server[0] + f"/{name}.mp4", name) for name in ("first", "second")]
+    options = {"folder": str(tmp_path), "format": "Melhor MP4 compatível", "playlist": True, "fragments": 4}
+    repository = QueueRepository(tmp_path / "queue.db")
+    repository.replace(items, options, [server[0]])
+    ready = threading.Event()
+
+    def owner():
+        instance, _, _, _ = make_download(tmp_path, monkeypatch, server[0] + "/unused.mp4")
+        instance.download_options = options
+        original = instance._build_command
+        instance._build_command = lambda *args, **kwargs: [sys.executable, "-m", "yt_dlp", "--fixup", "never", *original(*args, **kwargs)[1:]]
+        instance._ensure_player_compatibility = lambda path: path
+        instance._emit_media_progress = lambda event: ready.set() if instance.active_queue_id == items[1]["id"] and event["downloaded"] > 65536 else None
+        return instance
+
+    first = owner()
+    worker = threading.Thread(target=run_queue, args=(first, repository, options, Path("yt-dlp")))
+    worker.start()
+    try:
+        assert ready.wait(25)
+        first.download_control.cancel()
+        worker.join(timeout=15)
+        assert not worker.is_alive()
+        states = repository.snapshot()["items"]
+        assert states[0]["status"] == "completed"
+        assert states[1]["status"] == "interrupted"
+        first_file = Path(states[0]["files"][0])
+        first_mtime = first_file.stat().st_mtime_ns
+        assert list(tmp_path.glob("*.part"))
+        restored = QueueRepository(repository.path)
+        restored.recover()
+        second = owner()
+        run_queue(second, restored, options, Path("yt-dlp"))
+        assert all(item["status"] == "completed" for item in restored.snapshot()["items"])
+        assert first_file.stat().st_mtime_ns == first_mtime
+        assert any(offset > 0 for offset in server[1]["ranges"])
+        for item in restored.snapshot()["items"]:
+            assert Path(item["files"][0]).read_bytes() == BLOB
+    finally:
+        first.download_control.cancel()
+        worker.join(timeout=10)
+
+
+def test_direct_download_resumes_with_if_range_validator(tmp_path, server):
+    from download_control import DownloadCancelled
+    from jw_org_downloader import JWDownloadItem, download_item
+    media = JWDownloadItem(media_id="test", title="Test", download_url=server[0] + "/video.mp4",
+                           extension=".mp4", filesize=len(BLOB), height=1080, source_kind="video")
+
+    def interrupt(received, total):
+        if received >= 1024 * 1024:
+            raise DownloadCancelled("Test interruption")
+
+    with pytest.raises(DownloadCancelled):
+        download_item(media, tmp_path, 1, 1, progress=interrupt)
+    assert list(tmp_path.glob("*.part"))
+    complete = download_item(media, tmp_path, 1, 1)
+    assert complete.read_bytes() == BLOB
+    assert 1024 * 1024 in server[1]["ranges"]
+
+
+def test_direct_download_restarts_if_server_content_changed(tmp_path, server):
+    from download_control import DownloadCancelled
+    from jw_org_downloader import JWDownloadItem, download_item
+    media = JWDownloadItem(title="Test", media_id="test", download_url=server[0] + "/video.mp4",
+                           filesize=len(BLOB), height=1080, extension=".mp4", source_kind="video")
+
+    def interrupt(received, total):
+        if received >= 1024 * 1024:
+            raise DownloadCancelled("Test interruption")
+
+    with pytest.raises(DownloadCancelled):
+        download_item(media, tmp_path, 1, 1, progress=interrupt)
+    server[1]["etag"] = '"fixture-v2"'
+    server[1]["blob"] = b"z" * len(BLOB)
+    complete = download_item(media, tmp_path, 1, 1)
+    assert complete.read_bytes() == server[1]["blob"]
