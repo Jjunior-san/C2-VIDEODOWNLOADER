@@ -39,11 +39,64 @@ class QueueUI:
         self.episode_tree.bind("<<TreeviewSelect>>", self._show_episode_details)
         self.episode_details = ttk.Label(parent, text="", width=1, wraplength=600, foreground="#596579")
         self.episode_details.bind("<Configure>", lambda event: self.episode_details.configure(wraplength=max(1, event.width)))
-        buttons = ttk.Frame(parent)
-        buttons.pack(fill="x", pady=(0, 8))
-        self.episode_actions = buttons
-        ttk.Button(buttons, text="Cancelar selecionados", command=self.cancel_selected).pack(side="right")
-        ttk.Button(buttons, text="Repetir falhas", command=self.retry_failed).pack(side="right", padx=6)
+        management = ttk.Frame(parent)
+        management.pack(fill="x", pady=(0, 6))
+        ttk.Button(management, text="Cancelar selecionados", command=self.cancel_selected).pack(side="right")
+        ttk.Button(management, text="Repetir falhas", command=self.retry_failed).pack(side="right", padx=6)
+        self.remove_queue_button = ttk.Button(management, text="Remover da fila", command=self.remove_queue_selected)
+        self.remove_queue_button.pack(side="right")
+        self.clear_queue_button = ttk.Button(management, text="Limpar fila", command=self.clear_queue)
+        self.clear_queue_button.pack(side="right", padx=6)
+        self.episode_actions = ttk.Frame(parent)
+        self.episode_actions.pack(fill="x", pady=(0, 8))
+
+    def _build_completed_list(self, parent):
+        ttk.Label(parent, text="Downloads concluídos", font=(self.text_family, 11, "bold")).pack(anchor="w")
+        self.completed_count = ttk.Label(
+            parent, text="Nenhum download concluído.", foreground="#596579",
+        )
+        self.completed_count.pack(anchor="w", pady=(2, 8))
+        table = ttk.Frame(parent)
+        table.pack(fill="both", expand=True, pady=(0, 8))
+        columns = ("title", "quality", "file")
+        self.completed_tree = ttk.Treeview(
+            table, columns=columns, show="headings", height=12, selectmode="extended",
+        )
+        for name, label, width in zip(
+            columns,
+            ("Vídeo / episódio", "Qualidade", "Arquivo salvo"),
+            (320, 130, 260),
+        ):
+            self.completed_tree.heading(name, text=label)
+            self.completed_tree.column(
+                name, width=width, minwidth=120, stretch=name in {"title", "file"}, anchor="w",
+            )
+        self.completed_tree.grid(row=0, column=0, sticky="nsew")
+        table.rowconfigure(0, weight=1)
+        table.columnconfigure(0, weight=1)
+        ybar = ttk.Scrollbar(table, orient="vertical", command=self.completed_tree.yview)
+        ybar.grid(row=0, column=1, sticky="ns")
+        xbar = ttk.Scrollbar(table, orient="horizontal", command=self.completed_tree.xview)
+        xbar.grid(row=1, column=0, sticky="ew")
+        self.completed_tree.configure(yscrollcommand=ybar.set, xscrollcommand=xbar.set)
+        self.completed_tree.bind("<<TreeviewSelect>>", self._show_completed_details)
+        actions = ttk.Frame(parent)
+        actions.pack(fill="x", pady=(0, 8))
+        self.clear_completed_button = ttk.Button(
+            actions, text="Limpar concluídos", command=self.clear_completed,
+        )
+        self.clear_completed_button.pack(side="right")
+        self.remove_completed_button = ttk.Button(
+            actions, text="Remover selecionados", command=self.remove_completed_selected,
+        )
+        self.remove_completed_button.pack(side="right", padx=(0, 6))
+        self.completed_details = ttk.Label(
+            parent, text="", width=1, wraplength=600, foreground="#596579", justify="left",
+        )
+        self.completed_details.pack(fill="x")
+        self.completed_details.bind(
+            "<Configure>", lambda event: self.completed_details.configure(wraplength=max(1, event.width)),
+        )
 
     def _restore_queue(self):
         job = self.queue_repository.recover()
@@ -66,10 +119,12 @@ class QueueUI:
         if self.queue_repository is None:
             return
         self.queue_items = self.queue_repository.snapshot()["items"]
+        active_items = [item for item in self.queue_items if item["status"] != "completed"]
+        completed_items = [item for item in self.queue_items if item["status"] == "completed"]
         existing = set(self.episode_tree.get_children())
-        for item in self.queue_items:
+        for item in active_items:
             values = ("✓" if item["enabled"] else "", item["title"], item.get("quality", "A definir"),
-                      LABELS[item["status"]], "100" if item["status"] == "completed" else "—")
+                      LABELS[item["status"]], "—")
             if item["id"] in existing:
                 self.episode_tree.item(item["id"], values=values)
                 existing.remove(item["id"])
@@ -77,14 +132,38 @@ class QueueUI:
                 self.episode_tree.insert("", END, iid=item["id"], values=values)
         for item_id in existing:
             self.episode_tree.delete(item_id)
+        existing_completed = set(self.completed_tree.get_children())
+        for item in completed_items:
+            files = item.get("files", [])
+            saved_file = Path(files[0]).name if files else "Arquivo não informado"
+            values = (item["title"], item.get("quality", "A definir"), saved_file)
+            if item["id"] in existing_completed:
+                self.completed_tree.item(item["id"], values=values)
+                existing_completed.remove(item["id"])
+            else:
+                self.completed_tree.insert("", END, iid=item["id"], values=values)
+        for item_id in existing_completed:
+            self.completed_tree.delete(item_id)
         summary = queue_summary(self.queue_items)
-        complete = sum(item["enabled"] and item["status"] == "completed" for item in self.queue_items)
-        self.queue_count.configure(text=f"{len(self.queue_items)} vídeo(s) • {summary['total']} marcado(s) • {complete} concluído(s)")
+        active_selected = sum(item["enabled"] for item in active_items)
+        self.queue_count.configure(
+            text=f"{len(active_items)} na fila • {active_selected} marcado(s) • {len(completed_items)} concluído(s)",
+        )
+        self.completed_count.configure(
+            text=f"{len(completed_items)} download(s) concluído(s). Os arquivos permanecem na pasta de destino.",
+        )
+        idle_state = "normal" if not self.busy else "disabled"
+        self.clear_queue_button.configure(state=idle_state if self.queue_items else "disabled")
+        self.remove_queue_button.configure(state=idle_state if active_items else "disabled")
+        completed_state = idle_state if completed_items else "disabled"
+        self.clear_completed_button.configure(state=completed_state)
+        self.remove_completed_button.configure(state=completed_state)
         if self.queue_running and not self.active_queue_id:
             self.progress.configure(mode="determinate", value=summary["overall"])
         if not self.busy:
-            self.download_button.configure(text="Continuar fila" if self.queue_items else "Baixar")
+            self.download_button.configure(text="Continuar fila" if active_items else "Baixar")
         self._show_episode_details()
+        self._show_completed_details()
 
     def _show_episode_details(self, _event=None):
         selected = self.episode_tree.selection()
@@ -95,6 +174,70 @@ class QueueUI:
             self.episode_details.pack(fill="x", pady=(0, 4), before=self.episode_actions)
         else:
             self.episode_details.pack_forget()
+
+    def _show_completed_details(self, _event=None):
+        selected = self.completed_tree.selection()
+        item = next((item for item in self.queue_items if selected and item["id"] == selected[0]), None)
+        files = item.get("files", []) if item else []
+        self.completed_details.configure(
+            text="Arquivos mantidos no computador:\n" + "\n".join(files) if files else "",
+        )
+
+    def remove_completed_selected(self):
+        if self.busy or self.queue_repository is None:
+            return
+        completed_ids = {
+            item["id"] for item in self.queue_items if item["status"] == "completed"
+        }
+        ids = completed_ids.intersection(self.completed_tree.selection())
+        removed = self.queue_repository.remove_many(ids)
+        if removed:
+            self.queue_log(
+                f"{removed} registro(s) concluído(s) removido(s) da lista; nenhum arquivo foi apagado.",
+            )
+        self._refresh_queue()
+
+    def clear_completed(self):
+        if self.busy or self.queue_repository is None:
+            return
+        ids = [item["id"] for item in self.queue_items if item["status"] == "completed"]
+        if not ids or not messagebox.askyesno(
+            "Limpar concluídos",
+            "Remover todos os concluídos da lista?\n\nOs arquivos baixados não serão apagados.",
+        ):
+            return
+        removed = self.queue_repository.remove_many(ids)
+        self.queue_log(
+            f"{removed} registro(s) concluído(s) removido(s) da lista; nenhum arquivo foi apagado.",
+        )
+        self._refresh_queue()
+
+    def clear_queue(self):
+        if self.busy or self.queue_repository is None or not self.queue_items:
+            return
+        if not messagebox.askyesno(
+            "Limpar fila",
+            "Remover todos os itens da fila e da lista de concluídos?\n\n"
+            "Os arquivos baixados e parciais não serão apagados.",
+        ):
+            return
+        removed = self.queue_repository.clear()
+        self.queue_log(f"Fila limpa ({removed} registro(s)); nenhum arquivo foi apagado.")
+        self._refresh_queue()
+
+    def remove_queue_selected(self):
+        if self.busy or self.queue_repository is None:
+            return
+        completed_ids = {
+            item["id"] for item in self.queue_items if item["status"] == "completed"
+        }
+        ids = set(self.episode_tree.selection()) - completed_ids
+        removed = self.queue_repository.remove_many(ids)
+        if removed:
+            self.queue_log(
+                f"{removed} registro(s) removido(s) da fila; nenhum arquivo parcial ou baixado foi apagado.",
+            )
+        self._refresh_queue()
 
     def _click_episode(self, event):
         if self.episode_tree.identify_column(event.x) == "#1":
@@ -199,6 +342,11 @@ class QueueUI:
         self.analyze_button.configure(state="disabled" if busy else "normal")
         self.stop_button.configure(state="normal" if busy else "disabled")
         self.pause_button.configure(state="normal" if busy else "disabled", text="Pausar")
+        state = "disabled" if busy else "normal"
+        self.clear_queue_button.configure(state=state)
+        self.remove_queue_button.configure(state=state)
+        self.clear_completed_button.configure(state=state)
+        self.remove_completed_button.configure(state=state)
 
     def _queue_prepared(self, auto_start):
         try:
@@ -218,7 +366,8 @@ class QueueUI:
         if self.busy or self.queue_repository is None:
             return
         job = self.queue_repository.snapshot()
-        if not job["items"] or self._get_urls() != job.get("sources", []):
+        has_active_items = any(item["status"] != "completed" for item in job["items"])
+        if not has_active_items or self._get_urls() != job.get("sources", []):
             self._prepare_queue(True)
         else:
             self._start_saved_queue()

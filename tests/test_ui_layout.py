@@ -53,8 +53,8 @@ def test_compact_window_keeps_controls_reachable(window, geometry):
     root.update()
     assert root.winfo_width() == int(geometry.split("x")[0])
     assert root.winfo_height() == int(geometry.split("x")[1])
-    assert len(instance.tabs.tabs()) == 3
-    for page in (instance.download_page, instance.settings_page, instance.activity_page):
+    assert len(instance.tabs.tabs()) == 4
+    for page in (instance.download_page, instance.completed_page, instance.settings_page, instance.activity_page):
         instance.tabs.select(page)
         root.update()
         assert page.winfo_width() <= root.winfo_width()
@@ -108,6 +108,45 @@ def test_queue_table_selections_retry_and_stop_race(window):
     instance.download_control.cancel()
     instance._start_saved_queue = lambda: pytest.fail("Stopping discovery must prevent automatic download")
     instance._queue_prepared(True)
+
+
+def test_completed_tab_and_queue_cleanup_preserve_downloaded_files(window, tmp_path, monkeypatch):
+    from download_queue import queue_item
+    import queue_ui
+
+    _, instance = window
+    files = [tmp_path / "one.mp4", tmp_path / "two.mp4"]
+    for path in files:
+        path.write_bytes(path.name.encode())
+    completed = []
+    for index, path in enumerate(files):
+        item = queue_item(f"https://example.com/done-{index}", f"Done {index}")
+        item.update(status="completed", files=[str(path)])
+        completed.append(item)
+    pending = queue_item("https://example.com/pending", "Pending")
+    instance.queue_repository.replace(completed + [pending], instance._capture_options(), [])
+    instance._refresh_queue()
+
+    assert instance.episode_tree.get_children() == (pending["id"],)
+    assert set(instance.completed_tree.get_children()) == {item["id"] for item in completed}
+    instance.episode_tree.selection_set(pending["id"])
+    instance.remove_queue_selected()
+    assert pending["id"] not in {item["id"] for item in instance.queue_repository.snapshot()["items"]}
+    instance.completed_tree.selection_set(completed[0]["id"])
+    instance.remove_completed_selected()
+    assert files[0].is_file()
+    assert completed[0]["id"] not in {item["id"] for item in instance.queue_repository.snapshot()["items"]}
+
+    monkeypatch.setattr(queue_ui.messagebox, "askyesno", lambda *args, **kwargs: True)
+    instance.clear_completed()
+    assert files[1].is_file()
+    assert instance.completed_tree.get_children() == ()
+    pending = queue_item("https://example.com/pending-again", "Pending again")
+    instance.queue_repository.replace([pending], instance._capture_options(), [])
+    instance._refresh_queue()
+    instance.clear_queue()
+    assert instance.queue_repository.snapshot()["items"] == []
+    assert pending["id"] not in instance.episode_tree.get_children()
 
 
 def test_queue_progress_uses_episode_count_and_preserves_fraction_during_conversion(window):

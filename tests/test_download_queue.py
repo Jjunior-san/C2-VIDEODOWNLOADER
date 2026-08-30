@@ -45,6 +45,27 @@ def test_unknown_queue_schema_is_preserved(tmp_path):
         assert json.loads(connection.execute("SELECT data FROM queue").fetchone()[0])["version"] == 99
 
 
+def test_removing_queue_records_never_deletes_downloaded_files(tmp_path):
+    repository = QueueRepository(tmp_path / "queue.db")
+    completed_file = tmp_path / "completed.mp4"
+    partial_file = tmp_path / "partial.mp4.part"
+    completed_file.write_bytes(b"completed")
+    partial_file.write_bytes(b"partial")
+    completed = queue_item("https://example.com/completed", "Completed")
+    completed.update(status="completed", files=[str(completed_file)])
+    pending = queue_item("https://example.com/pending", "Pending")
+    pending["downloaded_files"] = [str(partial_file)]
+    repository.replace([completed, pending], options(tmp_path), ["https://example.com/playlist"])
+
+    assert repository.remove_many([completed["id"]]) == 1
+    assert [item["id"] for item in repository.snapshot()["items"]] == [pending["id"]]
+    assert completed_file.read_bytes() == b"completed"
+    assert repository.clear() == 1
+    assert repository.snapshot()["items"] == []
+    assert repository.snapshot()["sources"] == []
+    assert partial_file.read_bytes() == b"partial"
+
+
 def test_global_progress_counts_selected_videos_not_input_links():
     items = [queue_item("https://example.com", str(i)) for i in range(5)]
     items[0]["status"] = "completed"

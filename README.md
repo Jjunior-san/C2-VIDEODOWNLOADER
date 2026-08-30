@@ -245,6 +245,14 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
+## Versão 1.4.1 — concluídos e limpeza segura
+
+- nova aba **Concluídos**, separada da fila ativa, com nome do vídeo, qualidade e arquivo salvo;
+- **Remover selecionados** e **Limpar concluídos** retiram apenas registros do aplicativo;
+- **Remover da fila** exclui individualmente itens pendentes, interrompidos, cancelados ou com falha;
+- **Limpar fila** remove todos os registros da fila atual e dos concluídos;
+- nenhuma dessas operações apaga vídeos baixados nem arquivos parciais existentes.
+
 ## Versão 1.4.0 — fila persistente e San Francisco
 
 - **Listar vídeos** expande playlists e temporadas em uma tabela com seleção individual, título, qualidade solicitada, situação e progresso;

@@ -316,9 +316,11 @@ class DownloadApp(QueueUI):
         self.tabs = ttk.Notebook(shell)
         self.tabs.pack(fill="both", expand=True)
         self.download_page = ScrollablePage(self.tabs)
+        self.completed_page = ScrollablePage(self.tabs)
         self.settings_page = ScrollablePage(self.tabs)
         self.activity_page = ScrollablePage(self.tabs)
         self.tabs.add(self.download_page, text="  Downloads  ")
+        self.tabs.add(self.completed_page, text="  Concluídos  ")
         self.tabs.add(self.settings_page, text="  Configurações  ")
         self.tabs.add(self.activity_page, text="  Atividade  ")
         frame = self.download_page.body
@@ -364,6 +366,8 @@ class DownloadApp(QueueUI):
         self.progress = ttk.Progressbar(progress_frame, mode="determinate", maximum=100, value=0)
         self.progress.pack(fill="x", pady=(0, 8))
         wrapping_label(progress_frame, textvariable=self.download_metrics_var, foreground="#3f4f5f")
+
+        self._build_completed_list(self.completed_page.body)
 
         activity = self.activity_page.body
         ttk.Button(activity, text="Limpar atividade", command=self.clear_log).pack(anchor="e", pady=(0, 8))

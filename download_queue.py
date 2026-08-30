@@ -65,6 +65,27 @@ class QueueRepository:
                 item.update(changes_by_id.get(item["id"], {}))
             self._save(job)
 
+    def remove_many(self, item_ids) -> int:
+        """Remove queue records only; downloaded and partial files are never touched."""
+        ids = set(item_ids)
+        if not ids:
+            return 0
+        with self.lock:
+            job = self.snapshot()
+            previous_count = len(job["items"])
+            job["items"] = [item for item in job["items"] if item["id"] not in ids]
+            removed = previous_count - len(job["items"])
+            if not job["items"]:
+                job["sources"] = []
+            self._save(job)
+            return removed
+
+    def clear(self) -> int:
+        with self.lock:
+            job = self.snapshot()
+            ids = [item["id"] for item in job["items"]]
+            return self.remove_many(ids)
+
     def recover(self):
         with self.lock:
             job = self.snapshot()
