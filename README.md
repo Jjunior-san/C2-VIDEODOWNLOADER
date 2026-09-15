@@ -245,6 +245,15 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
+## Versão 1.4.2 — proteção contra travamentos do YouTube
+
+- a análise do YouTube é interrompida se o mecanismo ficar 60 segundos sem responder e repetida uma vez automaticamente;
+- o início do download também possui detector de inatividade e retomada automática do arquivo parcial;
+- o aplicativo solicita somente os metadados necessários, evitando JSONs enormes com formatos e legendas não utilizados;
+- Deno e os componentes EJS são informados explicitamente ao yt-dlp para os desafios JavaScript do YouTube;
+- conexões de download possuem limite de 30 segundos e as tentativas foram reduzidas para evitar esperas excessivas;
+- a aba **Atividade** passa a ser gravada em `activity.log`, com rotação automática para diagnósticos futuros.
+
 ## Versão 1.4.1 — concluídos e limpeza segura
 
 - nova aba **Concluídos**, separada da fila ativa, com nome do vídeo, qualidade e arquivo salvo;

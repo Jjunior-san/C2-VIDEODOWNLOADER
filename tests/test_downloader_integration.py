@@ -179,6 +179,21 @@ def test_playlist_options_do_not_allow_incomplete_video_fragments(tmp_path, monk
     assert "no-youtube-unavailable-videos" in command
     assert "--abort-on-unavailable-fragments" in command
     assert "--ignore-errors" not in command
+    assert command[command.index("--socket-timeout") + 1] == "30"
+    assert command[command.index("--retries") + 1] == "5"
+    assert command[command.index("--fragment-retries") + 1] == "5"
+
+
+def test_command_uses_the_managed_deno_runtime(tmp_path, monkeypatch):
+    instance, _, _, _ = make_download(tmp_path, monkeypatch, "https://example.com/video")
+    deno = tmp_path / "deno.exe"
+    deno.write_bytes(b"fixture")
+    instance.dependencies.deno_path = deno
+    command = instance._build_command(
+        Path("yt-dlp"), tmp_path, "Melhor MP4 compatível", "https://example.com/video",
+        include_cookies=False,
+    )
+    assert command[command.index("--js-runtimes") + 1] == f"deno:{deno}"
 
 
 def test_discovery_uses_actual_cli_to_expand_playlist(tmp_path, monkeypatch, server):

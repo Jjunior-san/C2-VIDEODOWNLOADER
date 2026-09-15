@@ -123,14 +123,17 @@ class DownloadControl:
         with self._condition:
             self._skipped = False
 
-    def terminate_active(self) -> None:
+    def terminate_active(self, force: bool = False) -> None:
         with self._condition:
             if self._process and self._process.poll() is None:
                 try:
                     root = psutil.Process(self._process.pid)
                     for process in reversed([root, *root.children(recursive=True)]):
                         try:
-                            process.terminate()
+                            if force:
+                                process.kill()
+                            else:
+                                process.terminate()
                         except psutil.NoSuchProcess:
                             pass
                 except psutil.NoSuchProcess:

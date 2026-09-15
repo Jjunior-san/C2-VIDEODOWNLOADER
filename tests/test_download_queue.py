@@ -11,6 +11,7 @@ from download_control import DownloadCancelled, DownloadControl, DownloadSkipped
 from download_queue import QueueRepository, queue_item, queue_summary
 from kanald_downloader import KanalDVideo, KanalDError, KanalDCollection
 from ui_layout import choose_font
+from process_monitor import ProcessInactivityError
 import youtube_downloader_app as app
 
 
@@ -106,6 +107,23 @@ def make_owner():
     owner._build_command = lambda *args, **kwargs: []
     owner._ensure_player_compatibility = lambda path: path
     return owner
+
+
+def test_download_retries_once_after_engine_inactivity():
+    owner = make_owner()
+    owner.queue_log = lambda message: logs.append(message)
+    calls, logs = [], []
+
+    def run_once(command):
+        calls.append(command)
+        if len(calls) == 1:
+            raise ProcessInactivityError("silent")
+        return 0, []
+
+    owner._run_downloader_once = run_once
+    assert owner._run_downloader(["engine"]) == (0, [])
+    assert len(calls) == 2
+    assert any("reiniciando" in line for line in logs)
 
 
 def test_cancel_one_video_continues_the_remaining_queue(tmp_path):

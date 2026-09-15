@@ -13,6 +13,11 @@ from download_control import DownloadCancelled, DownloadSkipped
 from download_queue import RUNNABLE, queue_item
 from jw_org_downloader import is_jw_category_url, resolve_category_items, download_item, convert_to_m4a
 from kanald_downloader import is_kanald_collection_url, is_kanald_url, resolve_kanald_collection, resolve_kanald_video
+from process_monitor import ProcessInactivityError, close_process, monitored_lines
+
+
+METADATA_INACTIVITY_SECONDS = 60
+METADATA_FIELDS = "%(.{id,title,webpage_url,original_url,url,availability,_type,duration,entries})j"
 
 
 def cookie_arguments(options):
@@ -25,37 +30,52 @@ def cookie_arguments(options):
     return args
 
 
-def read_metadata(engine, source, options, control, environment, log):
+def _read_metadata_once(engine, source, options, control, environment, log):
     command = [str(engine), "--ignore-config", "--no-abort-on-error", "--flat-playlist",
-               "--dump-single-json", "--skip-download", "--no-color", "--encoding", "utf-8",
+               "--skip-download", "--no-color", "--encoding", "utf-8", "--no-quiet",
                "--socket-timeout", "20", "--extractor-retries", "2",
+               "--remote-components", "ejs:github", "--print", METADATA_FIELDS,
                "--yes-playlist" if options["playlist"] else "--no-playlist",
                *cookie_arguments(options), "--", source]
+    deno = Path(engine).with_name("deno.exe")
+    if deno.is_file():
+        option_boundary = command.index("--")
+        command[option_boundary:option_boundary] = ["--js-runtimes", f"deno:{deno}"]
     process = control.popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, encoding="utf-8", errors="replace",
                             creationflags=CREATE_NO_WINDOW, env=environment)
-    result = None
+    results = []
     errors = []
     try:
-        for line in process.stdout:
-            control.checkpoint()
-            if line.startswith("{"):
-                result = json.loads(line)
+        for line in monitored_lines(process, control, METADATA_INACTIVITY_SECONDS):
+            cleaned = line.rstrip()
+            if cleaned.startswith("{"):
+                result = json.loads(cleaned)
+                if isinstance(result, dict):
+                    results.append(result)
             else:
-                log(line.rstrip())
+                log(cleaned)
                 if "ERROR:" in line:
                     errors.append(line.strip())
         control.checkpoint()
-        process.wait()
-        if not isinstance(result, dict):
+        process.wait(timeout=10)
+        if not results:
             raise RuntimeError(errors[-1] if errors else "Não foi possível listar os vídeos deste link.")
-        return result
+        return results[0] if len(results) == 1 else {"_type": "playlist", "entries": results}
     finally:
-        if process.poll() is None:
-            control.terminate_active()
-        process.wait()
-        process.stdout.close()
-        control.release(process)
+        close_process(process, control)
+
+
+def read_metadata(engine, source, options, control, environment, log):
+    for attempt in range(2):
+        try:
+            return _read_metadata_once(engine, source, options, control, environment, log)
+        except ProcessInactivityError:
+            if attempt:
+                raise RuntimeError(
+                    "O YouTube não respondeu após duas tentativas. Tente novamente em alguns minutos.",
+                )
+            log("YouTube sem resposta; reiniciando a análise automaticamente (1/1)...")
 
 
 def metadata_items(info: dict, source: str) -> list[dict]:

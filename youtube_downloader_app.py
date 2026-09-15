@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from tkinter import BooleanVar, END, StringVar, Tk, filedialog, messagebox
 from tkinter import ttk
@@ -20,6 +21,7 @@ from download_queue import QueueRepository, queue_summary
 from queue_ui import QueueUI
 from queue_service import cookie_arguments
 from media_conversion import codec_arguments, duration_from_probe, run_conversion, stream_compatibility
+from process_monitor import ProcessInactivityError, close_process, monitored_lines
 from c2_update import (
     ApplicationUpdater,
     AppUpdate,
@@ -38,6 +40,7 @@ except (ImportError, RuntimeError):
 
 SETTINGS_FILE = DATA_DIR / "settings.json"
 QUEUE_FILE = DATA_DIR / "downloads.sqlite3"
+ACTIVITY_LOG_FILE = DATA_DIR / "activity.log"
 OUTPUT_MARKER = "__C2_OUTPUT__:"
 PROGRESS_MARKER = "__C2_PROGRESS__:"
 POSTPROCESS_MARKER = "__C2_POSTPROCESS__:"
@@ -63,6 +66,7 @@ DOWNLOAD_FORMATS = [
     "Apenas áudio (M4A)",
 ]
 BROWSERS = ["Nenhum", "Chrome", "Edge", "Firefox", "Brave", "Opera", "Vivaldi"]
+DOWNLOAD_START_INACTIVITY_SECONDS = 90
 
 def _progress_number(value: str) -> float | None:
     try:
@@ -260,6 +264,7 @@ class DownloadApp(QueueUI):
         self.busy = False
         self.maintenance_busy = False
         self.log_queue: queue.Queue[str] = queue.Queue()
+        self._activity_log_lock = threading.Lock()
         self.event_queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self.available_update: AppUpdate | None = None
         self.dependency_status: DependencyStatus | None = None
@@ -283,6 +288,7 @@ class DownloadApp(QueueUI):
             queue_error = str(exc)
 
         self._build_ui()
+        self.queue_log(f"Registro de diagnóstico: {ACTIVITY_LOG_FILE}")
         try:
             if self.queue_repository is not None:
                 self._restore_queue()
@@ -495,9 +501,20 @@ class DownloadApp(QueueUI):
             self.cookies_file_var.set(selected)
 
     def clear_log(self) -> None:
+        try:
+            while True:
+                self.log_queue.get_nowait()
+        except queue.Empty:
+            pass
         self.log.configure(state="normal")
         self.log.delete("1.0", END)
         self.log.configure(state="disabled")
+        try:
+            with self._activity_log_lock:
+                ACTIVITY_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+                ACTIVITY_LOG_FILE.write_text("", encoding="utf-8")
+        except OSError:
+            pass
 
     def write_log(self, text: str) -> None:
         self.log.configure(state="normal")
@@ -506,6 +523,18 @@ class DownloadApp(QueueUI):
         self.log.configure(state="disabled")
 
     def queue_log(self, text: str) -> None:
+        try:
+            with self._activity_log_lock:
+                ACTIVITY_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+                if ACTIVITY_LOG_FILE.exists() and ACTIVITY_LOG_FILE.stat().st_size > 5 * 1024 * 1024:
+                    previous = ACTIVITY_LOG_FILE.with_name("activity.previous.log")
+                    previous.unlink(missing_ok=True)
+                    ACTIVITY_LOG_FILE.replace(previous)
+                timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+                with ACTIVITY_LOG_FILE.open("a", encoding="utf-8") as activity_log:
+                    activity_log.write(f"[{timestamp}] {text.rstrip()}\n")
+        except OSError:
+            pass
         self.log_queue.put(text)
 
     def _set_indeterminate_progress(self, label: str) -> None:
@@ -939,9 +968,13 @@ class DownloadApp(QueueUI):
             "--windows-filenames",
             "--continue",
             "--retries",
-            "10",
+            "5",
             "--fragment-retries",
-            "10",
+            "5",
+            "--socket-timeout",
+            "30",
+            "--extractor-retries",
+            "2",
             "--abort-on-unavailable-fragments",
             "--merge-output-format",
             "mp4",
@@ -964,6 +997,9 @@ class DownloadApp(QueueUI):
             command.append("--no-playlist")
         if FFMPEG_PATH:
             command.extend(["--ffmpeg-location", FFMPEG_PATH])
+        deno = getattr(getattr(self, "dependencies", None), "deno_path", None)
+        if deno and Path(deno).is_file():
+            command.extend(["--js-runtimes", f"deno:{deno}"])
         if format_choice == "Apenas áudio (M4A)":
             command.extend(["--extract-audio", "--audio-format", "m4a", "--audio-quality", "0"])
 
@@ -977,8 +1013,23 @@ class DownloadApp(QueueUI):
         return command
 
     def _run_downloader(self, command: list[str]) -> tuple[int, list[Path]]:
+        for attempt in range(2):
+            try:
+                return self._run_downloader_once(command)
+            except ProcessInactivityError:
+                if attempt:
+                    raise RuntimeError(
+                        "O mecanismo de download parou de responder após duas tentativas.",
+                    )
+                self.queue_log(
+                    "Download sem resposta; reiniciando automaticamente e preservando o arquivo parcial (1/1)...",
+                )
+        raise RuntimeError("O mecanismo de download não respondeu.")
+
+    def _run_downloader_once(self, command: list[str]) -> tuple[int, list[Path]]:
         output_files: list[Path] = []
         tracker = ProgressTracker()
+        watchdog = {"seconds": DOWNLOAD_START_INACTIVITY_SECONDS}
         process = self.download_control.popen(
             command,
             stdout=subprocess.PIPE,
@@ -991,8 +1042,7 @@ class DownloadApp(QueueUI):
         )
         try:
             assert process.stdout is not None
-            for line in process.stdout:
-                self.download_control.checkpoint()
+            for line in monitored_lines(process, self.download_control, lambda: watchdog["seconds"]):
                 cleaned = line.rstrip()
                 if not cleaned:
                     continue
@@ -1002,22 +1052,19 @@ class DownloadApp(QueueUI):
                         output_files.append(Path(output_path))
                     continue
                 if cleaned.startswith(POSTPROCESS_MARKER):
+                    watchdog["seconds"] = None
                     self.event_queue.put(("conversion_progress", {"label": "Finalizando mídia"}))
                     continue
                 progress = tracker.parse(cleaned, now=self._download_clock())
                 if progress is not None:
+                    watchdog["seconds"] = None
                     self._emit_media_progress(progress)
                     continue
                 self.queue_log(cleaned)
             self.download_control.checkpoint()
-            return process.wait(), output_files
+            return process.wait(timeout=10), output_files
         finally:
-            if process.poll() is None:
-                self.download_control.terminate_active()
-            process.wait()
-            if process.stdout:
-                process.stdout.close()
-            self.download_control.release(process)
+            close_process(process, self.download_control)
 
     @staticmethod
     def _stream_details(media_path: Path) -> tuple[str, str, float | None]:

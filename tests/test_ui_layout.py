@@ -33,6 +33,7 @@ def window(monkeypatch, request, tmp_path, desktop):
     monkeypatch.setattr(app, "load_user_settings", lambda: {})
     monkeypatch.setattr(app.DownloadApp, "start_maintenance", lambda *args: None)
     monkeypatch.setattr(app, "QUEUE_FILE", tmp_path / "downloads.sqlite3")
+    monkeypatch.setattr(app, "ACTIVITY_LOG_FILE", tmp_path / "activity.log")
     root = Toplevel(desktop)
     root.withdraw()
     root.tk.call("tk", "scaling", request.param * 96 / 72)
@@ -88,6 +89,14 @@ def test_completion_distinguishes_partial_empty_and_failed_jobs(window):
         instance._finish_download({"failures": failures, "completed": completed})
         assert instance.download_item_var.get() == expected
         assert f"Arquivos concluídos: {completed}" in instance.download_metrics_var.get()
+
+
+def test_activity_is_persisted_and_can_be_cleared(window):
+    _, instance = window
+    instance.queue_log("diagnostic line")
+    assert "diagnostic line" in app.ACTIVITY_LOG_FILE.read_text(encoding="utf-8")
+    instance.clear_log()
+    assert app.ACTIVITY_LOG_FILE.read_text(encoding="utf-8") == ""
 
 
 def test_queue_table_selections_retry_and_stop_race(window):
