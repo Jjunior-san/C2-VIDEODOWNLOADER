@@ -10,6 +10,26 @@ from download_queue import ACTIVE, LABELS, RUNNABLE, queue_summary
 from queue_service import discover, run_queue
 
 
+def queue_options_compatible(current: dict, saved: dict) -> bool:
+    """Compare only settings that can change the active queue's output."""
+    mode = "music" if saved.get("work_mode") == "music" else "video"
+    keys = {
+        "folder", "format", "playlist", "fragments",
+        "cookies_browser", "cookies_file", "work_mode",
+    }
+    if mode == "music":
+        keys.update({
+            "music_folder", "music_format", "audio_bitrate_mode",
+            "audio_custom_bitrate", "music_structure", "music_filename_template",
+            "deezer_arl", "deezer_quality", "create_collection_zip",
+        })
+    else:
+        keys.update({"video_folder", "video_format"})
+        if is_audio_format(str(saved.get("format") or "")):
+            keys.update({"audio_bitrate_mode", "audio_custom_bitrate"})
+    return all(current.get(key) == saved.get(key) for key in keys)
+
+
 class QueueUI:
     def _build_episode_list(self, parent):
         controls = ttk.Frame(parent)
@@ -141,12 +161,42 @@ class QueueUI:
                     else "video"
                 )
                 upgraded = True
+            queue_mode = "music" if options.get("work_mode") == "music" else "video"
+            if "music_folder" not in options:
+                options["music_folder"] = (
+                    options.get("folder") if queue_mode == "music"
+                    else self.music_folder_var.get().strip()
+                )
+                upgraded = True
+            if "video_folder" not in options:
+                options["video_folder"] = (
+                    options.get("folder") if queue_mode == "video"
+                    else self.video_folder_var.get().strip()
+                )
+                upgraded = True
+            if "music_format" not in options:
+                options["music_format"] = (
+                    options.get("format") if queue_mode == "music"
+                    else self.music_format_var.get()
+                )
+                upgraded = True
+            if "video_format" not in options:
+                options["video_format"] = (
+                    options.get("format") if queue_mode == "video"
+                    else self.video_format_var.get()
+                )
+                upgraded = True
             if upgraded:
                 self.queue_repository.replace(job["items"], options, job.get("sources", []))
             needs_resume = any(item["kind"] != "unresolved" and item["status"] in (RUNNABLE | {"failed"}) for item in job["items"])
             if needs_resume:
-                self.folder_var.set(options["folder"])
-                self.resolution_var.set(options["format"])
+                if queue_mode == "music":
+                    self.music_folder_var.set(options["music_folder"])
+                    self.music_format_var.set(options["music_format"])
+                else:
+                    self.video_folder_var.set(options["video_folder"])
+                    self.video_format_var.set(options["video_format"])
+                self._apply_work_mode(queue_mode, initial=True)
                 self.audio_bitrate_mode_var.set(options["audio_bitrate_mode"])
                 self.audio_custom_bitrate_var.set(str(options["audio_custom_bitrate"]))
                 self.playlist_var.set(options["playlist"])
@@ -380,16 +430,21 @@ class QueueUI:
 
     def _capture_options(self):
         work_mode = getattr(self, "work_mode", "video")
-        music_folder = (
+        music_folder_value = (
             self.music_folder_var.get().strip()
             if hasattr(self, "music_folder_var")
             else self.folder_var.get().strip()
         )
-        video_folder = (
+        video_folder_value = (
             self.video_folder_var.get().strip()
             if hasattr(self, "video_folder_var")
             else self.folder_var.get().strip()
         )
+        default_music = Path.home() / "Music"
+        if not default_music.exists():
+            default_music = Path.home() / "Downloads" / "Músicas"
+        music_folder = music_folder_value or str(default_music)
+        video_folder = video_folder_value or str(Path.home() / "Downloads")
         music_format = (
             self.music_format_var.get()
             if hasattr(self, "music_format_var")
@@ -404,9 +459,9 @@ class QueueUI:
         active_format = music_format if work_mode == "music" else video_format
 
         return dict(
-            folder=active_folder or self.folder_var.get().strip(),
-            music_folder=music_folder or active_folder,
-            video_folder=video_folder or active_folder,
+            folder=active_folder,
+            music_folder=music_folder,
+            video_folder=video_folder,
             format=active_format or self.resolution_var.get(),
             music_format=music_format,
             video_format=video_format,
@@ -543,8 +598,8 @@ class QueueUI:
             messagebox.showwarning("Taxa de bits", str(exc))
             return
         current = self._capture_options()
-        if current != options:
-            messagebox.showinfo("Fila de downloads", "A fila usa a pasta, o formato e as opções definidos ao listar os vídeos. Para alterar, clique em Listar vídeos novamente.")
+        if not queue_options_compatible(current, options):
+            messagebox.showinfo("Fila de downloads", "A fila usa a pasta, o formato e as opções definidos ao listar os itens. Para alterar, carregue a fila novamente.")
             return
         if options.get("cookies_file") and not Path(options["cookies_file"]).is_file():
             messagebox.showwarning("Fila de downloads", "O arquivo de cookies da fila não foi encontrado. Atualize as configurações e liste os vídeos novamente.")

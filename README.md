@@ -245,6 +245,17 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
+## Versão 1.8.1 — isolamento das pastas de Música e Vídeo
+
+- corrige a troca de abas que copiava a pasta e o formato de Música sobre os de Vídeo, ou vice-versa;
+- cada aba restaura sempre sua própria pasta e seu próprio formato ao ser selecionada;
+- escolher a pasta da aba inativa não altera o destino atualmente ativo;
+- filas recuperadas restauram somente as preferências do tipo de mídia correspondente;
+- alterar a pasta ou o formato da aba inativa não impede a continuação de uma fila existente;
+- pastas vazias usam padrões independentes (`Downloads` para Vídeo e `Music`/`Downloads\\Músicas` para Música);
+- desacopla recursos gerais das dependências opcionais de autenticação;
+- adiciona testes de regressão de interface, persistência, roteamento de arquivos e desempenho da fila.
+
 ## Versão 1.8.0 — controles de player estilo VLC, pastas e formatos separados e prévia de vídeo
 
 - **Controles de player estilo VLC**: o botão de reproduzir agora alterna entre reprodução e pausa (`▶ Reproduzir` / `⏸ Pausar`), com botão dedicado `⏹ Parar` disponível tanto na tela de detalhes/pesquisa quanto na aba **Concluídos**;

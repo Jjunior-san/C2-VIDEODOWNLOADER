@@ -124,6 +124,84 @@ def test_audio_format_enables_bitrate_and_original_disables_conversion_controls(
     assert str(instance.audio_custom_bitrate["state"]) == "disabled"
 
 
+def test_switching_music_and_video_tabs_keeps_folders_and_formats_independent(window):
+    root, instance = window
+    video_folder = r"C:\Media\Videos"
+    music_folder = r"D:\Media\Musicas"
+    instance.video_folder_var.set(video_folder)
+    instance.music_folder_var.set(music_folder)
+    instance.video_format_var.set("720p")
+    instance.music_format_var.set("Apenas áudio (Opus)")
+    instance._apply_work_mode("video", initial=True)
+
+    instance.tabs.select(instance.music_page)
+    root.update()
+    assert instance.work_mode == "music"
+    assert instance.folder_var.get() == music_folder
+    assert instance.resolution_var.get() == "Apenas áudio (Opus)"
+    assert instance.video_folder_var.get() == video_folder
+    assert instance.video_format_var.get() == "720p"
+    music_options = instance._capture_options()
+    assert music_options["folder"] == music_folder
+    assert music_options["music_folder"] == music_folder
+    assert music_options["video_folder"] == video_folder
+
+    instance.tabs.select(instance.video_page)
+    root.update()
+    assert instance.work_mode == "video"
+    assert instance.folder_var.get() == video_folder
+    assert instance.resolution_var.get() == "720p"
+    assert instance.music_folder_var.get() == music_folder
+    assert instance.music_format_var.get() == "Apenas áudio (Opus)"
+    video_options = instance._capture_options()
+    assert video_options["folder"] == video_folder
+    assert video_options["music_folder"] == music_folder
+    assert video_options["video_folder"] == video_folder
+
+
+def test_choosing_inactive_music_folder_does_not_change_video_folder(window, monkeypatch):
+    _, instance = window
+    instance._apply_work_mode("video", initial=True)
+    instance.video_folder_var.set(r"C:\Media\Videos")
+    instance.folder_var.set(r"C:\Media\Videos")
+    monkeypatch.setattr(app.filedialog, "askdirectory", lambda **kwargs: r"D:\Media\Musicas")
+
+    instance.choose_music_folder()
+
+    assert instance.music_folder_var.get() == r"D:\Media\Musicas"
+    assert instance.video_folder_var.get() == r"C:\Media\Videos"
+    assert instance.folder_var.get() == r"C:\Media\Videos"
+
+
+def test_restoring_music_queue_does_not_revert_video_preferences(window):
+    from download_queue import queue_item
+
+    root, instance = window
+    instance.video_folder_var.set(r"D:\Current\Videos")
+    instance.video_format_var.set("720p")
+    item = queue_item("deezer: example", "Music result", kind="deezer_preview")
+    options = instance._capture_options()
+    options.update({
+        "work_mode": "music",
+        "folder": r"C:\Queue\Music",
+        "music_folder": r"C:\Queue\Music",
+        "music_format": "Apenas áudio (MP3)",
+        "format": "Apenas áudio (MP3)",
+        "video_folder": r"C:\Old\Videos",
+        "video_format": "1080p",
+    })
+    instance.queue_repository.replace([item], options, ["deezer: example"])
+
+    instance._restore_queue()
+    root.update()
+
+    assert instance.work_mode == "music"
+    assert instance.music_folder_var.get() == r"C:\Queue\Music"
+    assert instance.video_folder_var.get() == r"D:\Current\Videos"
+    assert instance.video_format_var.get() == "720p"
+    assert instance.folder_var.get() == r"C:\Queue\Music"
+
+
 def test_queue_table_selections_retry_and_stop_race(window):
     from download_queue import queue_item
     _, instance = window

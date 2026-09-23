@@ -18,7 +18,6 @@ from audio_library import (
     music_output_template,
     music_target_folder,
 )
-from deezer_auth import DeezerAuthError, DeezerStreamError, download_and_decrypt_track
 from deezer_catalog import is_deezer_url, resolve_deezer_track, resolve_deezer_url, search_deezer_tracks
 from download_control import DownloadCancelled, DownloadSkipped
 from download_queue import RUNNABLE, queue_item
@@ -265,6 +264,12 @@ def run_queue(owner, repository, options, engine):
                     folder = Path(options.get("video_folder") or options["folder"])
                     folder.mkdir(parents=True, exist_ok=True)
                 if item["kind"] == "deezer_full":
+                    try:
+                        from deezer_auth import download_and_decrypt_track
+                    except ImportError as exc:
+                        raise RuntimeError(
+                            "O módulo opcional necessário para este item não está disponível.",
+                        ) from exc
                     arl = str(options.get("deezer_arl") or "").strip()
                     pref_quality = str(options.get("deezer_quality") or "auto")
                     template = item.get("output_template") or music_output_template(

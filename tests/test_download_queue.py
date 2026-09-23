@@ -12,12 +12,96 @@ from download_queue import QueueRepository, queue_item, queue_summary
 from kanald_downloader import KanalDVideo, KanalDError, KanalDCollection
 from ui_layout import choose_font
 from process_monitor import ProcessInactivityError
+from queue_ui import queue_options_compatible
 import youtube_downloader_app as app
 
 
 def options(tmp_path):
     return {"folder": str(tmp_path), "format": "Melhor MP4 compatível", "playlist": True,
             "fragments": 4, "cookies_browser": "Nenhum", "cookies_file": ""}
+
+
+def test_video_queue_ignores_changes_to_inactive_music_folder():
+    saved = {
+        "work_mode": "video", "folder": r"C:\Videos", "video_folder": r"C:\Videos",
+        "music_folder": r"C:\Music-A", "format": "1080p", "video_format": "1080p",
+        "music_format": "Apenas áudio (MP3)", "playlist": True, "fragments": 4,
+        "cookies_browser": "Nenhum", "cookies_file": "",
+    }
+    current = dict(saved, music_folder=r"D:\Music-B", music_format="Apenas áudio (Opus)")
+    assert queue_options_compatible(current, saved)
+    assert not queue_options_compatible(dict(current, video_folder=r"D:\Videos"), saved)
+
+
+def test_music_queue_ignores_changes_to_inactive_video_folder():
+    saved = {
+        "work_mode": "music", "folder": r"C:\Music", "music_folder": r"C:\Music",
+        "video_folder": r"C:\Videos-A", "format": "Apenas áudio (MP3)",
+        "music_format": "Apenas áudio (MP3)", "video_format": "1080p",
+        "playlist": True, "fragments": 4, "cookies_browser": "Nenhum", "cookies_file": "",
+        "audio_bitrate_mode": "Original / automática", "audio_custom_bitrate": "192",
+        "music_structure": "Artista\\Álbum", "music_filename_template": "{titulo}",
+        "deezer_arl": "", "deezer_quality": "auto", "create_collection_zip": False,
+    }
+    current = dict(saved, video_folder=r"D:\Videos-B", video_format="720p")
+    assert queue_options_compatible(current, saved)
+    assert not queue_options_compatible(dict(current, music_folder=r"D:\Music"), saved)
+
+
+def test_queue_routes_public_music_and_video_to_independent_folders(tmp_path, monkeypatch):
+    from deezer_catalog import DeezerTrack
+
+    music_folder = tmp_path / "music"
+    video_folder = tmp_path / "video"
+    items = [
+        queue_item(
+            "https://www.deezer.com/track/1", "Music", kind="deezer_preview",
+            media_id="1", collection_title="Album",
+        ),
+        queue_item("https://example.com/video", "Video"),
+    ]
+    saved_options = {
+        "folder": str(video_folder), "music_folder": str(music_folder),
+        "video_folder": str(video_folder), "format": "720p", "video_format": "720p",
+        "music_format": "Apenas áudio (MP3)", "playlist": True, "fragments": 4,
+        "cookies_browser": "Nenhum", "cookies_file": "", "work_mode": "video",
+        "audio_bitrate_mode": "Original / automática", "audio_custom_bitrate": "192",
+        "music_structure": "Pasta raiz", "music_filename_template": "{titulo}",
+    }
+    repository = QueueRepository(tmp_path / "separate-folders.db")
+    repository.replace(items, saved_options, [])
+    owner = make_owner()
+    owner.finalized_files = []
+    calls = []
+
+    def build_command(engine, folder, format_choice, url, **kwargs):
+        calls.append((Path(folder), format_choice))
+        return [str(folder), format_choice]
+
+    def download(command):
+        folder = Path(command[0])
+        suffix = ".mp3" if "MP3" in command[1] else ".mp4"
+        output = folder / f"output-{len(calls)}{suffix}"
+        output.write_bytes(b"media")
+        return 0, [output]
+
+    owner._build_command = build_command
+    owner._run_downloader = download
+    owner._finalize_downloaded_files = lambda code, outputs, fmt: (
+        setattr(owner, "finalized_files", outputs) or True
+    )
+    monkeypatch.setattr(queue_service, "resolve_deezer_track", lambda track_id: DeezerTrack(
+        "1", "Music", "Artist", "Album", "https://cdnt-preview.dzcdn.net/preview.mp3",
+    ))
+    monkeypatch.setattr(queue_service, "apply_deezer_metadata", lambda *args: None)
+
+    queue_service.run_queue(owner, repository, saved_options, Path("engine"))
+
+    assert calls[0][0] == music_folder
+    assert calls[1][0] == video_folder
+    completed = repository.snapshot()["items"]
+    assert Path(completed[0]["files"][0]).parent == music_folder
+    assert Path(completed[1]["files"][0]).parent == video_folder
 
 
 def test_persistence_recovers_only_unfinished_items(tmp_path):

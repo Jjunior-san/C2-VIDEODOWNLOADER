@@ -43,15 +43,15 @@ def test_separate_music_and_video_settings(tmp_path: Path, monkeypatch):
         "download_folder": r"C:\Downloads\Videos",
         "video_download_folder": r"C:\Downloads\Videos",
         "music_download_folder": r"C:\Downloads\Musicas",
-        "video_format": "1080p MP4",
-        "music_format": "Apenas áudio (FLAC)",
+        "video_format": "1080p",
+        "music_format": "Apenas áudio (Opus)",
     }
     app.save_user_settings(settings)
     loaded = app.load_user_settings()
     assert loaded["video_download_folder"] == r"C:\Downloads\Videos"
     assert loaded["music_download_folder"] == r"C:\Downloads\Musicas"
-    assert loaded["video_format"] == "1080p MP4"
-    assert loaded["music_format"] == "Apenas áudio (FLAC)"
+    assert loaded["video_format"] == "1080p"
+    assert loaded["music_format"] == "Apenas áudio (Opus)"
 
 
 def test_fetch_video_preview_info_returns_structure():

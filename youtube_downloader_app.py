@@ -31,7 +31,6 @@ from audio_library import (
     read_audio_metadata,
     write_audio_metadata,
 )
-from deezer_auth import validate_deezer_arl
 from deezer_catalog import DeezerSearchResult, resolve_deezer_track, search_deezer_catalog
 from download_control import DownloadCancelled, DownloadControl
 from ui_layout import ScrollablePage, build_brand, configure_fonts, fit_window, wrapping_label
@@ -1019,8 +1018,11 @@ class DownloadApp(QueueUI):
         mode = "music" if mode == "music" else "video"
         self.work_mode = mode
         if mode == "music":
-            if self.resolution_var.get() not in MUSIC_DOWNLOAD_FORMATS:
-                self.resolution_var.set(self.music_format_var.get() if hasattr(self, "music_format_var") else "Apenas áudio (MP3)")
+            self.resolution_var.set(
+                self.music_format_var.get()
+                if hasattr(self, "music_format_var")
+                else "Apenas áudio (MP3)"
+            )
             if hasattr(self, "music_folder_var"):
                 self.folder_var.set(self.music_folder_var.get())
             if hasattr(self, "analyze_button"):
@@ -1029,8 +1031,11 @@ class DownloadApp(QueueUI):
                 self.download_item_var.set("Modo Música")
                 self.download_metrics_var.set("Selecione um resultado da pesquisa para carregar na fila.")
         else:
-            if self.resolution_var.get() not in VIDEO_DOWNLOAD_FORMATS:
-                self.resolution_var.set(self.video_format_var.get() if hasattr(self, "video_format_var") else "Melhor MP4 compatível")
+            self.resolution_var.set(
+                self.video_format_var.get()
+                if hasattr(self, "video_format_var")
+                else "Melhor MP4 compatível"
+            )
             if hasattr(self, "video_folder_var"):
                 self.folder_var.set(self.video_folder_var.get())
             if hasattr(self, "analyze_button"):
@@ -1111,13 +1116,9 @@ class DownloadApp(QueueUI):
         selected = self.tabs.select()
         if selected == str(self.music_page):
             if self.work_mode != "music":
-                self.resolution_var.set(self.music_format_var.get())
-                self.folder_var.set(self.music_folder_var.get())
                 self._apply_work_mode("music")
         elif selected == str(self.video_page):
             if self.work_mode != "video":
-                self.resolution_var.set(self.video_format_var.get())
-                self.folder_var.set(self.video_folder_var.get())
                 self._apply_work_mode("video")
         self._save_preferences()
 
@@ -1684,7 +1685,9 @@ class DownloadApp(QueueUI):
         selected = filedialog.askdirectory(initialdir=str(initial))
         if selected:
             current_var.set(selected)
-            self.folder_var.set(selected)
+            active_is_music = self.work_mode == "music"
+            if is_music == active_is_music:
+                self.folder_var.set(selected)
             self._save_preferences()
 
     def choose_music_folder(self) -> None:
@@ -1814,6 +1817,17 @@ class DownloadApp(QueueUI):
             return
 
         self.deezer_status_var.set("● Verificando credenciais na Deezer...")
+
+        try:
+            from deezer_auth import validate_deezer_arl
+        except ImportError as exc:
+            self.deezer_status_var.set("● Recurso opcional indisponível")
+            if show_dialog:
+                messagebox.showwarning(
+                    APP_NAME,
+                    f"O módulo opcional de autenticação não está disponível:\n{exc}",
+                )
+            return
 
         def worker():
             info = validate_deezer_arl(arl)
