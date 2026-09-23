@@ -148,19 +148,30 @@ def discover(sources, options, engine, control, environment, log):
     for source in sources:
         control.checkpoint()
         try:
-            if source.lower().startswith("deezer:"):
-                query = source.split(":", 1)[1].strip()
-                log(f"Deezer: pesquisando no catálogo público por '{query}'.")
-                limit = 25 if options["playlist"] else 1
-                tracks = search_deezer_tracks(query, limit=limit)
-                if not tracks:
-                    raise RuntimeError("Nenhuma faixa foi encontrada na pesquisa da Deezer.")
-                items.extend(_deezer_queue_items(tracks, f"Pesquisa Deezer - {query}", options))
-            elif is_deezer_url(source):
+            music_mode = str(options.get("work_mode") or "").lower() == "music"
+            parsed_source = urlparse(source.strip())
+            plain_music_search = (
+                music_mode
+                and not parsed_source.scheme
+                and not parsed_source.netloc
+                and not source.lower().startswith("deezer:")
+            )
+
+            if is_deezer_url(source):
                 log("Deezer: consultando o catálogo público; somente prévias oficiais serão incluídas.")
                 collection = resolve_deezer_url(source)
                 tracks = collection.tracks if options["playlist"] else collection.tracks[:1]
                 items.extend(_deezer_queue_items(tracks, collection.title, options))
+            elif source.lower().startswith("deezer:") or plain_music_search:
+                query = source.split(":", 1)[1].strip() if source.lower().startswith("deezer:") else source.strip()
+                if len(query) < 2:
+                    raise RuntimeError("Digite ao menos dois caracteres para pesquisar artista ou música.")
+                log(f"Deezer: pesquisando no catálogo público por '{query}'.")
+                limit = 25 if options["playlist"] else 1
+                tracks = search_deezer_tracks(query, limit=limit)
+                if not tracks:
+                    raise RuntimeError(f"Nenhum resultado foi encontrado para '{query}' na Deezer.")
+                items.extend(_deezer_queue_items(tracks, f"Pesquisa Deezer - {query}", options))
             elif is_jw_category_url(source):
                 for media in resolve_category_items(source, options["format"], include_subcategories=options["playlist"], logger=log):
                     items.append(queue_item(source, media.title, kind="jw", media_id=media.media_id,
