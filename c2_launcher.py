@@ -7,11 +7,12 @@ import youtube_downloader_app as app
 from app_config import APP_NAME, APP_VERSION
 from download_control import DownloadCancelled
 from jw_org_downloader import (
-    convert_to_m4a,
+    convert_to_audio,
     download_item,
     is_jw_category_url,
     resolve_category_items,
 )
+from audio_library import is_audio_format
 from kanald_downloader import (
     is_kanald_collection_url,
     is_kanald_url,
@@ -129,14 +130,15 @@ def _download_with_jw_categories(
                             logger=self.queue_log,
                             progress=self._report_direct_progress,
                         )
-                        if format_choice == "Apenas áudio (M4A)":
-                            convert_to_m4a(
+                        if is_audio_format(format_choice):
+                            convert_to_audio(
                                 output_file,
+                                format_choice,
                                 app.FFMPEG_PATH,
                                 logger=self.queue_log,
                                 control=self.download_control,
                                 progress=lambda payload: self.event_queue.put((
-                                    "conversion_progress", dict(payload, label="Extraindo áudio M4A"),
+                                    "conversion_progress", dict(payload, label="Extraindo áudio"),
                                 )),
                             )
                         else:

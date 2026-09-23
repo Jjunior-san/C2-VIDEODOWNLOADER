@@ -196,6 +196,23 @@ def test_command_uses_the_managed_deno_runtime(tmp_path, monkeypatch):
     assert command[command.index("--js-runtimes") + 1] == f"deno:{deno}"
 
 
+@pytest.mark.parametrize("choice,codec", [
+    ("Apenas áudio (M4A)", "m4a"),
+    ("Apenas áudio (MP3)", "mp3"),
+    ("Apenas áudio (Opus)", "opus"),
+])
+def test_audio_commands_embed_metadata_and_cover(tmp_path, monkeypatch, choice, codec):
+    instance, _, _, _ = make_download(tmp_path, monkeypatch, "https://example.com/audio")
+    command = instance._build_command(
+        Path("yt-dlp"), tmp_path, choice, "https://example.com/audio", include_cookies=False,
+    )
+    assert command[command.index("--audio-format") + 1] == codec
+    assert "--extract-audio" in command
+    assert "--embed-metadata" in command
+    assert "--embed-thumbnail" in command
+    assert "--merge-output-format" not in command
+
+
 def test_discovery_uses_actual_cli_to_expand_playlist(tmp_path, monkeypatch, server):
     from queue_service import metadata_items, read_metadata
     port = server[0].rsplit(":", 1)[1]

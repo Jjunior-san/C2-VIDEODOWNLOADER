@@ -23,7 +23,7 @@ class QueueUI:
         table.pack(fill="both", pady=(0, 6))
         columns = ("selected", "title", "quality", "status", "percent")
         self.episode_tree = ttk.Treeview(table, columns=columns, show="headings", height=4, selectmode="extended")
-        for name, label, width in zip(columns, ("✓", "Vídeo / episódio", "Qualidade", "Situação", "%"), (32, 290, 100, 112, 48)):
+        for name, label, width in zip(columns, ("✓", "Mídia", "Qualidade", "Situação", "%"), (32, 290, 100, 112, 48)):
             self.episode_tree.heading(name, text=label)
             self.episode_tree.column(name, width=width, minwidth=width if name != "title" else 130,
                                      stretch=name == "title", anchor="w" if name == "title" else "center")
@@ -64,7 +64,7 @@ class QueueUI:
         )
         for name, label, width in zip(
             columns,
-            ("Vídeo / episódio", "Qualidade", "Arquivo salvo"),
+            ("Mídia", "Qualidade", "Arquivo salvo"),
             (320, 130, 260),
         ):
             self.completed_tree.heading(name, text=label)

@@ -15,6 +15,7 @@ from tkinter import BooleanVar, END, StringVar, Tk, filedialog, messagebox
 from tkinter import ttk
 
 from app_config import APP_MUTEX, APP_NAME, APP_VERSION
+from audio_library import audio_codec, is_audio_format
 from download_control import DownloadCancelled, DownloadControl
 from ui_layout import ScrollablePage, build_brand, configure_fonts, fit_window, wrapping_label
 from download_queue import QueueRepository, queue_summary
@@ -64,6 +65,8 @@ DOWNLOAD_FORMATS = [
     "480p",
     "360p",
     "Apenas áudio (M4A)",
+    "Apenas áudio (MP3)",
+    "Apenas áudio (Opus)",
 ]
 BROWSERS = ["Nenhum", "Chrome", "Edge", "Firefox", "Brave", "Opera", "Vivaldi"]
 DOWNLOAD_START_INACTIVITY_SECONDS = 90
@@ -331,7 +334,7 @@ class DownloadApp(QueueUI):
         self.tabs.add(self.activity_page, text="  Atividade  ")
         frame = self.download_page.body
 
-        ttk.Label(frame, text="Links dos vídeos ou playlists", font=(self.text_family, 10, "bold")).pack(anchor="w")
+        ttk.Label(frame, text="Links de vídeos, músicas ou playlists", font=(self.text_family, 10, "bold")).pack(anchor="w")
         url_row = ttk.Frame(frame)
         url_row.pack(fill="x", pady=(4, 10))
         self.url_text = self._make_text(url_row, height=2)
@@ -351,7 +354,7 @@ class DownloadApp(QueueUI):
         ttk.Label(format_frame, text="Formato:").pack(side="left", padx=(0, 8))
         ttk.Combobox(
             format_frame, textvariable=self.resolution_var,
-            values=DOWNLOAD_FORMATS, state="readonly", width=24,
+            values=DOWNLOAD_FORMATS, state="readonly", width=27,
         ).pack(side="left")
         ttk.Checkbutton(format_frame, text="Baixar playlist/álbum", variable=self.playlist_var).pack(side="left", padx=(12, 0))
 
@@ -896,7 +899,7 @@ class DownloadApp(QueueUI):
         for output_file in dict.fromkeys(output_files):
             try:
                 self.download_control.checkpoint()
-                if format_choice != "Apenas áudio (M4A)":
+                if not is_audio_format(format_choice):
                     output_file = self._ensure_player_compatibility(output_file) or output_file
                 self.finalized_files.append(output_file)
                 self.download_completed_files = getattr(self, "download_completed_files", 0) + 1
@@ -940,6 +943,8 @@ class DownloadApp(QueueUI):
             "480p": compatible_selector(480),
             "360p": compatible_selector(360),
             "Apenas áudio (M4A)": "ba/bestaudio/best",
+            "Apenas áudio (MP3)": "ba/bestaudio/best",
+            "Apenas áudio (Opus)": "ba/bestaudio/best",
         }
         selected_format = format_map.get(format_choice, compatible_selector())
         selected_output_template = output_template or (
@@ -976,8 +981,6 @@ class DownloadApp(QueueUI):
             "--extractor-retries",
             "2",
             "--abort-on-unavailable-fragments",
-            "--merge-output-format",
-            "mp4",
             "--remote-components",
             "ejs:github",
             "--print",
@@ -1000,8 +1003,15 @@ class DownloadApp(QueueUI):
         deno = getattr(getattr(self, "dependencies", None), "deno_path", None)
         if deno and Path(deno).is_file():
             command.extend(["--js-runtimes", f"deno:{deno}"])
-        if format_choice == "Apenas áudio (M4A)":
-            command.extend(["--extract-audio", "--audio-format", "m4a", "--audio-quality", "0"])
+        codec = audio_codec(format_choice)
+        if codec:
+            command.extend([
+                "--extract-audio", "--audio-format", codec, "--audio-quality", "0",
+                "--embed-metadata", "--embed-thumbnail", "--convert-thumbnails", "jpg",
+                "--no-embed-chapters",
+            ])
+        else:
+            command.extend(["--merge-output-format", "mp4"])
 
         if include_cookies:
             if options is not None:

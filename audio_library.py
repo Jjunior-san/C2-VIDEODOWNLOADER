@@ -1,0 +1,154 @@
+"""Audio post-processing helpers shared by regular and catalog downloads."""
+from __future__ import annotations
+
+import re
+import shutil
+import uuid
+from collections import defaultdict
+from pathlib import Path
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
+
+from app_config import APP_VERSION
+
+
+AUDIO_FORMATS = {
+    "Apenas áudio (M4A)": "m4a",
+    "Apenas áudio (MP3)": "mp3",
+    "Apenas áudio (Opus)": "opus",
+}
+AUDIO_EXTENSIONS = {".m4a", ".mp3", ".opus", ".ogg", ".flac", ".wav"}
+
+
+def is_audio_format(format_choice: str) -> bool:
+    return format_choice in AUDIO_FORMATS
+
+
+def audio_codec(format_choice: str) -> str | None:
+    return AUDIO_FORMATS.get(format_choice)
+
+
+def _safe_name(value: str, fallback: str = "Playlist") -> str:
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value).strip(" .")
+    return cleaned[:120] or fallback
+
+
+def _cover_bytes(url: str | None) -> bytes | None:
+    if not url:
+        return None
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not host.endswith("dzcdn.net"):
+        return None
+    request = Request(url, headers={"User-Agent": f"C2VideoDownloader/{APP_VERSION}"})
+    try:
+        with urlopen(request, timeout=20) as response:
+            content = response.read(8 * 1024 * 1024 + 1)
+    except OSError:
+        return None
+    return content if 0 < len(content) <= 8 * 1024 * 1024 else None
+
+
+def _syncsafe(value: int) -> bytes:
+    return bytes(((value >> 21) & 0x7f, (value >> 14) & 0x7f, (value >> 7) & 0x7f, value & 0x7f))
+
+
+def _text_frame(frame_id: str, value: object) -> bytes:
+    text = str(value or "").strip()
+    if not text:
+        return b""
+    # ID3v2.3 uses UTF-16 (encoding marker 1); Python includes the required BOM.
+    payload = b"\x01" + text.encode("utf-16")
+    return frame_id.encode("ascii") + len(payload).to_bytes(4, "big") + b"\x00\x00" + payload
+
+
+def _picture_frame(content: bytes | None) -> bytes:
+    if not content:
+        return b""
+    payload = b"\x00image/jpeg\x00\x03Cover\x00" + content
+    return b"APIC" + len(payload).to_bytes(4, "big") + b"\x00\x00" + payload
+
+
+def _existing_id3_size(source) -> int:
+    header = source.read(10)
+    if len(header) != 10 or header[:3] != b"ID3":
+        return 0
+    # Syncsafe integers reserve the high bit in every size byte. Treat a
+    # malformed header as audio data instead of trusting a potentially huge
+    # seek offset that could discard the original file.
+    if any(value & 0x80 for value in header[6:10]):
+        return 0
+    size = sum((header[6 + index] & 0x7f) << shift for index, shift in enumerate((21, 14, 7, 0)))
+    footer = 10 if header[5] & 0x10 else 0
+    return 10 + size + footer
+
+
+def _write_mp3_metadata(path: Path, frames: bytes) -> None:
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tags")
+    try:
+        with path.open("rb") as source:
+            previous_tag_size = _existing_id3_size(source)
+            if previous_tag_size > path.stat().st_size:
+                previous_tag_size = 0
+            source.seek(previous_tag_size)
+            with temporary.open("wb") as destination:
+                destination.write(b"ID3\x03\x00\x00" + _syncsafe(len(frames)) + frames)
+                shutil.copyfileobj(source, destination, 1024 * 1024)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def apply_deezer_metadata(path: Path, item: dict, logger=None) -> None:
+    """Attach public catalog metadata to an official preview file."""
+    if not path.is_file() or path.suffix.lower() != ".mp3":
+        return
+    title = str(item.get("track_title") or item.get("title") or "")
+    artist = str(item.get("artist") or "")
+    album = str(item.get("album") or item.get("collection_title") or "")
+    track = item.get("track_number")
+    disc = item.get("disc_number")
+    year = str(item.get("release_year") or "")
+    cover = _cover_bytes(item.get("cover_url"))
+
+    frames = b"".join((
+        _text_frame("TIT2", title), _text_frame("TPE1", artist),
+        _text_frame("TALB", album), _text_frame("TRCK", track),
+        _text_frame("TPOS", disc), _text_frame("TDRC", year),
+        _picture_frame(cover),
+    ))
+    _write_mp3_metadata(path, frames)
+    if logger:
+        logger(f"Metadados e capa aplicados: {path.name}")
+
+
+def create_deezer_playlists(items: list[dict], folder: Path, logger=None) -> list[Path]:
+    groups: dict[str, list[tuple[dict, Path]]] = defaultdict(list)
+    for item in items:
+        if item.get("kind") != "deezer_preview" or item.get("status") != "completed":
+            continue
+        collection = str(item.get("collection_title") or "Prévia Deezer")
+        for filename in item.get("files", []):
+            path = Path(filename)
+            if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS:
+                groups[collection].append((item, path))
+    created = []
+    for collection, entries in groups.items():
+        if len(entries) < 2:
+            continue
+        playlist = folder / f"{_safe_name(collection)}.m3u8"
+        lines = ["#EXTM3U"]
+        for item, path in entries:
+            duration = int(item.get("duration") or -1)
+            lines.append(f"#EXTINF:{duration},{item.get('title') or path.stem}")
+            try:
+                lines.append(str(path.relative_to(folder)))
+            except ValueError:
+                lines.append(str(path))
+        temporary = playlist.with_suffix(".m3u8.tmp")
+        temporary.write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
+        temporary.replace(playlist)
+        created.append(playlist)
+        if logger:
+            logger(f"Playlist local criada: {playlist.name}")
+    return created

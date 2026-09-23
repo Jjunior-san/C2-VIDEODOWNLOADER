@@ -9,15 +9,17 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from c2_update import CREATE_NO_WINDOW
+from audio_library import apply_deezer_metadata, create_deezer_playlists, is_audio_format
+from deezer_catalog import is_deezer_url, resolve_deezer_track, resolve_deezer_url
 from download_control import DownloadCancelled, DownloadSkipped
 from download_queue import RUNNABLE, queue_item
-from jw_org_downloader import is_jw_category_url, resolve_category_items, download_item, convert_to_m4a
+from jw_org_downloader import is_jw_category_url, resolve_category_items, download_item, convert_to_audio
 from kanald_downloader import is_kanald_collection_url, is_kanald_url, resolve_kanald_collection, resolve_kanald_video
 from process_monitor import ProcessInactivityError, close_process, monitored_lines
 
 
 METADATA_INACTIVITY_SECONDS = 60
-METADATA_FIELDS = "%(.{id,title,webpage_url,original_url,url,availability,_type,duration,entries})j"
+METADATA_FIELDS = "%(.{id,title,webpage_url,original_url,url,availability,_type,duration,playlist_title,entries})j"
 
 
 def cookie_arguments(options):
@@ -92,7 +94,8 @@ def metadata_items(info: dict, source: str) -> list[dict]:
         title = entry.get("title") or entry.get("id") or url or "Vídeo indisponível"
         # Only retain stable page links. Never persist formats, cookies or headers.
         item = queue_item(str(url), str(title), media_id=entry.get("id"),
-                          duration=entry.get("duration"), quality="A definir")
+                          duration=entry.get("duration"), playlist_title=entry.get("playlist_title"),
+                          quality="A definir")
         if not url or entry.get("availability") == "private" or title in {"[Private video]", "[Deleted video]"}:
             item.update(status="skipped", enabled=False, error="Item privado ou indisponível na playlist.")
         result.append(item)
@@ -106,7 +109,34 @@ def discover(sources, options, engine, control, environment, log):
     for source in sources:
         control.checkpoint()
         try:
-            if is_jw_category_url(source):
+            if is_deezer_url(source):
+                log("Deezer: consultando o catálogo público; somente prévias oficiais serão incluídas.")
+                collection = resolve_deezer_url(source)
+                tracks = collection.tracks if options["playlist"] else collection.tracks[:1]
+                for position, track in enumerate(tracks, 1):
+                    item = queue_item(
+                        track.page_url,
+                        f"{track.display_title} (prévia Deezer)",
+                        kind="deezer_preview",
+                        media_id=track.track_id,
+                        track_title=track.title,
+                        artist=track.artist,
+                        album=track.album,
+                        track_number=track.track_number or position,
+                        disc_number=track.disc_number,
+                        release_year=track.release_year,
+                        duration=track.duration,
+                        cover_url=track.cover_url,
+                        collection_title=collection.title,
+                        quality="Prévia oficial MP3",
+                    )
+                    if not track.preview_url:
+                        item.update(
+                            status="skipped", enabled=False,
+                            error="A Deezer não disponibilizou uma prévia pública para esta faixa.",
+                        )
+                    items.append(item)
+            elif is_jw_category_url(source):
                 for media in resolve_category_items(source, options["format"], include_subcategories=options["playlist"], logger=log):
                     items.append(queue_item(source, media.title, kind="jw", media_id=media.media_id,
                                             quality=f"{media.height}p" if media.height else media.source_kind))
@@ -176,9 +206,12 @@ def run_queue(owner, repository, options, engine):
                     output = download_item(media, folder, ordinal, len(ids), logger=owner.queue_log, progress=owner._report_direct_progress)
                     repository.update(item_id, status="finalizing")
                     owner.event_queue.put(("queue_changed", None))
-                    if options["format"] == "Apenas áudio (M4A)":
-                        output = convert_to_m4a(output, owner.ffmpeg_path, logger=owner.queue_log, control=owner.download_control,
-                                                progress=lambda payload: owner.event_queue.put(("conversion_progress", payload)))
+                    if is_audio_format(options["format"]):
+                        output = convert_to_audio(
+                            output, options["format"], owner.ffmpeg_path,
+                            logger=owner.queue_log, control=owner.download_control,
+                            progress=lambda payload: owner.event_queue.put(("conversion_progress", payload)),
+                        )
                     else:
                         output = owner._ensure_player_compatibility(output)
                     files = [str(output)]
@@ -189,7 +222,26 @@ def run_queue(owner, repository, options, engine):
                         code = 0
                         owner.queue_log(f"Finalizando arquivo já recebido: {item['title']}")
                     else:
-                        if item["kind"] == "kanald":
+                        effective_format = options["format"]
+                        if item["kind"] == "deezer_preview":
+                            owner.queue_log(
+                                "Deezer: baixando somente a prévia pública oficial, sem usar credenciais de conta.",
+                            )
+                            track = resolve_deezer_track(str(item.get("media_id") or ""))
+                            if not track.preview_url:
+                                raise RuntimeError("A prévia pública desta faixa não está mais disponível.")
+                            url = track.preview_url
+                            effective_format = "Apenas áudio (MP3)"
+                            refreshed = {
+                                "track_title": track.title, "artist": track.artist,
+                                "album": track.album, "track_number": track.track_number or item.get("track_number"),
+                                "disc_number": track.disc_number, "release_year": track.release_year,
+                                "duration": track.duration, "cover_url": track.cover_url,
+                                "title": f"{track.display_title} (prévia Deezer)",
+                            }
+                            item.update(refreshed)
+                            repository.update(item_id, **refreshed)
+                        elif item["kind"] == "kanald":
                             video = resolve_kanald_video(url)  # Refresh expiring media URLs after reopening.
                             owner.download_control.checkpoint()
                             url = video.content_url
@@ -197,16 +249,25 @@ def run_queue(owner, repository, options, engine):
                             repository.update(item_id, title=video.title, media_id=video.media_id)
                         template = item.get("output_template") or filename_template(item, ordinal)
                         repository.update(item_id, output_template=template)
-                        command = owner._build_command(engine, folder, options["format"], url,
+                        command = owner._build_command(engine, folder, effective_format, url,
                                                         output_template=template,
-                                                        include_cookies=item["kind"] != "kanald")
+                                                        include_cookies=item["kind"] not in {"kanald", "deezer_preview"})
                         code, outputs = owner._run_downloader(command)
                     repository.update(item_id, status="finalizing", downloaded_files=[str(path) for path in outputs] if code == 0 else [])
                     owner.event_queue.put(("queue_changed", None))
                     before = owner.download_completed_files
-                    ok = owner._finalize_downloaded_files(code, outputs, options["format"])
+                    final_format = "Apenas áudio (MP3)" if item["kind"] == "deezer_preview" else options["format"]
+                    ok = owner._finalize_downloaded_files(code, outputs, final_format)
                     if not ok or not outputs:
                         raise RuntimeError("O vídeo não foi concluído. Consulte a atividade para detalhes.")
+                    if item["kind"] == "deezer_preview":
+                        for output in owner.finalized_files:
+                            try:
+                                apply_deezer_metadata(output, item, owner.queue_log)
+                            except Exception as exc:
+                                owner.queue_log(
+                                    f"Aviso: a prévia foi salva, mas os metadados não puderam ser aplicados ({exc}).",
+                                )
                     files = [str(path) for path in owner.finalized_files]
                     owner.download_completed_files = before
                 with repository.lock:
@@ -233,6 +294,10 @@ def run_queue(owner, repository, options, engine):
         owner.queue_log(f"Fila interrompida: {exc}")
     finally:
         items = repository.snapshot()["items"]
+        try:
+            create_deezer_playlists(items, Path(options["folder"]), owner.queue_log)
+        except OSError as exc:
+            owner.queue_log(f"Aviso: não foi possível criar a playlist local: {exc}")
         owner.event_queue.put(("download_finished", {
             "failures": sum(item["enabled"] and item["status"] in {"failed", "skipped"} for item in items),
             "completed": sum(item["enabled"] and item["status"] == "completed" for item in items),

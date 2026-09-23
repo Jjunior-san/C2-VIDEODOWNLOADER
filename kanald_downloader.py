@@ -7,13 +7,14 @@ from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urljoin, urlparse
 from urllib.request import Request, urlopen
+from app_config import APP_VERSION
 
 KANALD_HOSTS = {"kanald.com.tr", "www.kanald.com.tr"}
 MAX_HTML_BYTES = 8 * 1024 * 1024
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36 C2-Video-Downloader/1.4.2"
+    f"Chrome/131.0.0.0 Safari/537.36 C2-Video-Downloader/{APP_VERSION}"
 )
 MEDIA_ID_PATTERN = re.compile(
     r'(?:data-id|data-tiak-reference-id)=["\'](?P<id>[0-9a-f]{24})["\']'

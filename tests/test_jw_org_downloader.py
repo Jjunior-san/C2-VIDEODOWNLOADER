@@ -107,10 +107,12 @@ class SelectFileTests(unittest.TestCase):
                 },
             ]
         }
-        selected = _select_file(media, "Apenas áudio (M4A)")
-        self.assertIsNotNone(selected)
-        assert selected is not None
-        self.assertEqual(selected["_kind"], "audio")
+        for format_choice in ("Apenas áudio (M4A)", "Apenas áudio (MP3)", "Apenas áudio (Opus)"):
+            with self.subTest(format_choice=format_choice):
+                selected = _select_file(media, format_choice)
+                self.assertIsNotNone(selected)
+                assert selected is not None
+                self.assertEqual(selected["_kind"], "audio")
 
 
 if __name__ == "__main__":

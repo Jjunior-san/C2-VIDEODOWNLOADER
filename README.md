@@ -245,6 +245,18 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
+## Versão 1.5.0 — biblioteca de áudio e catálogo Deezer
+
+- adiciona os formatos de áudio MP3 e Opus, além do M4A existente;
+- incorpora metadados e miniatura usando o pós-processamento do `yt-dlp`;
+- reconhece links públicos de faixa, álbum e playlist da Deezer;
+- baixa exclusivamente a prévia oficial disponibilizada pelo catálogo público, identificada como prévia na fila e no nome do arquivo;
+- atualiza a URL temporária da prévia somente no momento do download e nunca grava essa URL no banco da fila;
+- aplica título, artista, álbum, número da faixa, ano e capa às prévias concluídas;
+- cria automaticamente uma playlist local M3U8 para álbuns e playlists com duas ou mais prévias disponíveis;
+- mantém itens sem prévia visíveis como indisponíveis e continua os demais;
+- não solicita nem armazena cookie `arl`, não acessa mídia protegida e não realiza descriptografia.
+
 ## Versão 1.4.2 — proteção contra travamentos do YouTube
 
 - a análise do YouTube é interrompida se o mecanismo ficar 60 segundos sem responder e repetida uma vez automaticamente;

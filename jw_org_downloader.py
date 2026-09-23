@@ -12,6 +12,7 @@ from typing import Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
+from app_config import APP_VERSION
 from download_control import DownloadControl
 from media_conversion import run_conversion
 
@@ -31,7 +32,7 @@ API_URLS = (
     "?detailed=1&clientType=www",
 )
 MAX_JSON_BYTES = 32 * 1024 * 1024
-USER_AGENT = "C2-Video-Downloader/1.4.2 (+https://c2sistemas.com)"
+USER_AGENT = f"C2-Video-Downloader/{APP_VERSION} (+https://c2sistemas.com)"
 VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".webm"}
 AUDIO_EXTENSIONS = {".m4a", ".mp3", ".aac", ".opus", ".ogg"}
 
@@ -206,7 +207,7 @@ def _select_file(
     if not files:
         return None
 
-    audio_only = format_choice == "Apenas áudio (M4A)"
+    audio_only = format_choice.startswith("Apenas áudio (")
     if audio_only:
         audio_files = [item for item in files if item["_kind"] == "audio"]
         if audio_files:
@@ -480,24 +481,34 @@ def download_item(
     raise JWOrgError(f"Falha ao baixar '{item.title}': {last_error}")
 
 
-def convert_to_m4a(
+def convert_to_audio(
     media_path: Path,
+    format_choice: str,
     ffmpeg_path: str | Path | None,
     logger: Callable[[str], None] | None = None,
     control: DownloadControl | None = None,
     progress: Callable[[dict[str, object]], None] | None = None,
 ) -> Path:
-    if media_path.suffix.lower() == ".m4a":
+    formats = {
+        "Apenas áudio (M4A)": (".m4a", ["-c:a", "aac", "-profile:a", "aac_low", "-b:a", "160k", "-movflags", "+faststart"]),
+        "Apenas áudio (MP3)": (".mp3", ["-c:a", "libmp3lame", "-q:a", "0"]),
+        "Apenas áudio (Opus)": (".opus", ["-c:a", "libopus", "-b:a", "160k"]),
+    }
+    if format_choice not in formats:
+        raise JWOrgError(f"Formato de áudio não reconhecido: {format_choice}")
+    extension, codec_arguments = formats[format_choice]
+    label = extension[1:].upper()
+    if media_path.suffix.lower() == extension:
         return media_path
     if not ffmpeg_path:
-        raise JWOrgError("FFmpeg não está disponível para gerar o arquivo M4A.")
+        raise JWOrgError(f"FFmpeg não está disponível para gerar o arquivo {label}.")
 
-    destination = media_path.with_suffix(".m4a")
+    destination = media_path.with_suffix(extension)
     if destination.exists():
-        destination = destination.with_name(f"{destination.stem}.c2-{uuid.uuid4().hex[:8]}.m4a")
-    temporary = destination.with_name(f".c2-{uuid.uuid4().hex}.m4a")
+        destination = destination.with_name(f"{destination.stem}.c2-{uuid.uuid4().hex[:8]}{extension}")
+    temporary = destination.with_name(f".c2-{uuid.uuid4().hex}{extension}")
     if logger:
-        logger(f"Extraindo áudio M4A: {media_path.name}")
+        logger(f"Extraindo áudio {label}: {media_path.name}")
 
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     command = [
@@ -513,14 +524,7 @@ def convert_to_m4a(
         "-i",
         str(media_path),
         "-vn",
-        "-c:a",
-        "aac",
-        "-profile:a",
-        "aac_low",
-        "-b:a",
-        "160k",
-        "-movflags",
-        "+faststart",
+        *codec_arguments,
         str(temporary),
     ]
     job_control = control or DownloadControl()
@@ -530,7 +534,7 @@ def convert_to_m4a(
             creationflags=creationflags,
         )
         if not temporary.exists() or temporary.stat().st_size == 0:
-            raise JWOrgError("Não foi possível gerar o M4A: arquivo vazio.")
+            raise JWOrgError(f"Não foi possível gerar o {label}: arquivo vazio.")
         job_control.checkpoint()
         os.replace(temporary, destination)
     finally:
@@ -538,5 +542,19 @@ def convert_to_m4a(
     if media_path != destination:
         media_path.unlink(missing_ok=True)
     if logger:
-        logger(f"Áudio M4A gerado: {destination.name}")
+        logger(f"Áudio {label} gerado: {destination.name}")
     return destination
+
+
+def convert_to_m4a(
+    media_path: Path,
+    ffmpeg_path: str | Path | None,
+    logger: Callable[[str], None] | None = None,
+    control: DownloadControl | None = None,
+    progress: Callable[[dict[str, object]], None] | None = None,
+) -> Path:
+    """Backward-compatible wrapper used by existing callers and tests."""
+    return convert_to_audio(
+        media_path, "Apenas áudio (M4A)", ffmpeg_path,
+        logger=logger, control=control, progress=progress,
+    )
