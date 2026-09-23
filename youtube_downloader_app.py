@@ -493,11 +493,18 @@ class DownloadApp(QueueUI):
         result_buttons.pack(fill="x", pady=(8, 0))
         self.catalog_load_button = ttk.Button(
             result_buttons,
-            text="Carregar na fila",
+            text="Adicionar à fila",
             command=self._load_selected_catalog_result,
             state="disabled",
         )
         self.catalog_load_button.pack(side="left")
+        self.catalog_download_button = ttk.Button(
+            result_buttons,
+            text="Baixar",
+            command=self._download_selected_catalog_result,
+            state="disabled",
+        )
+        self.catalog_download_button.pack(side="left", padx=(6, 0))
         self.catalog_play_button = ttk.Button(
             result_buttons,
             text="Reproduzir prévia",
@@ -822,6 +829,8 @@ class DownloadApp(QueueUI):
         self.catalog_subtitle_var.set("")
         self.catalog_type_var.set("")
         self.catalog_load_button.configure(state="disabled")
+        if hasattr(self, "catalog_download_button"):
+            self.catalog_download_button.configure(state="disabled")
         self.catalog_play_button.configure(state="disabled")
         self.catalog_open_button.configure(state="disabled")
         self.catalog_cover_label.configure(image="", text="Sem capa")
@@ -942,6 +951,7 @@ class DownloadApp(QueueUI):
         result = self._selected_catalog_result()
         if result is None:
             self.catalog_load_button.configure(state="disabled")
+            self.catalog_download_button.configure(state="disabled")
             self.catalog_play_button.configure(state="disabled")
             self.catalog_open_button.configure(state="disabled")
             return
@@ -950,6 +960,7 @@ class DownloadApp(QueueUI):
         self.catalog_subtitle_var.set(result.subtitle)
         self.catalog_type_var.set(result.kind_label)
         self.catalog_load_button.configure(state="normal")
+        self.catalog_download_button.configure(state="normal")
         self.catalog_open_button.configure(state="normal")
         self.catalog_play_button.configure(state="normal" if result.kind == "track" else "disabled")
         self.catalog_cover_label.configure(image="", text="Carregando capa...")
@@ -996,6 +1007,17 @@ class DownloadApp(QueueUI):
             return
         self._apply_work_mode("music", initial=True)
         self._prepare_sources([result.page_url], False)
+
+    def _download_selected_catalog_result(self) -> None:
+        result = self._selected_catalog_result()
+        if result is None:
+            query = self.music_search_var.get().strip()
+            if query and "deezer.com/" in query.lower():
+                self._apply_work_mode("music", initial=True)
+                self._prepare_sources([query], True)
+            return
+        self._apply_work_mode("music", initial=True)
+        self._prepare_sources([result.page_url], True)
 
     def _play_selected_catalog_result(self) -> None:
         result = self._selected_catalog_result()
