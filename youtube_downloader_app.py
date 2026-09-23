@@ -731,69 +731,280 @@ class DownloadApp(QueueUI):
         original_selected = format_choice == AUDIO_ORIGINAL_FORMAT
         if original_selected and self.audio_bitrate_mode_var.get() != AUDIO_AUTO_BITRATE:
             self.audio_bitrate_mode_var.set(AUDIO_AUTO_BITRATE)
-        self.audio_bitrate_combo.configure(state="readonly" if audio_selected and not original_selected else "disabled")
+
         custom_enabled = (
             audio_selected
             and not original_selected
             and self.audio_bitrate_mode_var.get() == AUDIO_CUSTOM_BITRATE
         )
-        self.audio_custom_bitrate.configure(state="normal" if custom_enabled else "disabled")
-        self.audio_custom_bitrate_unit.configure(state="normal" if custom_enabled else "disabled")
         if original_selected:
-            hint = "Preserva o codec e a taxa da fonte."
+            hint_text = "Preserva a fonte."
         elif audio_selected:
-            hint = "Automática usa a melhor qualidade do conversor."
+            hint_text = "Automática = melhor qualidade."
         else:
-            hint = "Disponível ao escolher um formato de áudio."
-        self.audio_bitrate_hint.configure(text=hint)
+            hint_text = "Somente para áudio."
+
+        for combo, custom, unit, hint in getattr(self, "audio_control_sets", []):
+            combo.configure(state="readonly" if audio_selected and not original_selected else "disabled")
+            custom.configure(state="normal" if custom_enabled else "disabled")
+            unit.configure(state="normal" if custom_enabled else "disabled")
+            hint.configure(text=hint_text)
 
     def _apply_work_mode(self, mode: str, *, initial: bool = False) -> None:
         mode = "music" if mode == "music" else "video"
         self.work_mode = mode
         if mode == "music":
-            self.url_text = self.music_url_text
-            self.format_combo.configure(values=MUSIC_DOWNLOAD_FORMATS)
             if self.resolution_var.get() not in MUSIC_DOWNLOAD_FORMATS:
                 self.resolution_var.set("Apenas áudio (MP3)")
             if hasattr(self, "analyze_button"):
-                self.analyze_button.configure(text="Pesquisar / listar músicas")
+                self.analyze_button.configure(text="Atualizar fila")
             if not initial:
                 self.download_item_var.set("Modo Música")
-                self.download_metrics_var.set("Digite um artista ou música para pesquisar na Deezer.")
+                self.download_metrics_var.set("Selecione um resultado da pesquisa para carregar na fila.")
         else:
-            self.url_text = self.video_url_text
-            self.format_combo.configure(values=VIDEO_DOWNLOAD_FORMATS)
             if self.resolution_var.get() not in VIDEO_DOWNLOAD_FORMATS:
                 self.resolution_var.set("Melhor MP4 compatível")
             if hasattr(self, "analyze_button"):
-                self.analyze_button.configure(text="Listar vídeos")
+                self.analyze_button.configure(text="Listar links")
             if not initial:
                 self.download_item_var.set("Modo Vídeo")
                 self.download_metrics_var.set("Cole links de vídeos ou playlists para começar.")
         self._update_audio_controls()
 
-    def _on_work_mode_changed(self, _event=None) -> None:
-        if not hasattr(self, "work_tabs"):
-            return
-        selected = self.work_tabs.index(self.work_tabs.select())
-        self._apply_work_mode("music" if selected == 0 else "video")
+    def _on_main_tab_changed(self, _event=None) -> None:
+        selected = self.tabs.select()
+        if selected == str(self.music_page):
+            self._apply_work_mode("music")
+        elif selected == str(self.video_page):
+            self._apply_work_mode("video")
         self._save_preferences()
 
     def _set_source_text(self, sources: list[str]) -> None:
-        values = [str(source) for source in sources if str(source).strip()]
-        explicit_deezer = bool(values) and all(
+        values = [str(source).strip() for source in sources if str(source).strip()]
+        if not values:
+            return
+        music = all(
             value.lower().startswith("deezer:")
             or "deezer.com/" in value.lower()
+            or "://" not in value
             for value in values
         )
-        plain_queries = bool(values) and all("://" not in value for value in values)
-        music = explicit_deezer or (self.work_mode == "music" and plain_queries)
-        mode = "music" if music else "video"
-        self.work_tabs.select(0 if music else 1)
-        self._apply_work_mode(mode, initial=True)
-        target = self.music_url_text if music else self.video_url_text
-        target.delete("1.0", END)
-        target.insert("1.0", "\n".join(values))
+        if music:
+            self._apply_work_mode("music", initial=True)
+            self.tabs.select(self.music_page)
+            self.music_search_var.set(values[0])
+        else:
+            self._apply_work_mode("video", initial=True)
+            self.tabs.select(self.video_page)
+            self.video_url_text.delete("1.0", END)
+            self.video_url_text.insert("1.0", "\n".join(values))
+
+    def _clear_music_search_results(self) -> None:
+        if not hasattr(self, "music_results_tree"):
+            return
+        for item_id in self.music_results_tree.get_children():
+            self.music_results_tree.delete(item_id)
+        self._music_search_results = []
+        self.catalog_title_var.set("Selecione um resultado")
+        self.catalog_subtitle_var.set("")
+        self.catalog_type_var.set("")
+        self.catalog_load_button.configure(state="disabled")
+        self.catalog_play_button.configure(state="disabled")
+        self.catalog_open_button.configure(state="disabled")
+        self.catalog_cover_label.configure(image="", text="Sem capa")
+        self._catalog_cover_image = None
+        self._catalog_cover_key = None
+
+    def _schedule_music_search(self, *_args) -> None:
+        if self._music_search_after is not None:
+            try:
+                self.root.after_cancel(self._music_search_after)
+            except Exception:
+                pass
+            self._music_search_after = None
+
+        query = self.music_search_var.get().strip()
+        if not query:
+            self._clear_music_search_results()
+            self.music_search_status_var.set("Digite para pesquisar.")
+            return
+        if query.lower().startswith(("http://", "https://")):
+            self._clear_music_search_results()
+            if "deezer.com/" in query.lower():
+                self.music_search_status_var.set("Link Deezer detectado. Pressione Enter para carregar na fila.")
+            else:
+                self.music_search_status_var.set("Na aba Música, use nome de música, artista, álbum, playlist ou link Deezer.")
+            return
+        if len(query) < 2:
+            self._clear_music_search_results()
+            self.music_search_status_var.set("Digite pelo menos 2 caracteres.")
+            return
+
+        self.music_search_status_var.set("Pesquisando...")
+        self._music_search_after = self.root.after(350, self._start_music_search)
+
+    def _start_music_search(self) -> None:
+        self._music_search_after = None
+        query = self.music_search_var.get().strip()
+        if len(query) < 2 or query.lower().startswith(("http://", "https://")):
+            return
+
+        kind_map = {
+            "Música": "track",
+            "Artista": "artist",
+            "Álbum": "album",
+            "Playlist": "playlist",
+        }
+        kind = kind_map.get(self.music_search_type_var.get(), "track")
+        self._music_search_generation += 1
+        generation = self._music_search_generation
+
+        def worker():
+            try:
+                results = search_deezer_catalog(query, kind=kind, limit=20)
+                self.event_queue.put(("music_search_results", {
+                    "generation": generation,
+                    "query": query,
+                    "results": results,
+                    "error": "",
+                }))
+            except Exception as exc:
+                self.event_queue.put(("music_search_results", {
+                    "generation": generation,
+                    "query": query,
+                    "results": (),
+                    "error": str(exc),
+                }))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _handle_music_search_results(self, payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        if int(payload.get("generation") or 0) != self._music_search_generation:
+            return
+
+        self._clear_music_search_results()
+        error = str(payload.get("error") or "")
+        if error:
+            self.music_search_status_var.set(f"Falha na pesquisa: {error}")
+            return
+
+        results = list(payload.get("results") or [])
+        self._music_search_results = results
+        for index, result in enumerate(results):
+            if not isinstance(result, DeezerSearchResult):
+                continue
+            self.music_results_tree.insert(
+                "",
+                END,
+                iid=str(index),
+                values=(result.kind_label, result.title, result.subtitle),
+            )
+        count = len(results)
+        self.music_search_status_var.set(
+            f"{count} resultado(s). Selecione ou dê duplo clique para carregar."
+            if count
+            else "Nenhum resultado encontrado."
+        )
+        if count:
+            self.music_results_tree.selection_set("0")
+            self.music_results_tree.focus("0")
+            self._show_selected_catalog_result()
+
+    def _selected_catalog_result(self) -> DeezerSearchResult | None:
+        selected = self.music_results_tree.selection()
+        if not selected:
+            return None
+        try:
+            index = int(selected[0])
+        except (TypeError, ValueError):
+            return None
+        if 0 <= index < len(self._music_search_results):
+            result = self._music_search_results[index]
+            return result if isinstance(result, DeezerSearchResult) else None
+        return None
+
+    def _show_selected_catalog_result(self, _event=None) -> None:
+        result = self._selected_catalog_result()
+        if result is None:
+            self.catalog_load_button.configure(state="disabled")
+            self.catalog_play_button.configure(state="disabled")
+            self.catalog_open_button.configure(state="disabled")
+            return
+
+        self.catalog_title_var.set(result.title)
+        self.catalog_subtitle_var.set(result.subtitle)
+        self.catalog_type_var.set(result.kind_label)
+        self.catalog_load_button.configure(state="normal")
+        self.catalog_open_button.configure(state="normal")
+        self.catalog_play_button.configure(state="normal" if result.kind == "track" else "disabled")
+        self.catalog_cover_label.configure(image="", text="Carregando capa...")
+        self._catalog_cover_image = None
+        self._catalog_cover_key = result.page_url
+
+        def worker():
+            try:
+                data = cover_bytes_for_item({"cover_url": result.cover_url})
+            except Exception:
+                data = None
+            self.event_queue.put(("catalog_cover_ready", (result.page_url, data)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_catalog_cover(self, payload: object) -> None:
+        if not isinstance(payload, tuple) or len(payload) != 2:
+            return
+        key, data = payload
+        if key != self._catalog_cover_key:
+            return
+        if not data:
+            self.catalog_cover_label.configure(image="", text="Sem capa")
+            return
+        try:
+            from io import BytesIO
+            from PIL import Image, ImageTk
+
+            image = Image.open(BytesIO(data))
+            image.thumbnail((150, 150))
+            self._catalog_cover_image = ImageTk.PhotoImage(image)
+            self.catalog_cover_label.configure(image=self._catalog_cover_image, text="")
+        except Exception:
+            self._catalog_cover_image = None
+            self.catalog_cover_label.configure(image="", text="Capa indisponível")
+
+    def _load_selected_catalog_result(self) -> None:
+        result = self._selected_catalog_result()
+        if result is None:
+            query = self.music_search_var.get().strip()
+            if query and "deezer.com/" in query.lower():
+                self._apply_work_mode("music", initial=True)
+                self._prepare_sources([query], False)
+            return
+        self._apply_work_mode("music", initial=True)
+        self._prepare_sources([result.page_url], False)
+
+    def _play_selected_catalog_result(self) -> None:
+        result = self._selected_catalog_result()
+        if result is None or result.kind != "track":
+            return
+
+        def worker():
+            try:
+                track = resolve_deezer_track(result.item_id)
+                if not track.preview_url:
+                    raise MusicPlayerError("A Deezer não disponibilizou prévia pública para esta faixa.")
+                self.music_player.play_preview(track.preview_url)
+                self.event_queue.put(("music_player_status", f"Reproduzindo prévia: {result.title}"))
+            except Exception as exc:
+                self.event_queue.put(("music_player_error", str(exc)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _open_selected_catalog_result(self) -> None:
+        result = self._selected_catalog_result()
+        if result is not None:
+            webbrowser.open(result.page_url)
 
     def _build_music_details(self, parent) -> None:
         self.music_detail_frame = ttk.LabelFrame(parent, text="Detalhes da música", padding=10)
@@ -833,7 +1044,7 @@ class DownloadApp(QueueUI):
             return
         self.current_music_item_id = item.get("id")
         if not self.music_detail_frame.winfo_manager():
-            self.music_detail_frame.pack(fill="x", pady=(0, 8), before=self.episode_actions)
+            self.music_detail_frame.pack(fill="x", pady=(8, 0))
         self.music_title_var.set(str(item.get("track_title") or item.get("title") or "Música"))
         self.music_artist_var.set(f"Artista: {item.get('artist') or 'Não informado'}")
         self.music_album_var.set(f"Álbum: {item.get('album') or 'Não informado'}")
