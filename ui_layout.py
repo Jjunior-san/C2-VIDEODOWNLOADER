@@ -52,15 +52,15 @@ def desktop_work_area(root) -> tuple[int, int, int, int]:
 def window_dimensions(area: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
     left, top, right, bottom = area
     # Leave room for the native title bar, resize borders and desktop margins.
-    width = min(820, max(1, right - left - 40))
-    height = min(720, max(1, bottom - top - 80))
+    width = min(1180, max(1, right - left - 50))
+    height = min(820, max(1, bottom - top - 80))
     return width, height, left + (right - left - width) // 2, top + 20
 
 
 def fit_window(root) -> None:
     width, height, x, y = window_dimensions(desktop_work_area(root))
     root.geometry(f"{width}x{height}+{x}+{y}")
-    root.minsize(min(560, width), min(420, height))
+    root.minsize(min(820, width), min(520, height))
 
 
 class ScrollablePage(ttk.Frame):
