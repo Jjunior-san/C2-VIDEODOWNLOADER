@@ -5,7 +5,7 @@
 
 #define MyAppName "C² - Video Downloader"
 #ifndef MyAppVersion
-#define MyAppVersion "1.8.1"
+#define MyAppVersion "1.8.2"
 #endif
 #define MyAppPublisher "C2 Sistemas"
 #define MyAppURL "https://github.com/Jjunior-san/C2-VIDEODOWNLOADER"
@@ -64,4 +64,13 @@ Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\{#MyApp
 Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\{#MyAppExeName}"; ValueType: string; ValueName: "Path"; ValueData: "{app}"; Flags: uninsdeletekey
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Abrir {#MyAppName}"; Flags: nowait postinstall skipifsilent
+; A atualização interna usa o modo silencioso, portanto precisa de uma entrada
+; própria para reabrir o aplicativo depois que todos os arquivos forem trocados.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--updated"; Flags: nowait; Check: IsAutomaticUpdate
+Filename: "{app}\{#MyAppExeName}"; Description: "Abrir {#MyAppName}"; Flags: nowait postinstall skipifsilent; Check: not IsAutomaticUpdate
+
+[Code]
+function IsAutomaticUpdate: Boolean;
+begin
+  Result := CompareText(ExpandConstant('{param:C2AUTOUPDATE|0}'), '1') = 0;
+end;

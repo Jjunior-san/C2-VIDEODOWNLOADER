@@ -73,6 +73,17 @@ def _local_app_data() -> Path:
 DATA_DIR = _local_app_data() / "C2 Sistemas" / "C2 Video Downloader"
 RUNTIME_DIR = DATA_DIR / "runtime"
 STATE_FILE = DATA_DIR / "update-state.json"
+INSTALLER_LOG_FILE = DATA_DIR / "installer-update.log"
+AUTO_UPDATE_SWITCH = "/C2AUTOUPDATE=1"
+
+
+def installer_parameters(log_path: Path = INSTALLER_LOG_FILE) -> str:
+    """Build the Inno Setup command line used by the in-app updater."""
+    safe_log_path = str(log_path).replace('"', "")
+    return (
+        "/SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS "
+        f'{AUTO_UPDATE_SWITCH} /LOG="{safe_log_path}"'
+    )
 
 
 def install_root() -> Path:
@@ -465,7 +476,8 @@ class ApplicationUpdater:
     def launch_installer(installer: Path) -> None:
         if os.name != "nt":
             raise RuntimeError("A atualização automática do aplicativo requer Windows.")
-        parameters = "/SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS"
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        parameters = installer_parameters()
         result = ctypes.windll.shell32.ShellExecuteW(
             None,
             "runas",

@@ -29,6 +29,11 @@ O programa possui dois níveis de atualização:
 
 As regras ficam centralizadas no arquivo [`update-manifest.json`](update-manifest.json). Assim, intervalos, URLs e canais podem ser alterados neste repositório sem recompilar o aplicativo.
 
+Na atualização do aplicativo, autorize o aviso do Windows/SmartScreen. O instalador
+é executado em modo silencioso, grava o diagnóstico em
+`%LOCALAPPDATA%\C2 Sistemas\C2 Video Downloader\installer-update.log` e reabre o
+programa ao terminar, exibindo a versão instalada.
+
 O instalador também leva uma cópia inicial dos componentes em:
 
 ```text
@@ -244,6 +249,14 @@ Vídeos não listados, mas acessíveis pelo link, continuam elegíveis. Conteúd
 removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem no registro
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
+
+## Versão 1.8.2 — conclusão confiável da atualização interna
+
+- corrige a atualização que instalava silenciosamente, mas não reabria o programa;
+- identifica explicitamente a execução iniciada pelo atualizador no Inno Setup;
+- salva as preferências antes de fechar o aplicativo para a instalação;
+- registra o processo do instalador em `installer-update.log` para diagnóstico;
+- reabre o aplicativo e confirma visualmente a versão instalada.
 
 ## Versão 1.8.1 — isolamento das pastas de Música e Vídeo
 

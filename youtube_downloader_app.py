@@ -2222,8 +2222,13 @@ class DownloadApp(QueueUI):
             return
         try:
             self.update_status_var.set("Abrindo instalador da atualização...")
+            self._save_preferences()
             self.app_updater.launch_installer(installer)
-            self.root.after(800, self.root.destroy)
+            self.queue_log(
+                "Atualização iniciada. Após autorizar o Windows, o programa será "
+                "reaberto automaticamente."
+            )
+            self.root.after(250, self._on_close)
         except Exception as exc:
             self.progress.stop()
             self.update_button.configure(state="normal")
@@ -2601,6 +2606,7 @@ def _acquire_single_instance_mutex():
 
 
 def main() -> None:
+    restarted_after_update = "--updated" in sys.argv[1:]
     mutex = _acquire_single_instance_mutex()
     if mutex is False:
         root = Tk()
@@ -2611,6 +2617,14 @@ def main() -> None:
 
     root = Tk()
     app = DownloadApp(root)
+    if restarted_after_update:
+        root.after(
+            900,
+            lambda: messagebox.showinfo(
+                APP_NAME,
+                f"Atualização concluída com sucesso.\n\nVersão instalada: {APP_VERSION}",
+            ),
+        )
     root.mainloop()
     _ = app, mutex
 
