@@ -255,6 +255,11 @@ arquivo incompleto.
 - com **Baixar playlist/álbum** marcado, lista até 25 resultados para seleção; desmarcado, usa somente o primeiro resultado;
 - mantém metadados, capa, formatos de áudio, taxa de bits, histórico, pausa e fila persistente já existentes;
 - resultados sem prévia pública continuam visíveis como indisponíveis, sem interromper os demais;
+- exibe capa, artista, álbum, faixa, disco e ano nos detalhes da música;
+- permite editar metadados e trocar a capa de arquivos concluídos;
+- reproduz arquivos locais e, antes do download, a prévia pública oficial da Deezer diretamente no aplicativo;
+- permite organizar automaticamente a biblioteca em pasta raiz, `Artista` ou `Artista\\Álbum`;
+- permite personalizar o nome do arquivo com `{faixa:02}`, `{titulo}`, `{artista}`, `{album}`, `{ano}` e `{id}`;
 - não solicita cookie `arl`, não acessa mídia protegida e não realiza descriptografia.
 
 Exemplo:
