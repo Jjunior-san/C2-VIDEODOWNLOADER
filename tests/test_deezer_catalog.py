@@ -197,3 +197,52 @@ def test_mp3_metadata_writer_preserves_file_with_corrupt_oversized_id3(tmp_path,
     result = path.read_bytes()
     assert result.startswith(b"ID3\x03")
     assert result.endswith(original)
+
+def test_public_deezer_search_encodes_query_limits_results_and_deduplicates(monkeypatch):
+    requested = []
+
+    def fake_api(url):
+        requested.append(url)
+        return {"data": [
+            {"id": 10, "title": "La Câlin", "preview": "https://cdnt-preview.dzcdn.net/a.mp3",
+             "artist": {"name": "Serhat Durmus"}, "album": {"title": "La Câlin"}},
+            {"id": 10, "title": "La Câlin", "preview": "https://cdnt-preview.dzcdn.net/a.mp3",
+             "artist": {"name": "Serhat Durmus"}, "album": {"title": "La Câlin"}},
+            {"id": 11, "title": "Other", "preview": "https://cdnt-preview.dzcdn.net/b.mp3",
+             "artist": {"name": "Artist"}, "album": {"title": "Album"}},
+        ]}
+
+    monkeypatch.setattr(deezer_catalog, "_api_json", fake_api)
+    tracks = deezer_catalog.search_deezer_tracks("Serhat Durmus La Câlin", limit=50)
+
+    assert [track.track_id for track in tracks] == ["10", "11"]
+    assert "q=Serhat%20Durmus%20La%20C%C3%A2lin" in requested[0]
+    assert "limit=50" in requested[0]
+
+
+def test_deezer_search_source_adds_results_to_queue(tmp_path, monkeypatch):
+    tracks = (
+        DeezerTrack("10", "La Câlin", "Serhat Durmus", "La Câlin",
+                    "https://cdnt-preview.dzcdn.net/a.mp3"),
+        DeezerTrack("11", "Other", "Artist", "Album", None),
+    )
+    calls = []
+    monkeypatch.setattr(
+        queue_service,
+        "search_deezer_tracks",
+        lambda query, limit=25: calls.append((query, limit)) or tracks,
+    )
+    options = {"folder": str(tmp_path), "format": "Apenas áudio (MP3)", "playlist": True,
+               "fragments": 4, "cookies_browser": "Nenhum", "cookies_file": ""}
+
+    items = queue_service.discover(
+        ["deezer: Serhat Durmus"], options, Path("engine"),
+        DownloadControl(), {}, lambda line: None,
+    )
+
+    assert calls == [("Serhat Durmus", 25)]
+    assert [item["media_id"] for item in items] == ["10", "11"]
+    assert items[0]["source"] == "https://www.deezer.com/track/10"
+    assert items[0]["collection_title"] == "Pesquisa Deezer - Serhat Durmus"
+    assert items[1]["status"] == "skipped" and not items[1]["enabled"]
+
