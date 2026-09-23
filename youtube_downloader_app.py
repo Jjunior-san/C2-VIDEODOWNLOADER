@@ -683,6 +683,8 @@ class DownloadApp(QueueUI):
 
         self.music_search_var.trace_add("write", self._schedule_music_search)
         self.music_search_type_var.trace_add("write", self._schedule_music_search)
+        self.resolution_var.trace_add("write", self._update_audio_controls)
+        self.audio_bitrate_mode_var.trace_add("write", self._update_audio_controls)
         self.music_results_tree.bind("<<TreeviewSelect>>", self._show_selected_catalog_result)
         self.music_results_tree.bind("<Double-1>", lambda _event: self._load_selected_catalog_result())
         self.music_search_entry.bind("<Return>", lambda _event: self._load_selected_catalog_result())
