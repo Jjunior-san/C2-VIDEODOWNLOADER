@@ -590,11 +590,18 @@ class DownloadApp(QueueUI):
         ).grid(row=1, column=0, sticky="w", pady=3)
         ttk.Label(video_options, text="Taxa do áudio:").grid(row=1, column=3, sticky="e", padx=(0, 6), pady=3)
         self._build_audio_controls(video_options, row=1, column=4)
+        video_actions = ttk.Frame(video_options)
+        video_actions.grid(row=1, column=2, sticky="e", padx=(6, 12), pady=3)
         ttk.Button(
-            video_options,
-            text="Listar na fila",
+            video_actions,
+            text="Adicionar à fila",
             command=self.analyze_links,
-        ).grid(row=1, column=2, sticky="e", padx=(6, 12), pady=3)
+        ).pack(side="left")
+        ttk.Button(
+            video_actions,
+            text="Baixar",
+            command=self.start_download,
+        ).pack(side="left", padx=(6, 0))
 
         # Fila em aba própria: elimina a maior parte do scroll da tela de trabalho.
         self._build_episode_list(self.queue_page)
