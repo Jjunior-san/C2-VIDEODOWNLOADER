@@ -396,6 +396,11 @@ class DownloadApp(QueueUI):
         music_row.pack(fill="x", pady=(4, 0))
         self.music_url_text = self._make_text(music_row, height=2)
         self.music_url_text.pack(side="left", fill="x", expand=True)
+        ttk.Button(
+            music_row,
+            text="Pesquisar",
+            command=self.analyze_links,
+        ).pack(side="right", padx=(8, 0))
         music_scroll = ttk.Scrollbar(music_row, command=self.music_url_text.yview)
         music_scroll.pack(side="right", fill="y")
         self.music_url_text.configure(yscrollcommand=music_scroll.set)
