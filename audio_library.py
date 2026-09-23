@@ -130,10 +130,17 @@ def _text_frame(frame_id: str, value: object) -> bytes:
     return frame_id.encode("ascii") + len(payload).to_bytes(4, "big") + b"\x00\x00" + payload
 
 
+def _image_mime(content: bytes | None) -> str:
+    if content and content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    return "image/jpeg"
+
+
 def _picture_frame(content: bytes | None) -> bytes:
     if not content:
         return b""
-    payload = b"\x00image/jpeg\x00\x03Cover\x00" + content
+    mime = _image_mime(content).encode("ascii")
+    payload = b"\x00" + mime + b"\x00\x03Cover\x00" + content
     return b"APIC" + len(payload).to_bytes(4, "big") + b"\x00\x00" + payload
 
 
@@ -278,7 +285,7 @@ def write_audio_metadata(path: Path, item: dict, *, cover_bytes: bytes | None = 
             tags = ID3()
         tags.delall("APIC")
         tags.add(APIC(
-            encoding=3, mime="image/jpeg", type=PictureType.COVER_FRONT,
+            encoding=3, mime=_image_mime(picture), type=PictureType.COVER_FRONT,
             desc="Cover", data=picture,
         ))
         tags.save(path, v2_version=3)
@@ -286,13 +293,14 @@ def write_audio_metadata(path: Path, item: dict, *, cover_bytes: bytes | None = 
         media = MP4(path)
         if media.tags is None:
             media.add_tags()
-        media.tags["covr"] = [MP4Cover(picture, imageformat=MP4Cover.FORMAT_JPEG)]
+        image_format = MP4Cover.FORMAT_PNG if _image_mime(picture) == "image/png" else MP4Cover.FORMAT_JPEG
+        media.tags["covr"] = [MP4Cover(picture, imageformat=image_format)]
         media.save()
     elif suffix == ".flac":
         media = FLAC(path)
         media.clear_pictures()
         pic = Picture()
-        pic.mime = "image/jpeg"
+        pic.mime = _image_mime(picture)
         pic.type = 3
         pic.desc = "Cover"
         pic.data = picture
