@@ -245,6 +245,14 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
+## Versão 1.8.0 — controles de player estilo VLC, pastas e formatos separados e prévia de vídeo
+
+- **Controles de player estilo VLC**: o botão de reproduzir agora alterna entre reprodução e pausa (`▶ Reproduzir` / `⏸ Pausar`), com botão dedicado `⏹ Parar` disponível tanto na tela de detalhes/pesquisa quanto na aba **Concluídos**;
+- **Pastas separadas para música e vídeo**: agora é possível configurar um diretório de download exclusivo para arquivos de música e outro específico para vídeos, mantendo a organização de pastas independente;
+- **Memorização de formatos separados**: os formatos e resoluções selecionados para downloads de música (ex: MP3, FLAC, M4A) e downloads de vídeo (ex: 1080p, Melhor qualidade) são salvos de forma independente e não se sobrescrevem ao alternar de aba;
+- **Prévia automática com capa e título de vídeos**: ao colar ou digitar um link de vídeo na aba **Vídeo**, o aplicativo exibe instantaneamente um cartão com miniatura/capa em alta qualidade, título do vídeo e nome do canal/autor (via oEmbed ultra-rápido com fallback para o mecanismo do aplicativo);
+- Atualização e expansão da suíte de testes automatizados com cobertura para todos os novos recursos.
+
 ## Versão 1.7.1 — correção no retorno de progresso Deezer
 
 - corrige o encaminhamento de argumentos na emissão de progresso durante o download e decifração de faixas Deezer (`_report_direct_progress`);

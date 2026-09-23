@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import BooleanVar, END, StringVar, Tk, Toplevel, filedialog, messagebox
 from tkinter import ttk
+from urllib.parse import quote, urlparse
+from urllib.request import Request, urlopen
 
 from app_config import APP_MUTEX, APP_NAME, APP_VERSION
 from audio_library import (
@@ -39,6 +41,7 @@ from queue_service import cookie_arguments
 from media_conversion import codec_arguments, duration_from_probe, run_conversion, stream_compatibility
 from music_player import MusicPlayer, MusicPlayerError
 from process_monitor import ProcessInactivityError, close_process, monitored_lines
+from kanald_downloader import is_kanald_url, resolve_kanald_video
 from c2_update import (
     ApplicationUpdater,
     AppUpdate,
@@ -47,6 +50,78 @@ from c2_update import (
     DependencyManager,
     DependencyStatus,
 )
+
+
+def fetch_video_preview_info(url: str, yt_dlp_path: Path | None = None) -> dict:
+    """Fetch title, author and thumbnail bytes for a video link (e.g. YouTube oEmbed or generic)."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    title = ""
+    author = ""
+    thumb_url = ""
+    data = None
+
+    if "youtube.com" in host or "youtu.be" in host:
+        try:
+            oembed_url = f"https://www.youtube.com/oembed?url={quote(url, safe='')}&format=json"
+            req = Request(oembed_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            with urlopen(req, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8", errors="replace"))
+                title = str(payload.get("title") or "")
+                author = str(payload.get("author_name") or "")
+                thumb_url = str(payload.get("thumbnail_url") or "")
+        except Exception:
+            pass
+
+    if not title and is_kanald_url(url):
+        try:
+            video = resolve_kanald_video(url)
+            title = video.title
+            author = "Kanal D"
+        except Exception:
+            pass
+
+    if not title and yt_dlp_path and Path(yt_dlp_path).is_file():
+        try:
+            cmd = [
+                str(yt_dlp_path),
+                "--dump-single-json",
+                "--flat-playlist",
+                "--skip-download",
+                "--no-warnings",
+                "--socket-timeout", "5",
+                url,
+            ]
+            res = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=CREATE_NO_WINDOW,
+                timeout=8,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                info = json.loads(res.stdout)
+                title = str(info.get("title") or "")
+                author = str(info.get("uploader") or info.get("channel") or "")
+                thumb_url = str(info.get("thumbnail") or "")
+        except Exception:
+            pass
+
+    if thumb_url:
+        try:
+            req = Request(thumb_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urlopen(req, timeout=5) as response:
+                data = response.read(5 * 1024 * 1024)
+        except Exception:
+            data = None
+
+    return {
+        "title": title or "Vídeo detectado",
+        "author": author or host,
+        "cover_data": data,
+    }
 
 try:
     import imageio_ffmpeg
@@ -263,13 +338,31 @@ class DownloadApp(QueueUI):
                 pass
 
         self.user_settings = load_user_settings()
-        saved_folder = str(
-            self.user_settings.get("download_folder")
+        saved_video_folder = str(
+            self.user_settings.get("video_download_folder")
+            or self.user_settings.get("download_folder")
             or (Path.home() / "Downloads")
         )
-        saved_format = str(self.user_settings.get("format") or "Melhor MP4 compatível")
-        if saved_format not in DOWNLOAD_FORMATS:
-            saved_format = "Melhor MP4 compatível"
+        saved_music_folder = str(
+            self.user_settings.get("music_download_folder")
+            or (Path.home() / "Music" if (Path.home() / "Music").exists() else Path.home() / "Downloads" / "Músicas")
+            or saved_video_folder
+        )
+        saved_video_format = str(
+            self.user_settings.get("video_format")
+            or self.user_settings.get("format")
+            or "Melhor MP4 compatível"
+        )
+        if saved_video_format not in VIDEO_DOWNLOAD_FORMATS:
+            saved_video_format = "Melhor MP4 compatível"
+
+        saved_music_format = str(
+            self.user_settings.get("music_format")
+            or "Apenas áudio (MP3)"
+        )
+        if saved_music_format not in MUSIC_DOWNLOAD_FORMATS:
+            saved_music_format = "Apenas áudio (MP3)"
+
         saved_browser = str(self.user_settings.get("cookies_browser") or "Nenhum")
         if saved_browser not in BROWSERS:
             saved_browser = "Nenhum"
@@ -287,9 +380,17 @@ class DownloadApp(QueueUI):
         )
 
         self.work_mode = saved_work_mode
-        self.folder_var = StringVar(value=saved_folder)
+        self.video_folder_var = StringVar(value=saved_video_folder)
+        self.music_folder_var = StringVar(value=saved_music_folder)
+        self.folder_var = StringVar(
+            value=saved_music_folder if saved_work_mode == "music" else saved_video_folder
+        )
+        self.video_format_var = StringVar(value=saved_video_format)
+        self.music_format_var = StringVar(value=saved_music_format)
+        self.resolution_var = StringVar(
+            value=saved_music_format if saved_work_mode == "music" else saved_video_format
+        )
         self.playlist_var = BooleanVar(value=bool(self.user_settings.get("playlist", True)))
-        self.resolution_var = StringVar(value=saved_format)
         self.audio_bitrate_mode_var = StringVar(value=saved_bitrate_mode)
         self.audio_custom_bitrate_var = StringVar(
             value=str(self.user_settings.get("audio_custom_bitrate") or "192"),
@@ -323,6 +424,11 @@ class DownloadApp(QueueUI):
         self._music_search_results = []
         self._catalog_cover_image = None
         self._catalog_cover_key = None
+        self._playing_item_id = None
+        self._catalog_playing_active = False
+        self._video_preview_after = None
+        self._last_video_preview_url = None
+        self._video_cover_image = None
         self.download_fragments = fragment_count(self.fragments_var.get())
         self.download_control = DownloadControl()
         self.update_status_var = StringVar(value="Componentes ainda não verificados")
@@ -520,11 +626,18 @@ class DownloadApp(QueueUI):
         self.catalog_download_button.pack(side="left", padx=(6, 0))
         self.catalog_play_button = ttk.Button(
             result_buttons,
-            text="Reproduzir prévia",
-            command=self._play_selected_catalog_result,
+            text="▶ Reproduzir prévia",
+            command=self._toggle_catalog_playback,
             state="disabled",
         )
         self.catalog_play_button.pack(side="left", padx=(6, 0))
+        self.catalog_stop_button = ttk.Button(
+            result_buttons,
+            text="⏹ Parar",
+            command=self.stop_music,
+            state="disabled",
+        )
+        self.catalog_stop_button.pack(side="left", padx=(6, 0))
         self.catalog_open_button = ttk.Button(
             result_buttons,
             text="Abrir no Deezer",
@@ -539,18 +652,19 @@ class DownloadApp(QueueUI):
         options.columnconfigure(5, weight=1)
 
         ttk.Label(options, text="Pasta:").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=3)
-        ttk.Entry(options, textvariable=self.folder_var).grid(row=0, column=1, columnspan=3, sticky="ew", pady=3)
-        ttk.Button(options, text="Escolher", command=self.choose_folder).grid(row=0, column=4, padx=(6, 12), pady=3)
+        ttk.Entry(options, textvariable=self.music_folder_var).grid(row=0, column=1, columnspan=3, sticky="ew", pady=3)
+        ttk.Button(options, text="Escolher", command=self.choose_music_folder).grid(row=0, column=4, padx=(6, 12), pady=3)
 
         ttk.Label(options, text="Formato:").grid(row=0, column=5, sticky="e", padx=(0, 6), pady=3)
         self.music_format_combo = ttk.Combobox(
             options,
-            textvariable=self.resolution_var,
+            textvariable=self.music_format_var,
             values=MUSIC_DOWNLOAD_FORMATS,
             state="readonly",
             width=21,
         )
         self.music_format_combo.grid(row=0, column=6, sticky="ew", pady=3)
+        self.music_format_combo.bind("<<ComboboxSelected>>", self._on_music_format_selected)
 
         ttk.Label(options, text="Pastas:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=3)
         ttk.Combobox(
@@ -572,12 +686,41 @@ class DownloadApp(QueueUI):
 
         # Vídeo: entrada e opções em uma tela própria.
         video_input = ttk.LabelFrame(self.video_page, text="Links de vídeo / playlists", padding=10)
-        video_input.pack(fill="both", expand=True, pady=(0, 8))
-        self.video_url_text = self._make_text(video_input, height=8)
+        video_input.pack(fill="x", pady=(0, 8))
+        self.video_url_text = self._make_text(video_input, height=3)
         self.video_url_text.pack(fill="both", expand=True)
         wrapping_label(
             video_input,
             text="Cole um link por linha. YouTube, Kanal D, JW.ORG e outras fontes compatíveis com yt-dlp.",
+            foreground="#596579",
+        )
+        self.video_url_text.bind("<KeyRelease>", self._schedule_video_preview_check)
+        self.video_url_text.bind("<<Paste>>", lambda e: self.root.after(100, self._schedule_video_preview_check))
+
+        # Card de prévia automática de vídeo
+        self.video_preview_frame = ttk.LabelFrame(self.video_page, text="Prévia do vídeo", padding=8)
+        self.video_preview_frame.pack(fill="x", pady=(0, 8))
+        video_cover_box = ttk.Frame(self.video_preview_frame)
+        video_cover_box.pack(side="left", anchor="n", padx=(0, 12))
+        self.video_cover_label = ttk.Label(
+            video_cover_box,
+            text="Sem capa",
+            width=20,
+            anchor="center",
+        )
+        self.video_cover_label.pack()
+        video_detail_info = ttk.Frame(self.video_preview_frame)
+        video_detail_info.pack(side="left", fill="both", expand=True)
+        self.video_preview_title_var = StringVar(value="Cole um link de vídeo acima para ver os detalhes")
+        self.video_preview_author_var = StringVar(value="")
+        wrapping_label(
+            video_detail_info,
+            textvariable=self.video_preview_title_var,
+            font=(self.text_family, 11, "bold"),
+        )
+        wrapping_label(
+            video_detail_info,
+            textvariable=self.video_preview_author_var,
             foreground="#596579",
         )
 
@@ -585,17 +728,18 @@ class DownloadApp(QueueUI):
         video_options.pack(fill="x")
         video_options.columnconfigure(1, weight=1)
         ttk.Label(video_options, text="Pasta:").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=3)
-        ttk.Entry(video_options, textvariable=self.folder_var).grid(row=0, column=1, sticky="ew", pady=3)
-        ttk.Button(video_options, text="Escolher", command=self.choose_folder).grid(row=0, column=2, padx=(6, 12), pady=3)
+        ttk.Entry(video_options, textvariable=self.video_folder_var).grid(row=0, column=1, sticky="ew", pady=3)
+        ttk.Button(video_options, text="Escolher", command=self.choose_video_folder).grid(row=0, column=2, padx=(6, 12), pady=3)
         ttk.Label(video_options, text="Formato:").grid(row=0, column=3, sticky="e", padx=(0, 6), pady=3)
         self.video_format_combo = ttk.Combobox(
             video_options,
-            textvariable=self.resolution_var,
+            textvariable=self.video_format_var,
             values=VIDEO_DOWNLOAD_FORMATS,
             state="readonly",
             width=24,
         )
         self.video_format_combo.grid(row=0, column=4, sticky="w", pady=3)
+        self.video_format_combo.bind("<<ComboboxSelected>>", self._on_video_format_selected)
         ttk.Checkbutton(
             video_options,
             text="Playlist inteira",
@@ -764,7 +908,8 @@ class DownloadApp(QueueUI):
 
         self.music_search_var.trace_add("write", self._schedule_music_search)
         self.music_search_type_var.trace_add("write", self._schedule_music_search)
-        self.resolution_var.trace_add("write", self._update_audio_controls)
+        self.resolution_var.trace_add("write", self._on_resolution_var_changed)
+        self.folder_var.trace_add("write", self._on_folder_var_changed)
         self.audio_bitrate_mode_var.trace_add("write", self._update_audio_controls)
         self.music_results_tree.bind("<<TreeviewSelect>>", self._show_selected_catalog_result)
         self.music_results_tree.bind("<Double-1>", lambda _event: self._load_selected_catalog_result())
@@ -841,12 +986,43 @@ class DownloadApp(QueueUI):
             unit.configure(state="normal" if custom_enabled else "disabled")
             hint.configure(text=hint_text)
 
+    def _on_resolution_var_changed(self, *_args) -> None:
+        val = self.resolution_var.get()
+        if getattr(self, "work_mode", "video") == "music":
+            if hasattr(self, "music_format_var") and self.music_format_var.get() != val and val in MUSIC_DOWNLOAD_FORMATS:
+                self.music_format_var.set(val)
+        else:
+            if hasattr(self, "video_format_var") and self.video_format_var.get() != val and val in VIDEO_DOWNLOAD_FORMATS:
+                self.video_format_var.set(val)
+        self._update_audio_controls()
+
+    def _on_folder_var_changed(self, *_args) -> None:
+        val = self.folder_var.get()
+        if getattr(self, "work_mode", "video") == "music":
+            if hasattr(self, "music_folder_var") and self.music_folder_var.get() != val:
+                self.music_folder_var.set(val)
+        else:
+            if hasattr(self, "video_folder_var") and self.video_folder_var.get() != val:
+                self.video_folder_var.set(val)
+
+    def _on_music_format_selected(self, _event=None) -> None:
+        self.resolution_var.set(self.music_format_var.get())
+        self._update_audio_controls()
+        self._save_preferences()
+
+    def _on_video_format_selected(self, _event=None) -> None:
+        self.resolution_var.set(self.video_format_var.get())
+        self._update_audio_controls()
+        self._save_preferences()
+
     def _apply_work_mode(self, mode: str, *, initial: bool = False) -> None:
         mode = "music" if mode == "music" else "video"
         self.work_mode = mode
         if mode == "music":
             if self.resolution_var.get() not in MUSIC_DOWNLOAD_FORMATS:
-                self.resolution_var.set("Apenas áudio (MP3)")
+                self.resolution_var.set(self.music_format_var.get() if hasattr(self, "music_format_var") else "Apenas áudio (MP3)")
+            if hasattr(self, "music_folder_var"):
+                self.folder_var.set(self.music_folder_var.get())
             if hasattr(self, "analyze_button"):
                 self.analyze_button.configure(text="Atualizar fila")
             if not initial:
@@ -854,7 +1030,9 @@ class DownloadApp(QueueUI):
                 self.download_metrics_var.set("Selecione um resultado da pesquisa para carregar na fila.")
         else:
             if self.resolution_var.get() not in VIDEO_DOWNLOAD_FORMATS:
-                self.resolution_var.set("Melhor MP4 compatível")
+                self.resolution_var.set(self.video_format_var.get() if hasattr(self, "video_format_var") else "Melhor MP4 compatível")
+            if hasattr(self, "video_folder_var"):
+                self.folder_var.set(self.video_folder_var.get())
             if hasattr(self, "analyze_button"):
                 self.analyze_button.configure(text="Listar links")
             if not initial:
@@ -862,12 +1040,85 @@ class DownloadApp(QueueUI):
                 self.download_metrics_var.set("Cole links de vídeos ou playlists para começar.")
         self._update_audio_controls()
 
+    def _schedule_video_preview_check(self, _event=None) -> None:
+        if self._video_preview_after is not None:
+            try:
+                self.root.after_cancel(self._video_preview_after)
+            except Exception:
+                pass
+        self._video_preview_after = self.root.after(350, self._check_video_preview)
+
+    def _check_video_preview(self) -> None:
+        self._video_preview_after = None
+        raw_text = self.video_url_text.get("1.0", "end").strip()
+        urls = [line.strip() for line in raw_text.splitlines() if line.strip() and "://" in line.strip()]
+        if not urls:
+            self._last_video_preview_url = None
+            self.video_preview_title_var.set("Cole um link de vídeo acima para ver os detalhes")
+            self.video_preview_author_var.set("")
+            self.video_cover_label.configure(image="", text="Sem capa")
+            self._video_cover_image = None
+            return
+
+        target_url = urls[0]
+        if self._last_video_preview_url == target_url:
+            return
+        self._last_video_preview_url = target_url
+        self.video_preview_title_var.set("Carregando informações do vídeo...")
+        self.video_preview_author_var.set(target_url)
+        self.video_cover_label.configure(image="", text="Carregando capa...")
+        self._video_cover_image = None
+
+        yt_dlp = None
+        if hasattr(self, "dependencies") and hasattr(self.dependencies, "yt_dlp_path"):
+            yt_dlp = self.dependencies.yt_dlp_path
+
+        def worker(url: str, engine_path):
+            info = fetch_video_preview_info(url, engine_path)
+            self.event_queue.put(("video_preview_ready", (url, info)))
+
+        threading.Thread(target=worker, args=(target_url, yt_dlp), daemon=True).start()
+
+    def _apply_video_preview(self, payload: object) -> None:
+        if not isinstance(payload, tuple) or len(payload) != 2:
+            return
+        url, info = payload
+        if url != self._last_video_preview_url or not isinstance(info, dict):
+            return
+        title = str(info.get("title") or "Vídeo detectado")
+        author = str(info.get("author") or "")
+        self.video_preview_title_var.set(title)
+        self.video_preview_author_var.set(author)
+
+        cover_data = info.get("cover_data")
+        if not cover_data:
+            self.video_cover_label.configure(image="", text="Sem capa")
+            self._video_cover_image = None
+            return
+        try:
+            from io import BytesIO
+            from PIL import Image, ImageTk
+
+            image = Image.open(BytesIO(cover_data))
+            image.thumbnail((160, 90))
+            self._video_cover_image = ImageTk.PhotoImage(image)
+            self.video_cover_label.configure(image=self._video_cover_image, text="")
+        except Exception:
+            self._video_cover_image = None
+            self.video_cover_label.configure(image="", text="Capa indisponível")
+
     def _on_main_tab_changed(self, _event=None) -> None:
         selected = self.tabs.select()
         if selected == str(self.music_page):
-            self._apply_work_mode("music")
+            if self.work_mode != "music":
+                self.resolution_var.set(self.music_format_var.get())
+                self.folder_var.set(self.music_folder_var.get())
+                self._apply_work_mode("music")
         elif selected == str(self.video_page):
-            self._apply_work_mode("video")
+            if self.work_mode != "video":
+                self.resolution_var.set(self.video_format_var.get())
+                self.folder_var.set(self.video_folder_var.get())
+                self._apply_work_mode("video")
         self._save_preferences()
 
     def _set_source_text(self, sources: list[str]) -> None:
@@ -902,7 +1153,9 @@ class DownloadApp(QueueUI):
         self.catalog_load_button.configure(state="disabled")
         if hasattr(self, "catalog_download_button"):
             self.catalog_download_button.configure(state="disabled")
-        self.catalog_play_button.configure(state="disabled")
+        self.catalog_play_button.configure(state="disabled", text="▶ Reproduzir prévia")
+        if hasattr(self, "catalog_stop_button"):
+            self.catalog_stop_button.configure(state="disabled")
         self.catalog_open_button.configure(state="disabled")
         self.catalog_cover_label.configure(image="", text="Sem capa")
         self._catalog_cover_image = None
@@ -1023,7 +1276,9 @@ class DownloadApp(QueueUI):
         if result is None:
             self.catalog_load_button.configure(state="disabled")
             self.catalog_download_button.configure(state="disabled")
-            self.catalog_play_button.configure(state="disabled")
+            self.catalog_play_button.configure(state="disabled", text="▶ Reproduzir prévia")
+            if hasattr(self, "catalog_stop_button"):
+                self.catalog_stop_button.configure(state="disabled")
             self.catalog_open_button.configure(state="disabled")
             return
 
@@ -1033,7 +1288,16 @@ class DownloadApp(QueueUI):
         self.catalog_load_button.configure(state="normal")
         self.catalog_download_button.configure(state="normal")
         self.catalog_open_button.configure(state="normal")
-        self.catalog_play_button.configure(state="normal" if result.kind == "track" else "disabled")
+        catalog_id = f"catalog_{result.item_id}"
+        is_current = getattr(self, "_playing_item_id", None) == catalog_id
+        is_playing = is_current and self.music_player.is_playing()
+        self.catalog_play_button.configure(
+            state="normal" if result.kind == "track" else "disabled",
+            text="⏸ Pausar prévia" if is_playing else "▶ Reproduzir prévia",
+        )
+        if hasattr(self, "catalog_stop_button"):
+            can_stop = self.music_player.is_active() or result.kind == "track"
+            self.catalog_stop_button.configure(state="normal" if can_stop else "disabled")
         self.catalog_cover_label.configure(image="", text="Carregando capa...")
         self._catalog_cover_image = None
         self._catalog_cover_key = result.page_url
@@ -1091,21 +1355,7 @@ class DownloadApp(QueueUI):
         self._prepare_sources([result.page_url], True)
 
     def _play_selected_catalog_result(self) -> None:
-        result = self._selected_catalog_result()
-        if result is None or result.kind != "track":
-            return
-
-        def worker():
-            try:
-                track = resolve_deezer_track(result.item_id)
-                if not track.preview_url:
-                    raise MusicPlayerError("A Deezer não disponibilizou prévia pública para esta faixa.")
-                self.music_player.play_preview(track.preview_url)
-                self.event_queue.put(("music_player_status", f"Reproduzindo prévia: {result.title}"))
-            except Exception as exc:
-                self.event_queue.put(("music_player_error", str(exc)))
-
-        threading.Thread(target=worker, daemon=True).start()
+        self._toggle_catalog_playback()
 
     def _open_selected_catalog_result(self) -> None:
         result = self._selected_catalog_result()
@@ -1130,9 +1380,11 @@ class DownloadApp(QueueUI):
         wrapping_label(info, textvariable=self.music_extra_var, foreground="#596579")
         buttons = ttk.Frame(info)
         buttons.pack(fill="x", pady=(8, 0))
-        ttk.Button(buttons, text="Reproduzir", command=self.play_selected_music).pack(side="left")
+        self.music_play_button = ttk.Button(buttons, text="▶ Reproduzir", command=self.play_selected_music)
+        self.music_play_button.pack(side="left")
+        self.music_stop_button = ttk.Button(buttons, text="⏹ Parar", command=self.stop_music)
+        self.music_stop_button.pack(side="left", padx=(6, 0))
         ttk.Button(buttons, text="Abrir no Deezer", command=self.open_selected_in_deezer).pack(side="left", padx=(6, 0))
-        ttk.Button(buttons, text="Parar", command=self.stop_music).pack(side="left", padx=(6, 0))
         ttk.Button(buttons, text="Editar metadados", command=self.edit_selected_music_metadata).pack(side="left", padx=(6, 0))
         ttk.Button(buttons, text="Alterar capa", command=self.change_selected_music_cover).pack(side="left", padx=(6, 0))
 
@@ -1197,9 +1449,24 @@ class DownloadApp(QueueUI):
 
     def play_selected_music(self, *, completed: bool = False) -> None:
         item = self._selected_music_item(completed=completed)
-        if not item or item.get("kind") != "deezer_preview":
+        if not item or item.get("kind") not in {"deezer_preview", "deezer_full"}:
             messagebox.showinfo(APP_NAME, "Selecione uma música da Deezer.")
             return
+
+        item_id = str(item.get("id") or item.get("media_id"))
+
+        if getattr(self, "_playing_item_id", None) == item_id and self.music_player.is_playing():
+            self.music_player.pause()
+            self.download_metrics_var.set("Reprodução pausada.")
+            self._update_player_buttons()
+            return
+
+        if getattr(self, "_playing_item_id", None) == item_id and self.music_player.is_paused():
+            self.music_player.resume()
+            self.download_metrics_var.set("Reproduzindo...")
+            self._update_player_buttons()
+            return
+
         files = [Path(value) for value in item.get("files", [])]
         local = next((path for path in files if path.is_file()), None)
         item_copy = dict(item)
@@ -1215,15 +1482,54 @@ class DownloadApp(QueueUI):
                         raise MusicPlayerError("A Deezer não disponibilizou prévia pública para esta faixa.")
                     self.music_player.play_preview(track.preview_url)
                     message = "Reproduzindo a prévia pública da Deezer."
+                self._playing_item_id = item_id
+                self._catalog_playing_active = False
                 self.event_queue.put(("music_player_status", message))
             except Exception as exc:
+                self._playing_item_id = None
+                self._catalog_playing_active = False
+                self.event_queue.put(("music_player_error", str(exc)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _toggle_catalog_playback(self) -> None:
+        result = self._selected_catalog_result()
+        if result is None or result.kind != "track":
+            return
+
+        catalog_id = f"catalog_{result.item_id}"
+
+        if getattr(self, "_playing_item_id", None) == catalog_id and self.music_player.is_playing():
+            self.music_player.pause()
+            self.download_metrics_var.set(f"Prévia pausada: {result.title}")
+            self._update_player_buttons()
+            return
+
+        if getattr(self, "_playing_item_id", None) == catalog_id and self.music_player.is_paused():
+            self.music_player.resume()
+            self.download_metrics_var.set(f"Reproduzindo prévia: {result.title}")
+            self._update_player_buttons()
+            return
+
+        def worker():
+            try:
+                track = resolve_deezer_track(result.item_id)
+                if not track.preview_url:
+                    raise MusicPlayerError("A Deezer não disponibilizou prévia pública para esta faixa.")
+                self.music_player.play_preview(track.preview_url)
+                self._playing_item_id = catalog_id
+                self._catalog_playing_active = True
+                self.event_queue.put(("music_player_status", f"Reproduzindo prévia: {result.title}"))
+            except Exception as exc:
+                self._playing_item_id = None
+                self._catalog_playing_active = False
                 self.event_queue.put(("music_player_error", str(exc)))
 
         threading.Thread(target=worker, daemon=True).start()
 
     def open_selected_in_deezer(self) -> None:
         item = self._selected_music_item()
-        if not item or item.get("kind") != "deezer_preview":
+        if not item or item.get("kind") not in {"deezer_preview", "deezer_full"}:
             messagebox.showinfo(APP_NAME, "Selecione uma música da Deezer.")
             return
         url = str(item.get("source") or "").strip()
@@ -1235,9 +1541,32 @@ class DownloadApp(QueueUI):
     def stop_music(self) -> None:
         try:
             self.music_player.stop()
+            self._playing_item_id = None
+            self._catalog_playing_active = False
             self.download_metrics_var.set("Reprodução interrompida.")
+            self._update_player_buttons()
         except Exception as exc:
             messagebox.showerror(APP_NAME, f"Não foi possível parar a reprodução:\n{exc}")
+
+    def _update_player_buttons(self) -> None:
+        is_playing = self.music_player.is_playing()
+        cat_active = getattr(self, "_catalog_playing_active", False)
+        if hasattr(self, "music_play_button"):
+            self.music_play_button.configure(
+                text="⏸ Pausar" if (is_playing and not cat_active) else "▶ Reproduzir"
+            )
+        if hasattr(self, "play_completed_button"):
+            self.play_completed_button.configure(
+                text="⏸ Pausar" if (is_playing and not cat_active) else "▶ Reproduzir"
+            )
+        if hasattr(self, "catalog_play_button"):
+            self.catalog_play_button.configure(
+                text="⏸ Pausar prévia" if (is_playing and cat_active) else "▶ Reproduzir prévia"
+            )
+        if hasattr(self, "catalog_stop_button"):
+            res = self._selected_catalog_result() if hasattr(self, "_selected_catalog_result") else None
+            can_stop = self.music_player.is_active() or (res is not None and res.kind == "track")
+            self.catalog_stop_button.configure(state="normal" if can_stop else "disabled")
 
     def _metadata_dialog(self, item: dict, *, completed: bool) -> None:
         dialog = Toplevel(self.root)
@@ -1346,23 +1675,36 @@ class DownloadApp(QueueUI):
         if local is not None and os.name == "nt":
             subprocess.Popen(["explorer.exe", "/select,", str(local)])
 
-    def choose_folder(self) -> None:
-        initial = Path(self.folder_var.get().strip() or str(Path.home()))
+    def choose_folder(self, target: str | None = None) -> None:
+        is_music = (target == "music") or (target is None and self.work_mode == "music")
+        current_var = self.music_folder_var if is_music else self.video_folder_var
+        initial = Path(current_var.get().strip() or str(Path.home()))
         if not initial.exists():
             initial = Path.home()
         selected = filedialog.askdirectory(initialdir=str(initial))
         if selected:
+            current_var.set(selected)
             self.folder_var.set(selected)
             self._save_preferences()
 
+    def choose_music_folder(self) -> None:
+        self.choose_folder(target="music")
+
+    def choose_video_folder(self) -> None:
+        self.choose_folder(target="video")
+
     def _save_preferences(self) -> None:
         settings: dict[str, object] = {
-            "download_folder": self.folder_var.get().strip() or str(Path.home() / "Downloads"),
+            "download_folder": self.video_folder_var.get().strip() or str(Path.home() / "Downloads"),
+            "video_download_folder": self.video_folder_var.get().strip() or str(Path.home() / "Downloads"),
+            "music_download_folder": self.music_folder_var.get().strip() or str(Path.home() / "Downloads" / "Músicas"),
             "work_mode": self.work_mode,
             "music_structure": self.music_structure_var.get(),
             "music_filename_template": self.music_filename_var.get().strip() or DEFAULT_MUSIC_FILENAME,
             "music_search_type": self.music_search_type_var.get(),
-            "format": self.resolution_var.get(),
+            "format": self.video_format_var.get(),
+            "video_format": self.video_format_var.get(),
+            "music_format": self.music_format_var.get(),
             "audio_bitrate_mode": self.audio_bitrate_mode_var.get(),
             "audio_custom_bitrate": self.audio_custom_bitrate_var.get().strip() or "192",
             "playlist": bool(self.playlist_var.get()),
@@ -1758,6 +2100,8 @@ class DownloadApp(QueueUI):
                     self._apply_catalog_cover(payload)
                 elif event == "music_cover_ready":
                     self._apply_music_cover(payload)
+                elif event == "video_preview_ready":
+                    self._apply_video_preview(payload)
                 elif event == "music_player_status":
                     self.download_metrics_var.set(str(payload))
                 elif event == "music_player_error":
@@ -1765,6 +2109,7 @@ class DownloadApp(QueueUI):
         except queue.Empty:
             pass
 
+        self._update_player_buttons()
         self.root.after(150, self._poll_queues)
 
     def start_maintenance(self, force: bool = False) -> None:

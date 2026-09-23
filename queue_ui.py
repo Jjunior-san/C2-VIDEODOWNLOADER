@@ -92,9 +92,13 @@ class QueueUI:
         )
         self.remove_completed_button.pack(side="right", padx=(0, 6))
         self.play_completed_button = ttk.Button(
-            actions, text="Reproduzir", command=lambda: self.play_selected_music(completed=True),
+            actions, text="▶ Reproduzir", command=lambda: self.play_selected_music(completed=True),
         )
         self.play_completed_button.pack(side="left")
+        self.stop_completed_button = ttk.Button(
+            actions, text="⏹ Parar", command=self.stop_music,
+        )
+        self.stop_completed_button.pack(side="left", padx=(6, 0))
         self.edit_completed_button = ttk.Button(
             actions, text="Editar metadados", command=lambda: self.edit_selected_music_metadata(completed=True),
         )
@@ -375,16 +379,44 @@ class QueueUI:
             self.queue_log("Interrompendo. A fila e os arquivos parciais serão mantidos.")
 
     def _capture_options(self):
+        work_mode = getattr(self, "work_mode", "video")
+        music_folder = (
+            self.music_folder_var.get().strip()
+            if hasattr(self, "music_folder_var")
+            else self.folder_var.get().strip()
+        )
+        video_folder = (
+            self.video_folder_var.get().strip()
+            if hasattr(self, "video_folder_var")
+            else self.folder_var.get().strip()
+        )
+        music_format = (
+            self.music_format_var.get()
+            if hasattr(self, "music_format_var")
+            else self.resolution_var.get()
+        )
+        video_format = (
+            self.video_format_var.get()
+            if hasattr(self, "video_format_var")
+            else self.resolution_var.get()
+        )
+        active_folder = music_folder if work_mode == "music" else video_folder
+        active_format = music_format if work_mode == "music" else video_format
+
         return dict(
-            folder=self.folder_var.get().strip(),
-            format=self.resolution_var.get(),
+            folder=active_folder or self.folder_var.get().strip(),
+            music_folder=music_folder or active_folder,
+            video_folder=video_folder or active_folder,
+            format=active_format or self.resolution_var.get(),
+            music_format=music_format,
+            video_format=video_format,
             audio_bitrate_mode=self.audio_bitrate_mode_var.get(),
             audio_custom_bitrate=self.audio_custom_bitrate_var.get().strip() or "192",
             playlist=bool(self.playlist_var.get()),
             fragments=int(self.fragments_var.get()),
             cookies_browser=self.cookies_browser_var.get(),
             cookies_file=self.cookies_file_var.get().strip(),
-            work_mode=getattr(self, "work_mode", "video"),
+            work_mode=work_mode,
             music_structure=self.music_structure_var.get() if hasattr(self, "music_structure_var") else "Artista\\Álbum",
             music_filename_template=(
                 self.music_filename_var.get().strip()

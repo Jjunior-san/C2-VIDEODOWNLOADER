@@ -45,3 +45,25 @@ def test_public_deezer_preview_validation():
     assert is_public_deezer_preview("https://e-cdns-preview-a.dzcdn.net/stream.mp3")
     assert not is_public_deezer_preview("http://cdnt-preview.dzcdn.net/a.mp3")
     assert not is_public_deezer_preview("https://evil.example/a.mp3")
+
+
+def test_music_player_state_transitions(tmp_path: Path):
+    from music_player import MusicPlayer
+
+    player = MusicPlayer(tmp_path)
+    assert not player.is_playing()
+    assert not player.is_paused()
+    assert not player.is_active()
+    assert player.current_source is None
+
+    player.pause()
+    assert player.is_paused()
+    assert player.is_active()
+
+    player.resume()
+    assert not player.is_paused()
+
+    player.stop()
+    assert not player.is_paused()
+    assert not player.is_active()
+    assert player.current_source is None

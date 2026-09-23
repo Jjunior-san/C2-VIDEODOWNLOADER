@@ -253,13 +253,16 @@ def run_queue(owner, repository, options, engine):
             owner.event_queue.put(("queue_changed", None))
             try:
                 owner._begin_download_item(ordinal, len(ids), item["title"])
-                folder = Path(options["folder"])
                 if item["kind"] in {"deezer_preview", "deezer_full"}:
+                    folder = Path(options.get("music_folder") or options["folder"])
                     folder = music_target_folder(
                         folder,
                         item,
                         str(options.get("music_structure") or "Pasta raiz"),
                     )
+                    folder.mkdir(parents=True, exist_ok=True)
+                else:
+                    folder = Path(options.get("video_folder") or options["folder"])
                     folder.mkdir(parents=True, exist_ok=True)
                 if item["kind"] == "deezer_full":
                     arl = str(options.get("deezer_arl") or "").strip()
