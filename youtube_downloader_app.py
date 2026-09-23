@@ -716,6 +716,11 @@ class DownloadApp(QueueUI):
         if not hasattr(self, "audio_control_sets"):
             self.audio_control_sets = []
         self.audio_control_sets.append((combo, custom, unit, hint))
+        if len(self.audio_control_sets) == 1:
+            self.audio_bitrate_combo = combo
+            self.audio_custom_bitrate = custom
+            self.audio_custom_bitrate_unit = unit
+            self.audio_bitrate_hint = hint
 
     def _build_site_logo(self, parent) -> ttk.Frame:
         return build_brand(parent, resource_path("assets/c2_logo_horizontal.png"), self.display_family)
