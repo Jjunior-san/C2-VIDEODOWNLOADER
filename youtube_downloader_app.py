@@ -354,7 +354,7 @@ class DownloadApp(QueueUI):
         self.completed_page = ScrollablePage(self.tabs)
         self.settings_page = ScrollablePage(self.tabs)
         self.activity_page = ScrollablePage(self.tabs)
-        self.tabs.add(self.download_page, text="  Downloads  ")
+        self.tabs.add(self.download_page, text="  Trabalho  ")
         self.tabs.add(self.completed_page, text="  Concluídos  ")
         self.tabs.add(self.settings_page, text="  Configurações  ")
         self.tabs.add(self.activity_page, text="  Atividade  ")
@@ -399,7 +399,7 @@ class DownloadApp(QueueUI):
         self.video_url_text.configure(yscrollcommand=video_scroll.set)
 
         self.url_text = self.video_url_text
-        self.work_tabs.bind("<<NotebookTabChanged>>", self._on_work_mode_changed)
+        self.work_tabs.select(0 if self.work_mode == "music" else 1)
 
         ttk.Label(frame, text="Pasta de destino").pack(anchor="w")
         folder_row = ttk.Frame(frame)
@@ -440,6 +440,7 @@ class DownloadApp(QueueUI):
 
         self._build_episode_list(frame)
         self._apply_work_mode(self.work_mode, initial=True)
+        self.work_tabs.bind("<<NotebookTabChanged>>", self._on_work_mode_changed)
 
         actions = self.episode_actions
         actions.pack(fill="x", pady=(0, 12))
