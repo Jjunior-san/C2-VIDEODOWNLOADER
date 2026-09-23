@@ -9,9 +9,9 @@ $ExePath = Join-Path $ProjectDir "dist\C2VideoDownloader.exe"
 
 Set-Location $ProjectDir
 
-$PythonLauncher = Get-Command "py.exe" -ErrorAction SilentlyContinue
+$PythonLauncher = Get-Command "python.exe" -ErrorAction SilentlyContinue
 if (-not $PythonLauncher) {
-    $PythonLauncher = Get-Command "python.exe" -ErrorAction SilentlyContinue
+    $PythonLauncher = Get-Command "py.exe" -ErrorAction SilentlyContinue
 }
 if (-not $PythonLauncher) {
     throw "Python nao encontrado. Instale Python 3.13 ou superior e habilite a opcao Add Python to PATH."
