@@ -246,3 +246,63 @@ def test_deezer_search_source_adds_results_to_queue(tmp_path, monkeypatch):
     assert items[0]["collection_title"] == "Pesquisa Deezer - Serhat Durmus"
     assert items[1]["status"] == "skipped" and not items[1]["enabled"]
 
+@pytest.mark.parametrize("query", ["Adele", "Coldplay Yellow", "Serhat Durmus La Câlin"])
+def test_music_mode_plain_text_searches_deezer(tmp_path, monkeypatch, query):
+    calls = []
+    tracks = (
+        DeezerTrack("10", "Result", "Artist", "Album",
+                    "https://cdnt-preview.dzcdn.net/a.mp3"),
+    )
+    monkeypatch.setattr(
+        queue_service,
+        "search_deezer_tracks",
+        lambda value, limit=25: calls.append((value, limit)) or tracks,
+    )
+    options = {
+        "folder": str(tmp_path),
+        "format": "Apenas áudio (MP3)",
+        "playlist": True,
+        "fragments": 4,
+        "cookies_browser": "Nenhum",
+        "cookies_file": "",
+        "work_mode": "music",
+    }
+
+    items = queue_service.discover(
+        [query], options, Path("engine"),
+        DownloadControl(), {}, lambda line: None,
+    )
+
+    assert calls == [(query, 25)]
+    assert len(items) == 1
+    assert items[0]["kind"] == "deezer_preview"
+
+
+def test_plain_text_in_video_mode_is_not_treated_as_deezer_search(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        queue_service,
+        "search_deezer_tracks",
+        lambda *args, **kwargs: pytest.fail("Deezer search should not run in video mode"),
+    )
+    monkeypatch.setattr(
+        queue_service,
+        "read_metadata",
+        lambda *args, **kwargs: {"id": "v1", "title": "Generic result", "webpage_url": "https://example.com/v1"},
+    )
+    options = {
+        "folder": str(tmp_path),
+        "format": "Melhor MP4 compatível",
+        "playlist": True,
+        "fragments": 4,
+        "cookies_browser": "Nenhum",
+        "cookies_file": "",
+        "work_mode": "video",
+    }
+
+    items = queue_service.discover(
+        ["Adele"], options, Path("engine"),
+        DownloadControl(), {}, lambda line: None,
+    )
+
+    assert items[0]["kind"] == "ytdlp"
+
