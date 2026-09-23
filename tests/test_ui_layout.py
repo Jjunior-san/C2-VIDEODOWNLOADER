@@ -54,27 +54,37 @@ def test_compact_window_keeps_controls_reachable(window, geometry):
     root.update()
     assert root.winfo_width() == int(geometry.split("x")[0])
     assert root.winfo_height() == int(geometry.split("x")[1])
-    assert len(instance.tabs.tabs()) == 4
-    for page in (instance.download_page, instance.completed_page, instance.settings_page, instance.activity_page):
+    assert len(instance.tabs.tabs()) == 6
+    for page in (
+        instance.music_page,
+        instance.video_page,
+        instance.queue_page,
+        instance.completed_page,
+        instance.activity_page,
+    ):
         instance.tabs.select(page)
         root.update()
         assert page.winfo_width() <= root.winfo_width()
         assert page.winfo_height() <= root.winfo_height()
-        canvas = page.canvas
-        bounds = canvas.bbox(page.window)
-        assert bounds[2] >= page.body.winfo_reqwidth()
-        assert bounds[3] >= page.body.winfo_reqheight()
-        if page.body.winfo_reqheight() > canvas.winfo_height():
-            assert page.vertical.winfo_ismapped()
-            canvas.yview_moveto(1)
-            root.update()
-            assert canvas.yview()[1] == 1
+
+    instance.tabs.select(instance.settings_page)
+    root.update()
+    page = instance.settings_page
+    canvas = page.canvas
+    bounds = canvas.bbox(page.window)
+    assert bounds[2] >= page.body.winfo_reqwidth()
+    assert bounds[3] >= page.body.winfo_reqheight()
+    if page.body.winfo_reqheight() > canvas.winfo_height():
+        assert page.vertical.winfo_ismapped()
+        canvas.yview_moveto(1)
+        root.update()
+        assert canvas.yview()[1] == 1
+
     instance.tabs.select(instance.activity_page)
     root.update()
-    # Keyboard navigation also scrolls offscreen controls into view.
     instance.log.focus_force()
     root.update()
-    assert instance.log.winfo_rooty() >= instance.activity_page.canvas.winfo_rooty()
+    assert instance.log.winfo_rooty() >= instance.activity_page.winfo_rooty()
 
 
 def test_completion_distinguishes_partial_empty_and_failed_jobs(window):
