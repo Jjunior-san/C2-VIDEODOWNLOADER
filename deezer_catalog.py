@@ -55,6 +55,25 @@ class DeezerTrack:
 
 
 @dataclass(frozen=True)
+class DeezerSearchResult:
+    kind: str
+    item_id: str
+    title: str
+    subtitle: str
+    cover_url: str | None
+    page_url: str
+
+    @property
+    def kind_label(self) -> str:
+        return {
+            "track": "Música",
+            "artist": "Artista",
+            "album": "Álbum",
+            "playlist": "Playlist",
+        }.get(self.kind, self.kind.title())
+
+
+@dataclass(frozen=True)
 class DeezerCollection:
     source_url: str
     title: str
@@ -67,7 +86,7 @@ def parse_deezer_url(url: str) -> tuple[str, str] | None:
     host = (parsed.hostname or "").lower()
     if parsed.scheme not in {"http", "https"} or host not in DEEZER_PAGE_HOSTS:
         return None
-    match = re.search(r"/(?:[a-z]{2}(?:-[a-z]{2})?/)?(track|album|playlist)/(\d+)(?:/|$)", parsed.path, re.I)
+    match = re.search(r"/(?:[a-z]{2}(?:-[a-z]{2})?/)?(track|artist|album|playlist)/(\d+)(?:/|$)", parsed.path, re.I)
     if not match:
         return None
     return match.group(1).lower(), match.group(2)
@@ -177,6 +196,91 @@ def _paged_tracks(first_page: dict, *, album_fallback: dict | None = None) -> tu
 
 
 
+def _catalog_cover(payload: dict, *keys: str) -> str | None:
+    for key in keys:
+        value = str(payload.get(key) or "").strip()
+        if not value:
+            continue
+        parsed = urlparse(value)
+        if parsed.scheme == "https" and (parsed.hostname or "").lower().endswith("dzcdn.net"):
+            return value
+    return None
+
+
+def search_deezer_catalog(
+    query: str,
+    kind: str = "track",
+    limit: int = 20,
+) -> tuple[DeezerSearchResult, ...]:
+    """Search tracks, artists, albums or playlists in the public Deezer catalog."""
+    search = str(query or "").strip()
+    if len(search) < 2:
+        return ()
+
+    kind = str(kind or "track").lower()
+    if kind not in {"track", "artist", "album", "playlist"}:
+        raise DeezerCatalogError("Tipo de pesquisa Deezer inválido.")
+    try:
+        requested = int(limit)
+    except (TypeError, ValueError):
+        requested = 20
+    requested = max(1, min(MAX_SEARCH_RESULTS, requested))
+
+    endpoint = "search" if kind == "track" else f"search/{kind}"
+    payload = _api_json(f"{API_ROOT}/{endpoint}?q={quote(search, safe='')}&limit={requested}")
+    entries = payload.get("data")
+    if not isinstance(entries, list):
+        raise DeezerCatalogError("A Deezer retornou uma pesquisa em formato inesperado.")
+
+    results: list[DeezerSearchResult] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        item_id = str(entry.get("id") or "").strip()
+        if not item_id or item_id in seen:
+            continue
+        seen.add(item_id)
+
+        if kind == "track":
+            title = str(entry.get("title") or entry.get("title_short") or "").strip()
+            artist = entry.get("artist") if isinstance(entry.get("artist"), dict) else {}
+            album = entry.get("album") if isinstance(entry.get("album"), dict) else {}
+            artist_name = str(artist.get("name") or "").strip()
+            album_name = str(album.get("title") or "").strip()
+            subtitle = " • ".join(value for value in (artist_name, album_name) if value)
+            cover = _catalog_cover(album, "cover_medium", "cover_big", "cover")
+        elif kind == "artist":
+            title = str(entry.get("name") or "").strip()
+            subtitle = "Artista"
+            cover = _catalog_cover(entry, "picture_medium", "picture_big", "picture")
+        elif kind == "album":
+            title = str(entry.get("title") or "").strip()
+            artist = entry.get("artist") if isinstance(entry.get("artist"), dict) else {}
+            subtitle = str(artist.get("name") or "").strip() or "Álbum"
+            cover = _catalog_cover(entry, "cover_medium", "cover_big", "cover")
+        else:
+            title = str(entry.get("title") or "").strip()
+            user = entry.get("user") if isinstance(entry.get("user"), dict) else {}
+            creator = str(user.get("name") or "").strip()
+            subtitle = f"Por {creator}" if creator else "Playlist"
+            cover = _catalog_cover(entry, "picture_medium", "picture_big", "picture")
+
+        if not title:
+            continue
+        results.append(DeezerSearchResult(
+            kind=kind,
+            item_id=item_id,
+            title=title,
+            subtitle=subtitle,
+            cover_url=cover,
+            page_url=f"https://www.deezer.com/{kind}/{item_id}",
+        ))
+        if len(results) >= requested:
+            break
+    return tuple(results)
+
+
 def search_deezer_tracks(query: str, limit: int = 25) -> tuple[DeezerTrack, ...]:
     """Search the public Deezer catalog and return stable track metadata."""
     search = str(query or "").strip()
@@ -220,11 +324,21 @@ def resolve_deezer_url(url: str) -> DeezerCollection:
         return DeezerCollection(url, track.display_title, kind, (track,))
 
     payload = _api_json(f"{API_ROOT}/{kind}/{identifier}")
-    title = str(payload.get("title") or f"{kind.title()} {identifier}").strip()
-    tracks_page = payload.get("tracks")
+    title = str(
+        payload.get("title")
+        or payload.get("name")
+        or f"{kind.title()} {identifier}"
+    ).strip()
+
+    if kind == "artist":
+        tracks_page = _api_json(f"{API_ROOT}/artist/{identifier}/top?limit=50")
+        fallback = None
+    else:
+        tracks_page = payload.get("tracks")
+        fallback = payload if kind == "album" else None
+
     if not isinstance(tracks_page, dict):
         raise DeezerCatalogError("A Deezer não informou as faixas desta coleção.")
-    fallback = payload if kind == "album" else None
     tracks = _paged_tracks(tracks_page, album_fallback=fallback)
     if not tracks:
         raise DeezerCatalogError("Nenhuma faixa foi encontrada nesta coleção.")
