@@ -129,6 +129,14 @@ class QueueUI:
                 if key not in options:
                     options[key] = value
                     upgraded = True
+            if "work_mode" not in options:
+                sources = [str(source).lower() for source in job.get("sources", []) if str(source).strip()]
+                options["work_mode"] = (
+                    "music"
+                    if sources and all(source.startswith("deezer:") or "deezer.com/" in source for source in sources)
+                    else "video"
+                )
+                upgraded = True
             if upgraded:
                 self.queue_repository.replace(job["items"], options, job.get("sources", []))
             needs_resume = any(item["kind"] != "unresolved" and item["status"] in (RUNNABLE | {"failed"}) for item in job["items"])
