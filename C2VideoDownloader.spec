@@ -11,6 +11,9 @@ datas = [
 hiddenimports = [
     'imageio_ffmpeg',
     'imageio_ffmpeg.binaries',
+    'Crypto',
+    'Crypto.Cipher.Blowfish',
+    'Crypto.Hash.MD5',
 ]
 
 a = Analysis(

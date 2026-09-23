@@ -5,3 +5,4 @@ mutagen>=1.47.0
 Pillow>=10.0.0
 pygame>=2.6.0
 requests>=2.32.0
+pycryptodome>=3.16.0

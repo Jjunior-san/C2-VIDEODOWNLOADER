@@ -153,6 +153,12 @@ class QueueUI:
                     self.music_structure_var.set(options.get("music_structure", "Artista\\Álbum"))
                 if hasattr(self, "music_filename_var"):
                     self.music_filename_var.set(options.get("music_filename_template", "{faixa:02} - {titulo}"))
+                if hasattr(self, "deezer_arl_var") and "deezer_arl" in options:
+                    self.deezer_arl_var.set(options.get("deezer_arl", ""))
+                if hasattr(self, "deezer_quality_var") and "deezer_quality" in options:
+                    self.deezer_quality_var.set(options.get("deezer_quality", "Automática (melhor da conta)"))
+                if hasattr(self, "create_zip_var") and "create_collection_zip" in options:
+                    self.create_zip_var.set(bool(options.get("create_collection_zip", False)))
             if hasattr(self, "_set_source_text"):
                 self._set_source_text(job.get("sources", []))
             else:
@@ -385,6 +391,9 @@ class QueueUI:
                 if hasattr(self, "music_filename_var") and self.music_filename_var.get().strip()
                 else "{faixa:02} - {titulo}"
             ),
+            deezer_arl=self.deezer_arl_var.get().strip() if hasattr(self, "deezer_arl_var") else "",
+            deezer_quality=self.deezer_quality_var.get().strip() if hasattr(self, "deezer_quality_var") else "auto",
+            create_collection_zip=bool(self.create_zip_var.get()) if hasattr(self, "create_zip_var") else False,
         )
 
     def analyze_links(self):

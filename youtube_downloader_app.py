@@ -29,6 +29,7 @@ from audio_library import (
     read_audio_metadata,
     write_audio_metadata,
 )
+from deezer_auth import validate_deezer_arl
 from deezer_catalog import DeezerSearchResult, resolve_deezer_track, search_deezer_catalog
 from download_control import DownloadCancelled, DownloadControl
 from ui_layout import ScrollablePage, build_brand, configure_fonts, fit_window, wrapping_label
@@ -297,6 +298,18 @@ class DownloadApp(QueueUI):
         self.cookies_file_var = StringVar()
         self.fragments_var = StringVar(value=str(fragment_count(self.user_settings.get("concurrent_fragments", 4))))
         self.music_structure_var = StringVar(value=saved_music_structure)
+        saved_deezer_arl = str(self.user_settings.get("deezer_arl") or "").strip()
+        saved_deezer_quality = str(self.user_settings.get("deezer_quality") or "Automática (melhor da conta)")
+        saved_create_zip = bool(self.user_settings.get("create_collection_zip", False))
+
+        self.deezer_arl_var = StringVar(value=saved_deezer_arl)
+        self.deezer_quality_var = StringVar(value=saved_deezer_quality)
+        self.deezer_status_var = StringVar(
+            value="● Conectando..." if saved_deezer_arl else "● Não autenticado (baixando prévias de 30s)"
+        )
+        self.create_zip_var = BooleanVar(value=saved_create_zip)
+        self.deezer_show_arl_var = BooleanVar(value=False)
+
         self.music_filename_var = StringVar(value=saved_music_filename)
         self.music_search_var = StringVar()
         self.music_search_type_var = StringVar(
@@ -670,6 +683,55 @@ class DownloadApp(QueueUI):
         ttk.Button(file_row, text="Selecionar", command=self.choose_cookies_file).pack(side="left", padx=(8, 0))
         ttk.Button(file_row, text="Limpar", command=lambda: self.cookies_file_var.set("")).pack(side="left", padx=(8, 0))
 
+        deezer_frame = ttk.LabelFrame(settings, text="Autenticação Deezer (Músicas completas)", padding=10)
+        deezer_frame.pack(fill="x", pady=(0, 12))
+
+        arl_row = ttk.Frame(deezer_frame)
+        arl_row.pack(fill="x", pady=(0, 6))
+        ttk.Label(arl_row, text="Cookie ARL:").pack(side="left", padx=(0, 8))
+        self.deezer_arl_entry = ttk.Entry(
+            arl_row,
+            textvariable=self.deezer_arl_var,
+            show="*" if not self.deezer_show_arl_var.get() else "",
+            width=28,
+        )
+        self.deezer_arl_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ttk.Button(arl_row, text="Colar", command=self._paste_deezer_arl).pack(side="left", padx=(0, 4))
+        self.deezer_toggle_btn = ttk.Button(arl_row, text="Mostrar", command=self._toggle_show_arl, width=8)
+        self.deezer_toggle_btn.pack(side="left", padx=(0, 4))
+        ttk.Button(arl_row, text="Verificar / Salvar", command=lambda: self._check_deezer_arl(show_dialog=True)).pack(side="left", padx=(0, 4))
+        ttk.Button(arl_row, text="Limpar", command=self._clear_deezer_arl).pack(side="left")
+
+        status_row = ttk.Frame(deezer_frame)
+        status_row.pack(fill="x", pady=(2, 6))
+        ttk.Label(status_row, text="Status da conta:").pack(side="left", padx=(0, 8))
+        wrapping_label(status_row, textvariable=self.deezer_status_var, font=(self.text_family, 9, "bold"))
+
+        options_row = ttk.Frame(deezer_frame)
+        options_row.pack(fill="x", pady=(4, 6))
+        ttk.Label(options_row, text="Qualidade Deezer:").pack(side="left", padx=(0, 8))
+        ttk.Combobox(
+            options_row,
+            textvariable=self.deezer_quality_var,
+            values=["Automática (melhor da conta)", "FLAC Lossless", "MP3 320 kbps", "MP3 128 kbps"],
+            state="readonly",
+            width=26,
+        ).pack(side="left", padx=(0, 16))
+
+        zip_check = ttk.Checkbutton(
+            deezer_frame,
+            text="Compactar álbum / playlist em arquivo .ZIP ao concluir",
+            variable=self.create_zip_var,
+            command=self._save_preferences,
+        )
+        zip_check.pack(anchor="w", pady=(2, 6))
+
+        wrapping_label(
+            deezer_frame,
+            text="Dica: Faça login no deezer.com pelo navegador > F12 > Armazenamento/Cookies > copie o valor de 'arl'. Sem ARL, o aplicativo continuará baixando as prévias públicas de 30s.",
+            foreground="#596579",
+        )
+
         about_frame = ttk.LabelFrame(settings, text="Aplicativo", padding=10)
         about_frame.pack(fill="x")
         wrapping_label(
@@ -709,6 +771,8 @@ class DownloadApp(QueueUI):
         self.music_search_entry.bind("<Return>", lambda _event: self._load_selected_catalog_result())
         self.music_search_entry.focus_set()
         self._update_audio_controls()
+        if self.deezer_arl_var.get().strip():
+            self.root.after(400, lambda: self._check_deezer_arl(show_dialog=False))
 
     def _build_audio_controls(self, parent, *, row: int, column: int) -> None:
         holder = ttk.Frame(parent)
@@ -1304,6 +1368,9 @@ class DownloadApp(QueueUI):
             "playlist": bool(self.playlist_var.get()),
             "cookies_browser": self.cookies_browser_var.get(),
             "concurrent_fragments": fragment_count(self.fragments_var.get()),
+            "deezer_arl": self.deezer_arl_var.get().strip(),
+            "deezer_quality": self.deezer_quality_var.get(),
+            "create_collection_zip": bool(self.create_zip_var.get()),
         }
         try:
             save_user_settings(settings)
@@ -1358,6 +1425,82 @@ class DownloadApp(QueueUI):
         )
         if selected:
             self.cookies_file_var.set(selected)
+
+    def _paste_deezer_arl(self) -> None:
+        try:
+            text = self.root.clipboard_get().strip()
+            if text:
+                self.deezer_arl_var.set(text)
+                self._check_deezer_arl(show_dialog=False)
+        except Exception:
+            pass
+
+    def _toggle_show_arl(self) -> None:
+        shown = self.deezer_show_arl_var.get()
+        self.deezer_show_arl_var.set(not shown)
+        if hasattr(self, "deezer_arl_entry"):
+            self.deezer_arl_entry.configure(show="" if not shown else "*")
+        if hasattr(self, "deezer_toggle_btn"):
+            self.deezer_toggle_btn.configure(text="Ocultar" if not shown else "Mostrar")
+
+    def _clear_deezer_arl(self) -> None:
+        self.deezer_arl_var.set("")
+        self.deezer_status_var.set("● Não autenticado (baixando prévias de 30s)")
+        self._save_preferences()
+
+    def _selected_deezer_quality(self) -> str:
+        choice = self.deezer_quality_var.get().strip().lower()
+        if "flac" in choice:
+            return "flac"
+        if "320" in choice:
+            return "mp3_320"
+        if "128" in choice:
+            return "mp3_128"
+        return "auto"
+
+    def _check_deezer_arl(self, show_dialog: bool = False) -> None:
+        arl = self.deezer_arl_var.get().strip()
+        if not arl:
+            self.deezer_status_var.set("● Não autenticado (baixando prévias de 30s)")
+            self._save_preferences()
+            if show_dialog:
+                messagebox.showinfo(
+                    APP_NAME,
+                    "Nenhum cookie ARL inserido.\n\n"
+                    "O aplicativo continuará funcionando normalmente com as prévias oficiais de 30s.",
+                )
+            return
+
+        self.deezer_status_var.set("● Verificando credenciais na Deezer...")
+
+        def worker():
+            info = validate_deezer_arl(arl)
+
+            def callback():
+                if info.get("valid"):
+                    self.deezer_status_var.set(f"● Conectado: {info['user_name']} ({info['plan']})")
+                    self._save_preferences()
+                    if show_dialog:
+                        messagebox.showinfo(
+                            APP_NAME,
+                            f"Autenticado com sucesso na Deezer!\n\n"
+                            f"Usuário: {info['user_name']}\n"
+                            f"Plano identificado: {info['plan']}\n\n"
+                            f"Os downloads de faixas completas agora estão habilitados.",
+                        )
+                else:
+                    err = info.get("error") or "Cookie ARL inválido ou expirado."
+                    self.deezer_status_var.set(f"● Falha de autenticação: {err}")
+                    if show_dialog:
+                        messagebox.showwarning(
+                            APP_NAME,
+                            f"Não foi possível autenticar o cookie ARL:\n{err}\n\n"
+                            f"Dica: Faça login no deezer.com pelo navegador > F12 > Armazenamento/Cookies > copie o valor de 'arl'.",
+                        )
+
+            self.root.after(0, callback)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def clear_log(self) -> None:
         try:

@@ -245,6 +245,17 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
+## Versão 1.7.0 — autenticação Deezer com ARL e faixas completas
+
+- adiciona seção de autenticação Deezer na aba **Configurações** com suporte a cookie `arl`;
+- validação de login e identificação do plano da conta (HiFi / Lossless, Premium ou Gratuito) diretamente pela interface;
+- permite download de faixas completas em FLAC Lossless (1411 kbps) ou MP3 (320 kbps / 128 kbps);
+- descriptografia Blowfish em tempo real (`BF_CBC_STRIPE`) para fluxos de áudio protegidos;
+- preserva o modo público como fallback seguro (quando sem ARL configurado);
+- tagueamento nativo com metadados e capas em alta resolução para arquivos FLAC e MP3;
+- adiciona opção para compactar automaticamente álbuns e playlists em arquivo `.zip` com playlist `.m3u8` inclusa;
+- inclui testes automatizados para chave Blowfish, decodificação, persistência de preferências e geração de arquivo `.zip`.
+
 ## Versão 1.6.0 — pesquisa integrada no catálogo Deezer
 
 - reorganiza a interface em abas principais **Música**, **Vídeo**, **Fila**, **Concluídos**, **Configurações** e **Atividade**, reduzindo a necessidade de rolagem;
