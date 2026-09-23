@@ -64,7 +64,7 @@ PROGRESS_TEMPLATE = (
     "%(progress.status)s|%(progress.filename)s"
 )
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
-DOWNLOAD_FORMATS = [
+VIDEO_DOWNLOAD_FORMATS = [
     "Melhor MP4 compatível",
     "Melhor qualidade",
     "1080p",
@@ -76,6 +76,13 @@ DOWNLOAD_FORMATS = [
     "Apenas áudio (MP3)",
     "Apenas áudio (Opus)",
 ]
+MUSIC_DOWNLOAD_FORMATS = [
+    AUDIO_ORIGINAL_FORMAT,
+    "Apenas áudio (M4A)",
+    "Apenas áudio (MP3)",
+    "Apenas áudio (Opus)",
+]
+DOWNLOAD_FORMATS = VIDEO_DOWNLOAD_FORMATS
 BROWSERS = ["Nenhum", "Chrome", "Edge", "Firefox", "Brave", "Opera", "Vivaldi"]
 DOWNLOAD_START_INACTIVITY_SECONDS = 90
 
@@ -260,7 +267,11 @@ class DownloadApp(QueueUI):
         saved_bitrate_mode = str(self.user_settings.get("audio_bitrate_mode") or AUDIO_AUTO_BITRATE)
         if saved_bitrate_mode not in AUDIO_BITRATE_CHOICES:
             saved_bitrate_mode = AUDIO_AUTO_BITRATE
+        saved_work_mode = str(self.user_settings.get("work_mode") or "video").lower()
+        if saved_work_mode not in {"music", "video"}:
+            saved_work_mode = "video"
 
+        self.work_mode = saved_work_mode
         self.folder_var = StringVar(value=saved_folder)
         self.playlist_var = BooleanVar(value=bool(self.user_settings.get("playlist", True)))
         self.resolution_var = StringVar(value=saved_format)
@@ -349,14 +360,46 @@ class DownloadApp(QueueUI):
         self.tabs.add(self.activity_page, text="  Atividade  ")
         frame = self.download_page.body
 
-        ttk.Label(frame, text="Links, playlists ou busca Deezer (deezer: artista música)", font=(self.text_family, 10, "bold")).pack(anchor="w")
-        url_row = ttk.Frame(frame)
-        url_row.pack(fill="x", pady=(4, 10))
-        self.url_text = self._make_text(url_row, height=2)
-        self.url_text.pack(side="left", fill="x", expand=True)
-        url_scroll = ttk.Scrollbar(url_row, command=self.url_text.yview)
-        url_scroll.pack(side="right", fill="y")
-        self.url_text.configure(yscrollcommand=url_scroll.set)
+        ttk.Label(frame, text="Área de trabalho", font=(self.text_family, 10, "bold")).pack(anchor="w")
+        self.work_tabs = ttk.Notebook(frame)
+        self.work_tabs.pack(fill="x", pady=(4, 10))
+
+        music_page = ttk.Frame(self.work_tabs, padding=10)
+        video_page = ttk.Frame(self.work_tabs, padding=10)
+        self.work_tabs.add(music_page, text="  Música  ")
+        self.work_tabs.add(video_page, text="  Vídeo  ")
+
+        ttk.Label(
+            music_page,
+            text="Pesquise no catálogo Deezer ou cole um link de faixa, álbum ou playlist.",
+        ).pack(anchor="w")
+        music_row = ttk.Frame(music_page)
+        music_row.pack(fill="x", pady=(4, 0))
+        self.music_url_text = self._make_text(music_row, height=2)
+        self.music_url_text.pack(side="left", fill="x", expand=True)
+        music_scroll = ttk.Scrollbar(music_row, command=self.music_url_text.yview)
+        music_scroll.pack(side="right", fill="y")
+        self.music_url_text.configure(yscrollcommand=music_scroll.set)
+        wrapping_label(
+            music_page,
+            text="Para pesquisar, use: deezer: artista música. Links públicos da Deezer também são aceitos.",
+            foreground="#596579",
+        )
+
+        ttk.Label(
+            video_page,
+            text="Cole links de vídeos, playlists, episódios ou outras mídias compatíveis.",
+        ).pack(anchor="w")
+        video_row = ttk.Frame(video_page)
+        video_row.pack(fill="x", pady=(4, 0))
+        self.video_url_text = self._make_text(video_row, height=2)
+        self.video_url_text.pack(side="left", fill="x", expand=True)
+        video_scroll = ttk.Scrollbar(video_row, command=self.video_url_text.yview)
+        video_scroll.pack(side="right", fill="y")
+        self.video_url_text.configure(yscrollcommand=video_scroll.set)
+
+        self.url_text = self.video_url_text
+        self.work_tabs.bind("<<NotebookTabChanged>>", self._on_work_mode_changed)
 
         ttk.Label(frame, text="Pasta de destino").pack(anchor="w")
         folder_row = ttk.Frame(frame)
@@ -367,10 +410,11 @@ class DownloadApp(QueueUI):
         format_frame = ttk.Frame(frame)
         format_frame.pack(fill="x", pady=(0, 10))
         ttk.Label(format_frame, text="Formato:").pack(side="left", padx=(0, 8))
-        ttk.Combobox(
+        self.format_combo = ttk.Combobox(
             format_frame, textvariable=self.resolution_var,
             values=DOWNLOAD_FORMATS, state="readonly", width=27,
-        ).pack(side="left")
+        )
+        self.format_combo.pack(side="left")
         ttk.Checkbutton(format_frame, text="Baixar playlist/álbum", variable=self.playlist_var).pack(side="left", padx=(12, 0))
 
         audio_frame = ttk.Frame(frame)
@@ -395,6 +439,7 @@ class DownloadApp(QueueUI):
         self._update_audio_controls()
 
         self._build_episode_list(frame)
+        self._apply_work_mode(self.work_mode, initial=True)
 
         actions = self.episode_actions
         actions.pack(fill="x", pady=(0, 12))
@@ -490,6 +535,52 @@ class DownloadApp(QueueUI):
             hint = "Disponível ao escolher um formato de áudio."
         self.audio_bitrate_hint.configure(text=hint)
 
+    def _apply_work_mode(self, mode: str, *, initial: bool = False) -> None:
+        mode = "music" if mode == "music" else "video"
+        self.work_mode = mode
+        if mode == "music":
+            self.url_text = self.music_url_text
+            self.format_combo.configure(values=MUSIC_DOWNLOAD_FORMATS)
+            if self.resolution_var.get() not in MUSIC_DOWNLOAD_FORMATS:
+                self.resolution_var.set("Apenas áudio (MP3)")
+            if hasattr(self, "analyze_button"):
+                self.analyze_button.configure(text="Pesquisar / listar músicas")
+            if not initial:
+                self.download_item_var.set("Modo Música")
+                self.download_metrics_var.set("Pesquise na Deezer ou cole um link de música.")
+        else:
+            self.url_text = self.video_url_text
+            self.format_combo.configure(values=VIDEO_DOWNLOAD_FORMATS)
+            if self.resolution_var.get() not in VIDEO_DOWNLOAD_FORMATS:
+                self.resolution_var.set("Melhor MP4 compatível")
+            if hasattr(self, "analyze_button"):
+                self.analyze_button.configure(text="Listar vídeos")
+            if not initial:
+                self.download_item_var.set("Modo Vídeo")
+                self.download_metrics_var.set("Cole links de vídeos ou playlists para começar.")
+        self._update_audio_controls()
+
+    def _on_work_mode_changed(self, _event=None) -> None:
+        if not hasattr(self, "work_tabs"):
+            return
+        selected = self.work_tabs.index(self.work_tabs.select())
+        self._apply_work_mode("music" if selected == 0 else "video")
+        self._save_preferences()
+
+    def _set_source_text(self, sources: list[str]) -> None:
+        values = [str(source) for source in sources if str(source).strip()]
+        music = bool(values) and all(
+            value.lower().startswith("deezer:")
+            or "deezer.com/" in value.lower()
+            for value in values
+        )
+        mode = "music" if music else "video"
+        self.work_tabs.select(0 if music else 1)
+        self._apply_work_mode(mode, initial=True)
+        target = self.music_url_text if music else self.video_url_text
+        target.delete("1.0", END)
+        target.insert("1.0", "\n".join(values))
+
     def choose_folder(self) -> None:
         initial = Path(self.folder_var.get().strip() or str(Path.home()))
         if not initial.exists():
@@ -502,6 +593,7 @@ class DownloadApp(QueueUI):
     def _save_preferences(self) -> None:
         settings: dict[str, object] = {
             "download_folder": self.folder_var.get().strip() or str(Path.home() / "Downloads"),
+            "work_mode": self.work_mode,
             "format": self.resolution_var.get(),
             "audio_bitrate_mode": self.audio_bitrate_mode_var.get(),
             "audio_custom_bitrate": self.audio_custom_bitrate_var.get().strip() or "192",
@@ -921,7 +1013,8 @@ class DownloadApp(QueueUI):
         QueueUI.start_download(self)
 
     def _get_urls(self) -> list[str]:
-        raw = self.url_text.get("1.0", END)
+        source_widget = self.music_url_text if self.work_mode == "music" else self.video_url_text
+        raw = source_widget.get("1.0", END)
         return [line.strip() for line in raw.splitlines() if line.strip()]
 
     def _download(self, urls: list[str], folder: Path, format_choice: str) -> None:
