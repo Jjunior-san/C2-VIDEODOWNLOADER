@@ -60,7 +60,7 @@ def window_dimensions(area: tuple[int, int, int, int]) -> tuple[int, int, int, i
 def fit_window(root) -> None:
     width, height, x, y = window_dimensions(desktop_work_area(root))
     root.geometry(f"{width}x{height}+{x}+{y}")
-    root.minsize(min(820, width), min(520, height))
+    root.minsize(min(560, width), min(420, height))
 
 
 class ScrollablePage(ttk.Frame):
