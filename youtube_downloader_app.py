@@ -349,7 +349,7 @@ class DownloadApp(QueueUI):
         self.tabs.add(self.activity_page, text="  Atividade  ")
         frame = self.download_page.body
 
-        ttk.Label(frame, text="Links de vídeos, músicas ou playlists", font=(self.text_family, 10, "bold")).pack(anchor="w")
+        ttk.Label(frame, text="Links, playlists ou busca Deezer (deezer: artista música)", font=(self.text_family, 10, "bold")).pack(anchor="w")
         url_row = ttk.Frame(frame)
         url_row.pack(fill="x", pady=(4, 10))
         self.url_text = self._make_text(url_row, height=2)
