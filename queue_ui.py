@@ -8,6 +8,7 @@ from audio_library import AUDIO_AUTO_BITRATE, bitrate_from_options, is_audio_for
 from download_control import DownloadCancelled, DownloadControl
 from download_queue import ACTIVE, LABELS, RUNNABLE, queue_summary
 from queue_service import discover, run_queue
+from ui_layout import add_tooltip
 
 
 def queue_options_compatible(current: dict, saved: dict) -> bool:
@@ -112,13 +113,15 @@ class QueueUI:
         )
         self.remove_completed_button.pack(side="right", padx=(0, 6))
         self.play_completed_button = ttk.Button(
-            actions, text="▶ Reproduzir", command=lambda: self.play_selected_music(completed=True),
+            actions, text="▶", width=3, command=lambda: self.play_selected_music(completed=True),
         )
         self.play_completed_button.pack(side="left")
         self.stop_completed_button = ttk.Button(
-            actions, text="⏹ Parar", command=self.stop_music,
+            actions, text="■", width=3, command=self.stop_music,
         )
         self.stop_completed_button.pack(side="left", padx=(6, 0))
+        add_tooltip(self.play_completed_button, "Reproduzir ou pausar")
+        add_tooltip(self.stop_completed_button, "Parar a reprodução")
         self.edit_completed_button = ttk.Button(
             actions, text="Editar metadados", command=lambda: self.edit_selected_music_metadata(completed=True),
         )
@@ -276,11 +279,50 @@ class QueueUI:
             self.cover_completed_button.configure(state=idle_state if music_selected else "disabled")
             self.open_folder_button.configure(state=idle_state if selected_item else "disabled")
         if self.queue_running and not self.active_queue_id:
-            self.progress.configure(mode="determinate", value=summary["overall"])
+            self.progress.configure(mode="determinate")
+            self.progress_value_var.set(summary["overall"])
         if not self.busy:
             self.download_button.configure(text="Continuar fila" if active_items else "Baixar")
+            for button in getattr(self, "context_download_buttons", []):
+                button.configure(text="Continuar" if active_items else "Baixar")
+        self._refresh_context_queues(active_items)
         self._show_episode_details()
         self._show_completed_details()
+
+    def _refresh_context_queues(self, active_items):
+        trees = getattr(self, "context_queue_trees", {})
+        queue_mode = "video"
+        if self.queue_repository is not None:
+            queue_mode = str(
+                self.queue_repository.snapshot().get("options", {}).get("work_mode") or "video"
+            )
+        for mode, tree in trees.items():
+            relevant = [
+                item for item in active_items
+                if (
+                    item.get("kind") in {"deezer_preview", "deezer_full"}
+                    or (item.get("kind") == "unresolved" and queue_mode == "music")
+                ) == (mode == "music")
+            ]
+            existing = set(tree.get_children())
+            for item in relevant:
+                values = (item.get("title") or "Mídia", LABELS[item["status"]])
+                if item["id"] in existing:
+                    tree.item(item["id"], values=values)
+                    existing.remove(item["id"])
+                else:
+                    tree.insert("", END, iid=item["id"], values=values)
+            for item_id in existing:
+                tree.delete(item_id)
+            enabled = sum(bool(item.get("enabled")) for item in relevant)
+            count = getattr(self, "context_queue_counts", {}).get(mode)
+            if count is not None:
+                count.configure(
+                    text=(
+                        f"{len(relevant)} item(ns) • {enabled} marcado(s)"
+                        if relevant else "Nenhum item nesta fila."
+                    )
+                )
 
     def _show_episode_details(self, _event=None):
         selected = self.episode_tree.selection()
@@ -550,6 +592,12 @@ class QueueUI:
         self.remove_queue_button.configure(state=state)
         self.clear_completed_button.configure(state=state)
         self.remove_completed_button.configure(state=state)
+        for button in getattr(self, "context_download_buttons", []):
+            button.configure(state=state)
+        for button in getattr(self, "context_pause_buttons", []):
+            button.configure(state="normal" if busy else "disabled", text="⏸")
+        for button in getattr(self, "context_stop_buttons", []):
+            button.configure(state="normal" if busy else "disabled")
 
     def _queue_prepared(self, auto_start):
         try:
@@ -558,10 +606,9 @@ class QueueUI:
             auto_start = False
         self._set_queue_busy(False)
         self.progress.stop()
-        self.progress.configure(mode="determinate", value=0)
+        self.progress.configure(mode="determinate")
+        self.progress_value_var.set(0)
         self._refresh_queue()
-        if hasattr(self, "queue_page") and hasattr(self, "tabs"):
-            self.tabs.select(self.queue_page)
         self.download_item_var.set("Selecione os itens e clique em Continuar fila")
         self.download_metrics_var.set("A lista e as seleções são salvas automaticamente.")
         if getattr(self, "work_mode", "video") == "music":

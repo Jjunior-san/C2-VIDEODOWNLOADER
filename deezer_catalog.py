@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from dataclasses import dataclass
 from urllib.parse import quote, urlparse
 
@@ -26,6 +27,21 @@ DEEZER_PAGE_HOSTS = {"deezer.com", "www.deezer.com"}
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 MAX_TRACKS = 1000
 MAX_SEARCH_RESULTS = 50
+_HTTP_LOCAL = threading.local()
+
+
+def _http_session() -> requests.Session:
+    """Reuse HTTP connections inside the persistent catalog workers."""
+    session = getattr(_HTTP_LOCAL, "session", None)
+    if session is None:
+        session = requests.Session()
+        session.headers.update({
+            "Accept": "application/json,text/plain,*/*",
+            "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+            "User-Agent": USER_AGENT,
+        })
+        _HTTP_LOCAL.session = session
+    return session
 
 
 class DeezerCatalogError(RuntimeError):
@@ -102,14 +118,9 @@ def _api_json(url: str) -> dict:
         raise DeezerCatalogError("A consulta tentou acessar um endereço não autorizado.")
 
     try:
-        response = requests.get(
+        response = _http_session().get(
             url,
-            headers={
-                "Accept": "application/json,text/plain,*/*",
-                "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-                "User-Agent": USER_AGENT,
-            },
-            timeout=20,
+            timeout=(5, 12),
         )
         response.raise_for_status()
     except requests.RequestException as exc:

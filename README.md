@@ -250,6 +250,17 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
+## Versão 1.9.0 — área de trabalho contextual e pesquisa mais rápida
+
+- mantém duas conexões de catálogo reutilizáveis e cacheia pesquisas Deezer por 10 minutos;
+- reduz a espera antes da pesquisa e informa o tempo da consulta;
+- mostra a fila e o progresso diretamente nas abas Música e Vídeo;
+- mantém a aba atual depois de listar as mídias; a aba Fila passa a ser uma visão geral;
+- substitui os textos dos controles do player por ícones com dicas ao passar o mouse;
+- move as opções secundárias para uma janela compacta aberta pela engrenagem;
+- permite salvar ou cancelar as alterações feitas na janela de configurações;
+- torna as abas Música e Vídeo roláveis para preservar os controles em telas pequenas.
+
 ## Versão 1.8.3 — conclusão confiável da atualização interna
 
 - corrige a atualização que instalava silenciosamente, mas não reabria o programa;

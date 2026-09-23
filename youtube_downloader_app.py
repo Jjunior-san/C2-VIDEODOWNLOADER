@@ -12,7 +12,7 @@ import uuid
 import webbrowser
 from datetime import datetime
 from pathlib import Path
-from tkinter import BooleanVar, END, StringVar, Tk, Toplevel, filedialog, messagebox
+from tkinter import BooleanVar, DoubleVar, END, StringVar, Tk, Toplevel, filedialog, messagebox
 from tkinter import ttk
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
@@ -33,7 +33,14 @@ from audio_library import (
 )
 from deezer_catalog import DeezerSearchResult, resolve_deezer_track, search_deezer_catalog
 from download_control import DownloadCancelled, DownloadControl
-from ui_layout import ScrollablePage, build_brand, configure_fonts, fit_window, wrapping_label
+from ui_layout import (
+    ScrollablePage,
+    add_tooltip,
+    build_brand,
+    configure_fonts,
+    fit_window,
+    wrapping_label,
+)
 from download_queue import QueueRepository, queue_summary
 from queue_ui import QueueUI
 from queue_service import cookie_arguments
@@ -421,6 +428,18 @@ class DownloadApp(QueueUI):
         self._music_search_after = None
         self._music_search_generation = 0
         self._music_search_results = []
+        self._music_search_cache: dict[tuple[str, str], tuple[float, tuple]] = {}
+        self._music_search_tasks = queue.Queue()
+        self._music_search_shutdown = threading.Event()
+        self._music_search_workers = []
+        for index in range(2):
+            worker = threading.Thread(
+                target=self._music_search_worker_loop,
+                name=f"c2-deezer-search-{index + 1}",
+                daemon=True,
+            )
+            worker.start()
+            self._music_search_workers.append(worker)
         self._catalog_cover_image = None
         self._catalog_cover_key = None
         self._playing_item_id = None
@@ -435,6 +454,12 @@ class DownloadApp(QueueUI):
         self.download_metrics_var = StringVar(
             value="Aguardando início do download."
         )
+        self.progress_value_var = DoubleVar(value=0.0)
+        self.context_queue_trees = {}
+        self.context_queue_counts = {}
+        self.context_download_buttons = []
+        self.context_pause_buttons = []
+        self.context_stop_buttons = []
 
         self.busy = False
         self.maintenance_busy = False
@@ -479,6 +504,7 @@ class DownloadApp(QueueUI):
             self.queue_count.configure(text="Não foi possível abrir a fila salva. Consulte a aba Atividade.")
             self.queue_log(f"Fila preservada em {QUEUE_FILE}. Erro ao ler/gravar: {queue_error}")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.bind("<Destroy>", self._on_root_destroy, add="+")
         self._poll_queues()
         self.root.after(700, self.start_maintenance)
 
@@ -499,26 +525,44 @@ class DownloadApp(QueueUI):
             font=(self.display_family, 15, "bold"),
             foreground="#172b4d",
         ).pack(side="left")
+        self.settings_button = ttk.Button(
+            header,
+            text="⚙",
+            width=3,
+            command=self._open_settings,
+        )
+        self.settings_button.pack(side="right")
+        add_tooltip(self.settings_button, "Configurações")
 
         self.tabs = ttk.Notebook(shell)
         self.tabs.pack(fill="both", expand=True)
 
-        self.music_page = ttk.Frame(self.tabs, padding=10)
-        self.video_page = ttk.Frame(self.tabs, padding=10)
+        self.music_page = ScrollablePage(self.tabs)
+        self.video_page = ScrollablePage(self.tabs)
         self.queue_page = ttk.Frame(self.tabs, padding=10)
         self.completed_page = ttk.Frame(self.tabs, padding=10)
-        self.settings_page = ScrollablePage(self.tabs)
         self.activity_page = ttk.Frame(self.tabs, padding=10)
+
+        self.settings_dialog = Toplevel(self.root)
+        self.settings_dialog.withdraw()
+        self.settings_dialog.title("Configurações")
+        self.settings_dialog.transient(self.root)
+        self.settings_dialog.protocol("WM_DELETE_WINDOW", lambda: self._close_settings(False))
+        fit_window(self.settings_dialog, max_width=820, max_height=720)
+        self.settings_page = ScrollablePage(self.settings_dialog)
+        self.settings_page.pack(fill="both", expand=True)
 
         self.tabs.add(self.music_page, text="  Música  ")
         self.tabs.add(self.video_page, text="  Vídeo  ")
-        self.tabs.add(self.queue_page, text="  Fila  ")
+        self.tabs.add(self.queue_page, text="  Fila geral  ")
         self.tabs.add(self.completed_page, text="  Concluídos  ")
-        self.tabs.add(self.settings_page, text="  Configurações  ")
         self.tabs.add(self.activity_page, text="  Atividade  ")
 
+        music = self.music_page.body
+        video = self.video_page.body
+
         # Música: pesquisa instantânea e resultados sem precisar de botão Buscar.
-        search_frame = ttk.LabelFrame(self.music_page, text="Pesquisar na Deezer", padding=10)
+        search_frame = ttk.LabelFrame(music, text="Pesquisar na Deezer", padding=10)
         search_frame.pack(fill="x", pady=(0, 8))
         search_row = ttk.Frame(search_frame)
         search_row.pack(fill="x")
@@ -541,7 +585,7 @@ class DownloadApp(QueueUI):
             foreground="#596579",
         ).pack(anchor="w", pady=(6, 0))
 
-        result_area = ttk.Panedwindow(self.music_page, orient="horizontal")
+        result_area = ttk.Panedwindow(music, orient="horizontal")
         result_area.pack(fill="both", expand=True, pady=(0, 8))
 
         result_list = ttk.Frame(result_area)
@@ -625,18 +669,22 @@ class DownloadApp(QueueUI):
         self.catalog_download_button.pack(side="left", padx=(6, 0))
         self.catalog_play_button = ttk.Button(
             result_buttons,
-            text="▶ Reproduzir prévia",
+            text="▶",
+            width=3,
             command=self._toggle_catalog_playback,
             state="disabled",
         )
         self.catalog_play_button.pack(side="left", padx=(6, 0))
         self.catalog_stop_button = ttk.Button(
             result_buttons,
-            text="⏹ Parar",
+            text="■",
+            width=3,
             command=self.stop_music,
             state="disabled",
         )
         self.catalog_stop_button.pack(side="left", padx=(6, 0))
+        add_tooltip(self.catalog_play_button, "Reproduzir ou pausar a prévia")
+        add_tooltip(self.catalog_stop_button, "Parar a reprodução")
         self.catalog_open_button = ttk.Button(
             result_buttons,
             text="Abrir no Deezer",
@@ -645,7 +693,7 @@ class DownloadApp(QueueUI):
         )
         self.catalog_open_button.pack(side="left", padx=(6, 0))
 
-        options = ttk.LabelFrame(self.music_page, text="Download e organização", padding=8)
+        options = ttk.LabelFrame(music, text="Download e organização", padding=8)
         options.pack(fill="x")
         options.columnconfigure(1, weight=1)
         options.columnconfigure(5, weight=1)
@@ -682,9 +730,10 @@ class DownloadApp(QueueUI):
             text="Carregar todas as faixas ao abrir artista, álbum ou playlist",
             variable=self.playlist_var,
         ).grid(row=2, column=0, columnspan=7, sticky="w", pady=(4, 0))
+        self._build_context_queue(music, "music")
 
         # Vídeo: entrada e opções em uma tela própria.
-        video_input = ttk.LabelFrame(self.video_page, text="Links de vídeo / playlists", padding=10)
+        video_input = ttk.LabelFrame(video, text="Links de vídeo / playlists", padding=10)
         video_input.pack(fill="x", pady=(0, 8))
         self.video_url_text = self._make_text(video_input, height=3)
         self.video_url_text.pack(fill="both", expand=True)
@@ -697,7 +746,7 @@ class DownloadApp(QueueUI):
         self.video_url_text.bind("<<Paste>>", lambda e: self.root.after(100, self._schedule_video_preview_check))
 
         # Card de prévia automática de vídeo
-        self.video_preview_frame = ttk.LabelFrame(self.video_page, text="Prévia do vídeo", padding=8)
+        self.video_preview_frame = ttk.LabelFrame(video, text="Prévia do vídeo", padding=8)
         self.video_preview_frame.pack(fill="x", pady=(0, 8))
         video_cover_box = ttk.Frame(self.video_preview_frame)
         video_cover_box.pack(side="left", anchor="n", padx=(0, 12))
@@ -723,7 +772,7 @@ class DownloadApp(QueueUI):
             foreground="#596579",
         )
 
-        video_options = ttk.LabelFrame(self.video_page, text="Opções", padding=8)
+        video_options = ttk.LabelFrame(video, text="Opções", padding=8)
         video_options.pack(fill="x")
         video_options.columnconfigure(1, weight=1)
         ttk.Label(video_options, text="Pasta:").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=3)
@@ -758,6 +807,7 @@ class DownloadApp(QueueUI):
             text="Baixar",
             command=self.start_download,
         ).pack(side="left", padx=(6, 0))
+        self._build_context_queue(video, "video")
 
         # Fila em aba própria: elimina a maior parte do scroll da tela de trabalho.
         self._build_episode_list(self.queue_page)
@@ -777,7 +827,12 @@ class DownloadApp(QueueUI):
             textvariable=self.download_item_var,
             font=(self.text_family, 10, "bold"),
         )
-        self.progress = ttk.Progressbar(progress_frame, mode="determinate", maximum=100, value=0)
+        self.progress = ttk.Progressbar(
+            progress_frame,
+            mode="determinate",
+            maximum=100,
+            variable=self.progress_value_var,
+        )
         self.progress.pack(fill="x", pady=(0, 6))
         wrapping_label(progress_frame, textvariable=self.download_metrics_var, foreground="#3f4f5f")
 
@@ -865,7 +920,6 @@ class DownloadApp(QueueUI):
             deezer_frame,
             text="Compactar álbum / playlist em arquivo .ZIP ao concluir",
             variable=self.create_zip_var,
-            command=self._save_preferences,
         )
         zip_check.pack(anchor="w", pady=(2, 6))
 
@@ -890,6 +944,19 @@ class DownloadApp(QueueUI):
         )
         self.update_button.pack(anchor="w", pady=(0, 10))
 
+        settings_actions = ttk.Frame(settings)
+        settings_actions.pack(fill="x", pady=(0, 8))
+        ttk.Button(
+            settings_actions,
+            text="Cancelar",
+            command=lambda: self._close_settings(False),
+        ).pack(side="right")
+        ttk.Button(
+            settings_actions,
+            text="Salvar configurações",
+            command=lambda: self._close_settings(True),
+        ).pack(side="right", padx=(0, 8))
+
         activity = self.activity_page
         ttk.Button(activity, text="Limpar atividade", command=self.clear_log).pack(anchor="e", pady=(0, 8))
         log_frame = ttk.Frame(activity)
@@ -900,7 +967,7 @@ class DownloadApp(QueueUI):
         scrollbar.pack(side="right", fill="y")
         self.log.configure(yscrollcommand=scrollbar.set, state="disabled")
 
-        self._build_music_details(self.music_page)
+        self._build_music_details(music)
         self._apply_work_mode(self.work_mode, initial=True)
         self.tabs.select(self.music_page if self.work_mode == "music" else self.video_page)
         self.tabs.bind("<<NotebookTabChanged>>", self._on_main_tab_changed)
@@ -917,6 +984,114 @@ class DownloadApp(QueueUI):
         self._update_audio_controls()
         if self.deezer_arl_var.get().strip():
             self.root.after(400, lambda: self._check_deezer_arl(show_dialog=False))
+
+    def _build_context_queue(self, parent, mode: str) -> None:
+        title = "Fila de músicas" if mode == "music" else "Fila de vídeos"
+        frame = ttk.LabelFrame(parent, text=title, padding=8)
+        frame.pack(fill="x", pady=(8, 0))
+
+        count = ttk.Label(frame, text="Nenhum item nesta fila.", foreground="#596579")
+        count.pack(anchor="w", pady=(0, 4))
+        self.context_queue_counts[mode] = count
+
+        table = ttk.Frame(frame)
+        table.pack(fill="x")
+        tree = ttk.Treeview(
+            table,
+            columns=("title", "status"),
+            show="headings",
+            height=3,
+            selectmode="browse",
+        )
+        tree.heading("title", text="Mídia")
+        tree.heading("status", text="Situação")
+        tree.column("title", width=430, minwidth=150, stretch=True, anchor="w")
+        tree.column("status", width=130, minwidth=95, stretch=False, anchor="center")
+        tree.grid(row=0, column=0, sticky="ew")
+        table.columnconfigure(0, weight=1)
+        ybar = ttk.Scrollbar(table, orient="vertical", command=tree.yview)
+        ybar.grid(row=0, column=1, sticky="ns")
+        tree.configure(yscrollcommand=ybar.set)
+        tree.bind(
+            "<<TreeviewSelect>>",
+            lambda _event, selected_mode=mode: self._select_context_queue_item(selected_mode),
+        )
+        self.context_queue_trees[mode] = tree
+
+        progress = ttk.Progressbar(
+            frame,
+            mode="determinate",
+            maximum=100,
+            variable=self.progress_value_var,
+        )
+        progress.pack(fill="x", pady=(6, 3))
+        item_label = wrapping_label(
+            frame,
+            textvariable=self.download_item_var,
+            font=(self.text_family, 9, "bold"),
+        )
+        metrics_label = wrapping_label(
+            frame,
+            textvariable=self.download_metrics_var,
+            foreground="#596579",
+        )
+        progress.pack_configure(before=table)
+        item_label.pack_configure(before=table)
+        metrics_label.pack_configure(before=table)
+
+        actions = ttk.Frame(frame)
+        actions.pack(fill="x")
+        download = ttk.Button(actions, text="Baixar / Continuar", command=self.start_download)
+        download.pack(side="left")
+        pause = ttk.Button(actions, text="⏸", width=3, command=self.toggle_pause, state="disabled")
+        pause.pack(side="left", padx=(6, 0))
+        stop = ttk.Button(actions, text="■", width=3, command=self.stop_queue, state="disabled")
+        stop.pack(side="left", padx=(4, 0))
+        ttk.Button(
+            actions,
+            text="Ver fila geral",
+            command=lambda: self.tabs.select(self.queue_page),
+        ).pack(side="right")
+        add_tooltip(pause, "Pausar ou continuar o download")
+        add_tooltip(stop, "Parar a fila mantendo os arquivos parciais")
+        self.context_download_buttons.append(download)
+        self.context_pause_buttons.append(pause)
+        self.context_stop_buttons.append(stop)
+
+    def _select_context_queue_item(self, mode: str) -> None:
+        tree = self.context_queue_trees.get(mode)
+        if tree is None or not tree.selection():
+            return
+        item_id = tree.selection()[0]
+        if self.episode_tree.exists(item_id):
+            self.episode_tree.selection_set(item_id)
+            self.episode_tree.focus(item_id)
+            self._show_episode_details()
+
+    def _settings_variables(self) -> dict[str, object]:
+        names = (
+            "fragments_var", "cookies_browser_var", "cookies_file_var",
+            "deezer_arl_var", "deezer_quality_var", "create_zip_var",
+            "audio_bitrate_mode_var", "audio_custom_bitrate_var",
+            "playlist_var", "music_structure_var", "music_filename_var",
+        )
+        return {name: getattr(self, name).get() for name in names}
+
+    def _open_settings(self) -> None:
+        self._settings_snapshot = self._settings_variables()
+        self.settings_dialog.deiconify()
+        self.settings_dialog.lift()
+        self.settings_dialog.focus_force()
+
+    def _close_settings(self, save: bool) -> None:
+        if save:
+            self._save_preferences()
+            self.queue_log("Configurações salvas.")
+        else:
+            for name, value in getattr(self, "_settings_snapshot", {}).items():
+                getattr(self, name).set(value)
+            self._update_audio_controls()
+        self.settings_dialog.withdraw()
 
     def _build_audio_controls(self, parent, *, row: int, column: int) -> None:
         holder = ttk.Frame(parent)
@@ -1154,7 +1329,7 @@ class DownloadApp(QueueUI):
         self.catalog_load_button.configure(state="disabled")
         if hasattr(self, "catalog_download_button"):
             self.catalog_download_button.configure(state="disabled")
-        self.catalog_play_button.configure(state="disabled", text="▶ Reproduzir prévia")
+        self.catalog_play_button.configure(state="disabled", text="▶")
         if hasattr(self, "catalog_stop_button"):
             self.catalog_stop_button.configure(state="disabled")
         self.catalog_open_button.configure(state="disabled")
@@ -1188,7 +1363,7 @@ class DownloadApp(QueueUI):
             return
 
         self.music_search_status_var.set("Pesquisando...")
-        self._music_search_after = self.root.after(350, self._start_music_search)
+        self._music_search_after = self.root.after(250, self._start_music_search)
 
     def _start_music_search(self) -> None:
         self._music_search_after = None
@@ -1205,15 +1380,34 @@ class DownloadApp(QueueUI):
         kind = kind_map.get(self.music_search_type_var.get(), "track")
         self._music_search_generation += 1
         generation = self._music_search_generation
+        cache_key = (kind, query.casefold())
+        cached = self._music_search_cache.get(cache_key)
+        if cached and time.monotonic() - cached[0] < 600:
+            self.event_queue.put(("music_search_results", {
+                "generation": generation,
+                "query": query,
+                "results": cached[1],
+                "error": "",
+                "cached": True,
+                "elapsed": 0.0,
+            }))
+            return
+
+        started = time.monotonic()
 
         def worker():
+            if generation != self._music_search_generation:
+                return
             try:
-                results = search_deezer_catalog(query, kind=kind, limit=20)
+                results = search_deezer_catalog(query, kind=kind, limit=15)
+                self._music_search_cache[cache_key] = (time.monotonic(), results)
                 self.event_queue.put(("music_search_results", {
                     "generation": generation,
                     "query": query,
                     "results": results,
                     "error": "",
+                    "cached": False,
+                    "elapsed": time.monotonic() - started,
                 }))
             except Exception as exc:
                 self.event_queue.put(("music_search_results", {
@@ -1221,9 +1415,25 @@ class DownloadApp(QueueUI):
                     "query": query,
                     "results": (),
                     "error": str(exc),
+                    "cached": False,
+                    "elapsed": time.monotonic() - started,
                 }))
 
-        threading.Thread(target=worker, daemon=True).start()
+        self._music_search_tasks.put(worker)
+
+    def _music_search_worker_loop(self) -> None:
+        while not self._music_search_shutdown.is_set():
+            try:
+                task = self._music_search_tasks.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            if task is None:
+                self._music_search_tasks.task_done()
+                return
+            try:
+                task()
+            finally:
+                self._music_search_tasks.task_done()
 
     def _handle_music_search_results(self, payload: object) -> None:
         if not isinstance(payload, dict):
@@ -1249,8 +1459,10 @@ class DownloadApp(QueueUI):
                 values=(result.kind_label, result.title, result.subtitle),
             )
         count = len(results)
+        elapsed = float(payload.get("elapsed") or 0.0)
+        source = "cache" if payload.get("cached") else f"{elapsed:.1f}s".replace(".", ",")
         self.music_search_status_var.set(
-            f"{count} resultado(s). Selecione ou dê duplo clique para carregar."
+            f"{count} resultado(s) • {source}. Selecione ou dê duplo clique para carregar."
             if count
             else "Nenhum resultado encontrado."
         )
@@ -1277,7 +1489,7 @@ class DownloadApp(QueueUI):
         if result is None:
             self.catalog_load_button.configure(state="disabled")
             self.catalog_download_button.configure(state="disabled")
-            self.catalog_play_button.configure(state="disabled", text="▶ Reproduzir prévia")
+            self.catalog_play_button.configure(state="disabled", text="▶")
             if hasattr(self, "catalog_stop_button"):
                 self.catalog_stop_button.configure(state="disabled")
             self.catalog_open_button.configure(state="disabled")
@@ -1294,7 +1506,7 @@ class DownloadApp(QueueUI):
         is_playing = is_current and self.music_player.is_playing()
         self.catalog_play_button.configure(
             state="normal" if result.kind == "track" else "disabled",
-            text="⏸ Pausar prévia" if is_playing else "▶ Reproduzir prévia",
+            text="⏸" if is_playing else "▶",
         )
         if hasattr(self, "catalog_stop_button"):
             can_stop = self.music_player.is_active() or result.kind == "track"
@@ -1381,10 +1593,16 @@ class DownloadApp(QueueUI):
         wrapping_label(info, textvariable=self.music_extra_var, foreground="#596579")
         buttons = ttk.Frame(info)
         buttons.pack(fill="x", pady=(8, 0))
-        self.music_play_button = ttk.Button(buttons, text="▶ Reproduzir", command=self.play_selected_music)
+        self.music_play_button = ttk.Button(
+            buttons, text="▶", width=3, command=self.play_selected_music,
+        )
         self.music_play_button.pack(side="left")
-        self.music_stop_button = ttk.Button(buttons, text="⏹ Parar", command=self.stop_music)
+        self.music_stop_button = ttk.Button(
+            buttons, text="■", width=3, command=self.stop_music,
+        )
         self.music_stop_button.pack(side="left", padx=(6, 0))
+        add_tooltip(self.music_play_button, "Reproduzir ou pausar")
+        add_tooltip(self.music_stop_button, "Parar a reprodução")
         ttk.Button(buttons, text="Abrir no Deezer", command=self.open_selected_in_deezer).pack(side="left", padx=(6, 0))
         ttk.Button(buttons, text="Editar metadados", command=self.edit_selected_music_metadata).pack(side="left", padx=(6, 0))
         ttk.Button(buttons, text="Alterar capa", command=self.change_selected_music_cover).pack(side="left", padx=(6, 0))
@@ -1554,15 +1772,15 @@ class DownloadApp(QueueUI):
         cat_active = getattr(self, "_catalog_playing_active", False)
         if hasattr(self, "music_play_button"):
             self.music_play_button.configure(
-                text="⏸ Pausar" if (is_playing and not cat_active) else "▶ Reproduzir"
+                text="⏸" if (is_playing and not cat_active) else "▶"
             )
         if hasattr(self, "play_completed_button"):
             self.play_completed_button.configure(
-                text="⏸ Pausar" if (is_playing and not cat_active) else "▶ Reproduzir"
+                text="⏸" if (is_playing and not cat_active) else "▶"
             )
         if hasattr(self, "catalog_play_button"):
             self.catalog_play_button.configure(
-                text="⏸ Pausar prévia" if (is_playing and cat_active) else "▶ Reproduzir prévia"
+                text="⏸" if (is_playing and cat_active) else "▶"
             )
         if hasattr(self, "catalog_stop_button"):
             res = self._selected_catalog_result() if hasattr(self, "_selected_catalog_result") else None
@@ -1736,7 +1954,19 @@ class DownloadApp(QueueUI):
                 messagebox.showerror(APP_NAME, f"Não foi possível interromper o trabalho: {exc}")
                 return
         self._save_preferences()
+        self._stop_music_search_workers()
         self.root.destroy()
+
+    def _stop_music_search_workers(self) -> None:
+        if self._music_search_shutdown.is_set():
+            return
+        self._music_search_shutdown.set()
+        for _worker in self._music_search_workers:
+            self._music_search_tasks.put(None)
+
+    def _on_root_destroy(self, event) -> None:
+        if event.widget == self.root:
+            self._stop_music_search_workers()
 
     def toggle_pause(self) -> None:
         if not self.busy:
@@ -1745,6 +1975,8 @@ class DownloadApp(QueueUI):
             if self.download_control.paused:
                 self.download_control.resume()
                 self.pause_button.configure(text="Pausar")
+                for button in self.context_pause_buttons:
+                    button.configure(text="⏸")
                 self.download_metrics_var.set(self._metrics_before_pause)
                 self.queue_log("Continuando o trabalho do ponto em que foi pausado.")
             else:
@@ -1752,6 +1984,8 @@ class DownloadApp(QueueUI):
                 self._metrics_before_pause = self.download_metrics_var.get()
                 self._stop_progress_preserving_value()
                 self.pause_button.configure(text="Continuar")
+                for button in self.context_pause_buttons:
+                    button.configure(text="▶")
                 self.download_metrics_var.set(
                     "PAUSADO — arquivos preservados. Clique em Continuar para retomar.\n"
                     + self._metrics_before_pause
@@ -1897,15 +2131,16 @@ class DownloadApp(QueueUI):
 
     def _set_indeterminate_progress(self, label: str) -> None:
         self.progress.stop()
-        self.progress.configure(mode="indeterminate", maximum=100, value=0)
+        self.progress.configure(mode="indeterminate", maximum=100)
+        self.progress_value_var.set(0)
         self.progress.start(10)
         self.download_item_var.set(label)
         self.download_metrics_var.set("Aguarde enquanto a operação é preparada...")
 
     def _stop_progress_preserving_value(self):
-        value = self.progress["value"]
+        value = self.progress_value_var.get()
         self.progress.stop()
-        self.progress["value"] = value
+        self.progress_value_var.set(value)
 
     def _begin_download_item(self, index: int, total: int, label: str) -> None:
         self.download_control.checkpoint()
@@ -1973,9 +2208,9 @@ class DownloadApp(QueueUI):
             index = next((position for position, item in enumerate(selected, 1) if item["id"] == payload.get("queue_id")), 1)
         self.progress.stop()
         self.progress.configure(mode="determinate", maximum=100)
-        self.progress["value"] = (index - 1) * 100 / total
+        self.progress_value_var.set((index - 1) * 100 / total)
         if getattr(self, "queue_running", False):
-            self.progress["value"] = queue_summary(self.queue_items)["overall"]
+            self.progress_value_var.set(queue_summary(self.queue_items)["overall"])
         self.download_item_var.set(f"Item {index}/{total} — {label}")
         self.download_metrics_var.set("Lendo tamanho e preparando o fluxo de mídia...")
 
@@ -1997,7 +2232,7 @@ class DownloadApp(QueueUI):
                 self.episode_tree.set(item_id, "percent", f"{min(99, percent):.0f}")
         self.progress.stop()
         self.progress.configure(mode="determinate", maximum=100)
-        self.progress["value"] = overall
+        self.progress_value_var.set(overall)
 
         downloaded = float(payload.get("downloaded") or 0.0)
         total_value = payload.get("total")
@@ -2042,12 +2277,14 @@ class DownloadApp(QueueUI):
         self.download_item_var.set(str(payload.get("label") or "Finalizando mídia"))
         if percent is None:
             if not getattr(self, "queue_running", False):
-                self.progress.configure(mode="indeterminate", maximum=100, value=0)
+                self.progress.configure(mode="indeterminate", maximum=100)
+                self.progress_value_var.set(0)
                 self.progress.start(15)
             self.download_metrics_var.set("Download recebido. Finalizando o arquivo; aguarde...")
         else:
             if not getattr(self, "queue_running", False):
-                self.progress.configure(mode="determinate", maximum=100, value=float(percent))
+                self.progress.configure(mode="determinate", maximum=100)
+                self.progress_value_var.set(float(percent))
             self.download_metrics_var.set(
                 f"Finalização: {float(percent):.1f}%  •  "
                 f"Tempo restante nesta etapa: ~{format_duration(payload.get('eta'))}\n"
@@ -2077,7 +2314,7 @@ class DownloadApp(QueueUI):
                         self.update_status_var.set(f"Baixando atualização: {percentage:.0f}%")
                         self.progress.stop()
                         self.progress.configure(mode="determinate", maximum=100)
-                        self.progress["value"] = percentage
+                        self.progress_value_var.set(percentage)
                         self.download_item_var.set("Atualização do aplicativo")
                         self.download_metrics_var.set(
                             f"{percentage:.1f}%  •  {format_bytes(received)} / {format_bytes(total)}".replace(
@@ -2153,7 +2390,8 @@ class DownloadApp(QueueUI):
         self.maintenance_busy = False
         if not self.busy:
             self.progress.stop()
-            self.progress.configure(mode="determinate", value=0)
+            self.progress.configure(mode="determinate")
+            self.progress_value_var.set(0)
             self.download_item_var.set("Nenhum download em andamento")
             self.download_metrics_var.set(
                 "Progresso, velocidade, tamanho e tempo restante aparecerão aqui."
@@ -2169,7 +2407,8 @@ class DownloadApp(QueueUI):
         self.maintenance_busy = False
         if not self.busy:
             self.progress.stop()
-            self.progress.configure(mode="determinate", value=0)
+            self.progress.configure(mode="determinate")
+            self.progress_value_var.set(0)
             self.download_item_var.set("Falha ao verificar componentes")
             self.download_metrics_var.set(message)
         self.update_button.configure(state="normal")
@@ -2197,7 +2436,8 @@ class DownloadApp(QueueUI):
     def _download_application_update(self, update: AppUpdate) -> None:
         self.update_button.configure(state="disabled")
         self.progress.stop()
-        self.progress.configure(mode="determinate", maximum=100, value=0)
+        self.progress.configure(mode="determinate", maximum=100)
+        self.progress_value_var.set(0)
         self.download_item_var.set("Atualização do aplicativo")
         self.download_metrics_var.set("Preparando o download do instalador...")
         self.update_status_var.set(f"Baixando versão {update.version}...")
@@ -2565,7 +2805,7 @@ class DownloadApp(QueueUI):
         cancelled = int(payload.get("cancelled", 0)) if isinstance(payload, dict) else 0
         self.progress.configure(mode="determinate", maximum=100)
         if not failures and not stopped:
-            self.progress["value"] = 0 if completed == 0 else 100
+            self.progress_value_var.set(0 if completed == 0 else 100)
         if stopped:
             result = "Fila interrompida — clique em Continuar fila para retomar"
         elif cancelled:

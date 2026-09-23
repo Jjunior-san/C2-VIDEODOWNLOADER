@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from tkinter import Canvas, PhotoImage, font
+from tkinter import Canvas, PhotoImage, Toplevel, font
 from tkinter import ttk
 
 
@@ -49,16 +49,24 @@ def desktop_work_area(root) -> tuple[int, int, int, int]:
     return 0, 0, root.winfo_screenwidth(), root.winfo_screenheight()
 
 
-def window_dimensions(area: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+def window_dimensions(
+    area: tuple[int, int, int, int],
+    max_width: int = 1180,
+    max_height: int = 820,
+) -> tuple[int, int, int, int]:
     left, top, right, bottom = area
     # Leave room for the native title bar, resize borders and desktop margins.
-    width = min(1180, max(1, right - left - 50))
-    height = min(820, max(1, bottom - top - 80))
+    width = min(max_width, max(1, right - left - 50))
+    height = min(max_height, max(1, bottom - top - 80))
     return width, height, left + (right - left - width) // 2, top + 20
 
 
-def fit_window(root) -> None:
-    width, height, x, y = window_dimensions(desktop_work_area(root))
+def fit_window(root, *, max_width: int = 1180, max_height: int = 820) -> None:
+    width, height, x, y = window_dimensions(
+        desktop_work_area(root),
+        max_width=max_width,
+        max_height=max_height,
+    )
     root.geometry(f"{width}x{height}+{x}+{y}")
     root.minsize(min(560, width), min(420, height))
 
@@ -142,6 +150,67 @@ def wrapping_label(parent, **kwargs):
     label.pack(fill="x", pady=(0, 8))
     label.bind("<Configure>", lambda event: label.configure(wraplength=max(1, event.width)))
     return label
+
+
+class ToolTip:
+    """Small accessible hint for compact icon-only controls."""
+
+    def __init__(self, widget, text: str, delay: int = 450):
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self.pending = None
+        self.window = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _event=None):
+        self._cancel()
+        self.pending = self.widget.after(self.delay, self._show)
+
+    def _cancel(self):
+        if self.pending is not None:
+            try:
+                self.widget.after_cancel(self.pending)
+            except Exception:
+                pass
+            self.pending = None
+
+    def _show(self):
+        self.pending = None
+        if self.window is not None or not self.widget.winfo_exists():
+            return
+        self.window = Toplevel(self.widget)
+        self.window.wm_overrideredirect(True)
+        try:
+            self.window.attributes("-topmost", True)
+        except Exception:
+            pass
+        x = self.widget.winfo_rootx() + max(0, self.widget.winfo_width() // 2)
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        self.window.geometry(f"+{x}+{y}")
+        ttk.Label(
+            self.window,
+            text=self.text,
+            padding=(7, 4),
+            relief="solid",
+            borderwidth=1,
+        ).pack()
+
+    def _hide(self, _event=None):
+        self._cancel()
+        if self.window is not None:
+            try:
+                self.window.destroy()
+            except Exception:
+                pass
+            self.window = None
+
+
+def add_tooltip(widget, text: str):
+    widget._c2_tooltip = ToolTip(widget, text)
+    return widget
 
 
 def build_brand(parent, logo_path, family="Segoe UI"):

@@ -1,3 +1,4 @@
+import time
 from tkinter import TclError, Tk, Toplevel
 
 import pytest
@@ -54,7 +55,7 @@ def test_compact_window_keeps_controls_reachable(window, geometry):
     root.update()
     assert root.winfo_width() == int(geometry.split("x")[0])
     assert root.winfo_height() == int(geometry.split("x")[1])
-    assert len(instance.tabs.tabs()) == 6
+    assert len(instance.tabs.tabs()) == 5
     for page in (
         instance.music_page,
         instance.video_page,
@@ -67,8 +68,8 @@ def test_compact_window_keeps_controls_reachable(window, geometry):
         assert page.winfo_width() <= root.winfo_width()
         assert page.winfo_height() <= root.winfo_height()
 
-    instance.tabs.select(instance.settings_page)
-    root.update()
+    instance._open_settings()
+    instance.settings_dialog.update()
     page = instance.settings_page
     canvas = page.canvas
     bounds = canvas.bbox(page.window)
@@ -77,8 +78,9 @@ def test_compact_window_keeps_controls_reachable(window, geometry):
     if page.body.winfo_reqheight() > canvas.winfo_height():
         assert page.vertical.winfo_ismapped()
         canvas.yview_moveto(1)
-        root.update()
+        instance.settings_dialog.update()
         assert canvas.yview()[1] == 1
+    instance._close_settings(False)
 
     instance.tabs.select(instance.activity_page)
     root.update()
@@ -279,3 +281,74 @@ def test_queue_progress_uses_episode_count_and_preserves_fraction_during_convers
     assert float(instance.progress["value"]) == 50
     instance._handle_conversion_progress({"percent": 100})
     assert float(instance.progress["value"]) == 50
+
+
+def test_context_queues_show_only_their_media_type_and_share_progress(window):
+    from download_queue import queue_item
+
+    root, instance = window
+    music = queue_item("https://www.deezer.com/track/1", "Music", kind="deezer_preview")
+    video = queue_item("https://example.com/video", "Video", kind="video")
+    instance.queue_repository.replace([music, video], instance._capture_options(), [])
+    instance._refresh_queue()
+    instance.progress_value_var.set(37.5)
+    root.update()
+
+    assert instance.context_queue_trees["music"].get_children() == (music["id"],)
+    assert instance.context_queue_trees["video"].get_children() == (video["id"],)
+    assert float(instance.progress["value"]) == 37.5
+
+
+def test_player_uses_compact_icons_and_settings_cancel_restores_values(window):
+    _, instance = window
+    assert instance.catalog_play_button.cget("text") == "▶"
+    assert instance.catalog_stop_button.cget("text") == "■"
+    assert instance.music_play_button.cget("text") == "▶"
+    assert hasattr(instance.catalog_play_button, "_c2_tooltip")
+
+    original = instance.fragments_var.get()
+    instance._open_settings()
+    instance.fragments_var.set("1" if original != "1" else "2")
+    instance._close_settings(False)
+    assert instance.fragments_var.get() == original
+
+
+def test_recent_deezer_search_uses_memory_cache(window, monkeypatch):
+    from deezer_catalog import DeezerSearchResult
+
+    root, instance = window
+    result = DeezerSearchResult(
+        kind="track",
+        item_id="1",
+        title="Cached",
+        subtitle="Artist",
+        cover_url=None,
+        page_url="https://www.deezer.com/track/1",
+    )
+    instance.music_search_var.set("Cached Query")
+    if instance._music_search_after is not None:
+        root.after_cancel(instance._music_search_after)
+        instance._music_search_after = None
+    instance._music_search_cache[("track", "cached query")] = (time.monotonic(), (result,))
+    monkeypatch.setattr(app, "search_deezer_catalog", lambda *args, **kwargs: pytest.fail("network called"))
+
+    instance._start_music_search()
+    event, payload = instance.event_queue.get_nowait()
+
+    assert event == "music_search_results"
+    assert payload["cached"] is True
+    assert payload["results"] == (result,)
+
+
+def test_prepared_queue_stays_on_current_work_tab(window):
+    from download_queue import queue_item
+
+    root, instance = window
+    item = queue_item("https://www.deezer.com/track/1", "Music", kind="deezer_preview")
+    instance.queue_repository.replace([item], instance._capture_options(), [item["source"]])
+    instance.tabs.select(instance.music_page)
+    root.update()
+
+    instance._queue_prepared(False)
+
+    assert instance.tabs.select() == str(instance.music_page)
