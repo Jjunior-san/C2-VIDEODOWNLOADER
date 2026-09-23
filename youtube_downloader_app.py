@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import uuid
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 from tkinter import BooleanVar, END, StringVar, Tk, Toplevel, filedialog, messagebox
@@ -641,6 +642,7 @@ class DownloadApp(QueueUI):
         buttons = ttk.Frame(info)
         buttons.pack(fill="x", pady=(8, 0))
         ttk.Button(buttons, text="Reproduzir", command=self.play_selected_music).pack(side="left")
+        ttk.Button(buttons, text="Abrir no Deezer", command=self.open_selected_in_deezer).pack(side="left", padx=(6, 0))
         ttk.Button(buttons, text="Parar", command=self.stop_music).pack(side="left", padx=(6, 0))
         ttk.Button(buttons, text="Editar metadados", command=self.edit_selected_music_metadata).pack(side="left", padx=(6, 0))
         ttk.Button(buttons, text="Alterar capa", command=self.change_selected_music_cover).pack(side="left", padx=(6, 0))
@@ -729,6 +731,17 @@ class DownloadApp(QueueUI):
                 self.event_queue.put(("music_player_error", str(exc)))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def open_selected_in_deezer(self) -> None:
+        item = self._selected_music_item()
+        if not item or item.get("kind") != "deezer_preview":
+            messagebox.showinfo(APP_NAME, "Selecione uma música da Deezer.")
+            return
+        url = str(item.get("source") or "").strip()
+        if not url.startswith("https://www.deezer.com/track/"):
+            messagebox.showinfo(APP_NAME, "O link oficial desta faixa não está disponível.")
+            return
+        webbrowser.open(url)
 
     def stop_music(self) -> None:
         try:
