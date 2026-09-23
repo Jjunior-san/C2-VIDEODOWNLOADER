@@ -32,7 +32,7 @@ def test_recognizes_only_supported_public_deezer_pages():
     assert deezer_catalog.parse_deezer_url("https://deezer.com/album/302127?utm=x") == ("album", "302127")
     assert deezer_catalog.parse_deezer_url("https://www.deezer.com/playlist/123/") == ("playlist", "123")
     assert deezer_catalog.parse_deezer_url("https://evil.example/track/3135556") is None
-    assert deezer_catalog.parse_deezer_url("https://www.deezer.com/artist/27") is None
+    assert deezer_catalog.parse_deezer_url("https://www.deezer.com/artist/27") == ("artist", "27")
 
 
 def test_album_uses_public_metadata_and_filters_untrusted_preview(monkeypatch):
