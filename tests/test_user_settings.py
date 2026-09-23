@@ -27,3 +27,9 @@ def test_invalid_user_settings_returns_empty(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(app, "SETTINGS_FILE", settings_file)
 
     assert app.load_user_settings() == {}
+
+def test_music_workspace_only_offers_audio_formats():
+    assert app.MUSIC_DOWNLOAD_FORMATS
+    assert "Apenas áudio (MP3)" in app.MUSIC_DOWNLOAD_FORMATS
+    assert "Melhor MP4 compatível" not in app.MUSIC_DOWNLOAD_FORMATS
+    assert set(app.MUSIC_DOWNLOAD_FORMATS).issubset(set(app.VIDEO_DOWNLOAD_FORMATS))
