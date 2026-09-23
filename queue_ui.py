@@ -21,9 +21,9 @@ class QueueUI:
         self.queue_count = ttk.Label(parent, text="Liste as mídias para selecionar o que deseja baixar.")
         self.queue_count.pack(anchor="w", pady=(0, 4))
         table = ttk.Frame(parent)
-        table.pack(fill="both", pady=(0, 6))
+        table.pack(fill="both", expand=True, pady=(0, 6))
         columns = ("selected", "title", "quality", "status", "percent")
-        self.episode_tree = ttk.Treeview(table, columns=columns, show="headings", height=4, selectmode="extended")
+        self.episode_tree = ttk.Treeview(table, columns=columns, show="headings", height=11, selectmode="extended")
         for name, label, width in zip(columns, ("✓", "Mídia", "Qualidade", "Situação", "%"), (32, 290, 100, 112, 48)):
             self.episode_tree.heading(name, text=label)
             self.episode_tree.column(name, width=width, minwidth=width if name != "title" else 130,
@@ -158,7 +158,7 @@ class QueueUI:
             else:
                 self.url_text.insert("1.0", "\n".join(job.get("sources", [])))
             if needs_resume:
-                self.queue_log("Fila recuperada. Selecione os vídeos e clique em Continuar fila; nenhum download inicia automaticamente.")
+                self.queue_log("Fila recuperada. Selecione os itens e clique em Continuar fila; nenhum download inicia automaticamente.")
         self._refresh_queue()
 
     def _refresh_queue(self):
