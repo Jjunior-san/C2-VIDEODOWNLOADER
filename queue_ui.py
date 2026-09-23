@@ -451,6 +451,14 @@ class QueueUI:
         self._refresh_queue()
         self.download_item_var.set("Selecione os itens e clique em Continuar fila")
         self.download_metrics_var.set("A lista e as seleções são salvas automaticamente.")
+        if getattr(self, "work_mode", "video") == "music":
+            current_items = self.queue_repository.snapshot().get("items", [])
+            if current_items and all(item.get("status") == "failed" for item in current_items):
+                details = "\n".join(
+                    str(item.get("error") or "Falha ao pesquisar na Deezer.")
+                    for item in current_items[:3]
+                )
+                messagebox.showerror("Pesquisa Deezer", details)
         if auto_start:
             self._start_saved_queue()
 
