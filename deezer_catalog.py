@@ -9,13 +9,19 @@ import json
 import re
 from dataclasses import dataclass
 from urllib.parse import quote, urlparse
-from urllib.request import Request, urlopen
+
+import requests
 
 from app_config import APP_VERSION
 
 
 API_ROOT = "https://api.deezer.com"
-USER_AGENT = f"C2VideoDownloader/{APP_VERSION} (+https://github.com/Jjunior-san/C2-VIDEODOWNLOADER)"
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/153.0.0.0 Safari/537.36 "
+    f"C2VideoDownloader/{APP_VERSION}"
+)
 DEEZER_PAGE_HOSTS = {"deezer.com", "www.deezer.com"}
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 MAX_TRACKS = 1000
@@ -75,17 +81,31 @@ def _api_json(url: str) -> dict:
     parsed = urlparse(url)
     if parsed.scheme != "https" or (parsed.hostname or "").lower() != "api.deezer.com":
         raise DeezerCatalogError("A consulta tentou acessar um endereço não autorizado.")
-    request = Request(url, headers={"Accept": "application/json", "User-Agent": USER_AGENT})
+
     try:
-        with urlopen(request, timeout=20) as response:
-            raw = response.read(MAX_RESPONSE_BYTES + 1)
-    except OSError as exc:
-        raise DeezerCatalogError(f"Não foi possível consultar o catálogo da Deezer: {exc}") from exc
+        response = requests.get(
+            url,
+            headers={
+                "Accept": "application/json,text/plain,*/*",
+                "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+                "User-Agent": USER_AGENT,
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        detail = f" HTTP {status}." if status else ""
+        raise DeezerCatalogError(
+            f"Não foi possível consultar o catálogo da Deezer.{detail} {exc}"
+        ) from exc
+
+    raw = response.content
     if len(raw) > MAX_RESPONSE_BYTES:
         raise DeezerCatalogError("A resposta do catálogo excedeu o limite permitido.")
     try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        payload = response.json()
+    except (ValueError, json.JSONDecodeError) as exc:
         raise DeezerCatalogError("A Deezer retornou uma resposta inválida.") from exc
     if not isinstance(payload, dict):
         raise DeezerCatalogError("A Deezer retornou dados em formato inesperado.")
