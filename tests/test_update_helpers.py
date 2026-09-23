@@ -27,5 +27,6 @@ def test_inno_setup_reopens_app_after_automatic_update():
     script = (Path(__file__).parents[1] / "installer.iss").read_text(encoding="utf-8")
 
     assert "function IsAutomaticUpdate: Boolean;" in script
+    assert "WizardSilent or" in script
     assert 'Parameters: "--updated"' in script
     assert "Check: IsAutomaticUpdate" in script

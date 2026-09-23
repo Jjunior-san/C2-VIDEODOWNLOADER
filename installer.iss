@@ -5,7 +5,7 @@
 
 #define MyAppName "C² - Video Downloader"
 #ifndef MyAppVersion
-#define MyAppVersion "1.8.2"
+#define MyAppVersion "1.8.3"
 #endif
 #define MyAppPublisher "C2 Sistemas"
 #define MyAppURL "https://github.com/Jjunior-san/C2-VIDEODOWNLOADER"
@@ -72,5 +72,8 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Abrir {#MyAppName}"; Flags: now
 [Code]
 function IsAutomaticUpdate: Boolean;
 begin
-  Result := CompareText(ExpandConstant('{param:C2AUTOUPDATE|0}'), '1') = 0;
+  { WizardSilent mantém compatibilidade com versões antigas do atualizador que
+    ainda não enviavam C2AUTOUPDATE=1. }
+  Result := WizardSilent or
+    (CompareText(ExpandConstant('{param:C2AUTOUPDATE|0}'), '1') = 0);
 end;

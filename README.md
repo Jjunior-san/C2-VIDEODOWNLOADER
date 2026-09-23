@@ -250,10 +250,11 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
-## Versão 1.8.2 — conclusão confiável da atualização interna
+## Versão 1.8.3 — conclusão confiável da atualização interna
 
 - corrige a atualização que instalava silenciosamente, mas não reabria o programa;
 - identifica explicitamente a execução iniciada pelo atualizador no Inno Setup;
+- mantém compatibilidade com a atualização silenciosa iniciada pelas versões antigas;
 - salva as preferências antes de fechar o aplicativo para a instalação;
 - registra o processo do instalador em `installer-update.log` para diagnóstico;
 - reabre o aplicativo e confirma visualmente a versão instalada.
