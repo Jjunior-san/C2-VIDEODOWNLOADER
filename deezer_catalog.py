@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 from app_config import APP_VERSION
@@ -19,6 +19,7 @@ USER_AGENT = f"C2VideoDownloader/{APP_VERSION} (+https://github.com/Jjunior-san/
 DEEZER_PAGE_HOSTS = {"deezer.com", "www.deezer.com"}
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 MAX_TRACKS = 1000
+MAX_SEARCH_RESULTS = 50
 
 
 class DeezerCatalogError(RuntimeError):
@@ -154,6 +155,40 @@ def _paged_tracks(first_page: dict, *, album_fallback: dict | None = None) -> tu
             return tuple(tracks)
         page = _api_json(next_url)
 
+
+
+def search_deezer_tracks(query: str, limit: int = 25) -> tuple[DeezerTrack, ...]:
+    """Search the public Deezer catalog and return stable track metadata."""
+    search = str(query or "").strip()
+    if len(search) < 2:
+        raise DeezerCatalogError("Informe pelo menos dois caracteres para pesquisar na Deezer.")
+    try:
+        requested = int(limit)
+    except (TypeError, ValueError):
+        requested = 25
+    requested = max(1, min(MAX_SEARCH_RESULTS, requested))
+
+    payload = _api_json(f"{API_ROOT}/search?q={quote(search, safe='')}&limit={requested}")
+    entries = payload.get("data")
+    if not isinstance(entries, list):
+        raise DeezerCatalogError("A Deezer retornou uma pesquisa em formato inesperado.")
+
+    tracks: list[DeezerTrack] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            track = _track_from_payload(entry)
+        except DeezerCatalogError:
+            continue
+        if track.track_id in seen:
+            continue
+        seen.add(track.track_id)
+        tracks.append(track)
+        if len(tracks) >= requested:
+            break
+    return tuple(tracks)
 
 def resolve_deezer_url(url: str) -> DeezerCollection:
     parsed = parse_deezer_url(url)
