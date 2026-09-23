@@ -306,3 +306,73 @@ def test_plain_text_in_video_mode_is_not_treated_as_deezer_search(tmp_path, monk
 
     assert items[0]["kind"] == "ytdlp"
 
+@pytest.mark.parametrize(
+    "kind,endpoint,title_key",
+    [
+        ("track", "/search?q=", "title"),
+        ("artist", "/search/artist?q=", "name"),
+        ("album", "/search/album?q=", "title"),
+        ("playlist", "/search/playlist?q=", "title"),
+    ],
+)
+def test_catalog_search_supports_music_artist_album_and_playlist(monkeypatch, kind, endpoint, title_key):
+    requested = []
+
+    def fake_api(url):
+        requested.append(url)
+        if kind == "track":
+            return {"data": [{
+                "id": 1, "title": "Song",
+                "artist": {"name": "Artist"},
+                "album": {"title": "Album", "cover_medium": "https://cdn-images.dzcdn.net/cover.jpg"},
+            }]}
+        if kind == "artist":
+            return {"data": [{
+                "id": 2, "name": "Artist",
+                "picture_medium": "https://cdn-images.dzcdn.net/artist.jpg",
+            }]}
+        if kind == "album":
+            return {"data": [{
+                "id": 3, "title": "Album",
+                "artist": {"name": "Artist"},
+                "cover_medium": "https://cdn-images.dzcdn.net/album.jpg",
+            }]}
+        return {"data": [{
+            "id": 4, "title": "Playlist",
+            "user": {"name": "Owner"},
+            "picture_medium": "https://cdn-images.dzcdn.net/playlist.jpg",
+        }]}
+
+    monkeypatch.setattr(deezer_catalog, "_api_json", fake_api)
+    result = deezer_catalog.search_deezer_catalog("hello", kind=kind, limit=10)
+
+    assert len(result) == 1
+    assert result[0].kind == kind
+    assert result[0].page_url == f"https://www.deezer.com/{kind}/{result[0].item_id}"
+    assert endpoint in requested[0]
+
+
+def test_artist_url_resolves_top_tracks(monkeypatch):
+    calls = []
+
+    def fake_api(url):
+        calls.append(url)
+        if "/artist/27/top" in url:
+            return {"data": [{
+                "id": 101,
+                "title": "Top Song",
+                "artist": {"name": "Daft Punk"},
+                "album": {"title": "Album"},
+                "preview": "https://cdnt-preview.dzcdn.net/a.mp3",
+            }]}
+        if "/artist/27" in url:
+            return {"id": 27, "name": "Daft Punk"}
+        raise AssertionError(url)
+
+    monkeypatch.setattr(deezer_catalog, "_api_json", fake_api)
+    collection = deezer_catalog.resolve_deezer_url("https://www.deezer.com/artist/27")
+
+    assert collection.kind == "artist"
+    assert collection.title == "Daft Punk"
+    assert collection.tracks[0].title == "Top Song"
+
