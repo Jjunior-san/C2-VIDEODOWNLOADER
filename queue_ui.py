@@ -14,11 +14,11 @@ class QueueUI:
     def _build_episode_list(self, parent):
         controls = ttk.Frame(parent)
         controls.pack(fill="x", pady=(0, 6))
-        self.analyze_button = ttk.Button(controls, text="Listar vídeos", command=self.analyze_links)
+        self.analyze_button = ttk.Button(controls, text="Listar mídias", command=self.analyze_links)
         self.analyze_button.pack(side="left")
         ttk.Button(controls, text="Marcar todos", command=lambda: self._select_items(True)).pack(side="left", padx=4)
         ttk.Button(controls, text="Desmarcar", command=lambda: self._select_items(False)).pack(side="left")
-        self.queue_count = ttk.Label(parent, text="Liste os vídeos para selecionar os episódios.")
+        self.queue_count = ttk.Label(parent, text="Liste as mídias para selecionar o que deseja baixar.")
         self.queue_count.pack(anchor="w", pady=(0, 4))
         table = ttk.Frame(parent)
         table.pack(fill="both", pady=(0, 6))
@@ -123,7 +123,10 @@ class QueueUI:
                 self.fragments_var.set(str(options["fragments"]))
                 self.cookies_browser_var.set(options.get("cookies_browser", "Nenhum"))
                 self.cookies_file_var.set(options.get("cookies_file", ""))
-            self.url_text.insert("1.0", "\n".join(job.get("sources", [])))
+            if hasattr(self, "_set_source_text"):
+                self._set_source_text(job.get("sources", []))
+            else:
+                self.url_text.insert("1.0", "\n".join(job.get("sources", [])))
             if needs_resume:
                 self.queue_log("Fila recuperada. Selecione os vídeos e clique em Continuar fila; nenhum download inicia automaticamente.")
         self._refresh_queue()
@@ -342,7 +345,7 @@ class QueueUI:
         self._save_preferences()
         self.download_control = DownloadControl()
         self._set_queue_busy(True)
-        self._set_indeterminate_progress("Listando vídeos e episódios...")
+        self._set_indeterminate_progress("Listando mídias...")
 
         def worker():
             try:
@@ -378,7 +381,7 @@ class QueueUI:
         self.progress.stop()
         self.progress.configure(mode="determinate", value=0)
         self._refresh_queue()
-        self.download_item_var.set("Selecione os episódios e clique em Continuar fila")
+        self.download_item_var.set("Selecione os itens e clique em Continuar fila")
         self.download_metrics_var.set("A lista e as seleções são salvas automaticamente.")
         if auto_start:
             self._start_saved_queue()
