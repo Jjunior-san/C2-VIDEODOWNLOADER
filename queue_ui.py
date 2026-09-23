@@ -391,14 +391,23 @@ class QueueUI:
         self._prepare_queue(False)
 
     def _prepare_queue(self, auto_start):
+        self._prepare_sources(self._get_urls(), auto_start)
+
+    def _prepare_sources(self, sources, auto_start=False):
         if self.busy or self.queue_repository is None:
             return
-        sources = self._get_urls()
+        sources = [str(source).strip() for source in sources if str(source).strip()]
         if not sources:
-            messagebox.showwarning("Fila de downloads", "Informe pelo menos um link.")
+            messagebox.showwarning(
+                "Fila de downloads",
+                "Informe uma pesquisa, link ou mídia para continuar.",
+            )
             return
         if any(item["status"] in RUNNABLE for item in self.queue_items):
-            if not messagebox.askyesno("Fila de downloads", "Substituir a lista salva pelos links informados? Os arquivos já baixados serão preservados."):
+            if not messagebox.askyesno(
+                "Fila de downloads",
+                "Substituir a lista salva pelos novos itens? Os arquivos já baixados serão preservados.",
+            ):
                 return
         options = self._capture_options()
         try:
@@ -413,14 +422,20 @@ class QueueUI:
         self._save_preferences()
         self.download_control = DownloadControl()
         self._set_queue_busy(True)
-        self._set_indeterminate_progress("Listando mídias...")
+        self._set_indeterminate_progress("Preparando a fila...")
 
         def worker():
             try:
                 status = self.dependencies.ensure(self.queue_log, force=False)
                 self.dependency_status = status
-                items = discover(sources, options, status.yt_dlp_path, self.download_control,
-                                 self.dependencies.runtime_environment(), self.queue_log)
+                items = discover(
+                    sources,
+                    options,
+                    status.yt_dlp_path,
+                    self.download_control,
+                    self.dependencies.runtime_environment(),
+                    self.queue_log,
+                )
                 self.download_control.checkpoint()
                 self.queue_repository.replace(items, options, sources)
                 self.event_queue.put(("queue_prepared", auto_start))
@@ -449,6 +464,8 @@ class QueueUI:
         self.progress.stop()
         self.progress.configure(mode="determinate", value=0)
         self._refresh_queue()
+        if hasattr(self, "queue_page") and hasattr(self, "tabs"):
+            self.tabs.select(self.queue_page)
         self.download_item_var.set("Selecione os itens e clique em Continuar fila")
         self.download_metrics_var.set("A lista e as seleções são salvas automaticamente.")
         if getattr(self, "work_mode", "video") == "music":
