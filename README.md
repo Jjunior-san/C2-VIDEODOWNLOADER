@@ -247,7 +247,10 @@ arquivo incompleto.
 
 ## Versão 1.6.0 — pesquisa integrada no catálogo Deezer
 
-- organiza a área principal em abas de trabalho **Música** e **Vídeo**;
+- reorganiza a interface em abas principais **Música**, **Vídeo**, **Fila**, **Concluídos**, **Configurações** e **Atividade**, reduzindo a necessidade de rolagem;
+- a aba **Música** faz pesquisa instantânea enquanto digita, com atraso curto para evitar consultas excessivas;
+- permite escolher o escopo da pesquisa entre **Música**, **Artista**, **Álbum** e **Playlist**;
+- resultados aparecem imediatamente com tipo, título, artista/álbum/autor, capa e ações para carregar, reproduzir prévia quando disponível ou abrir na Deezer;
 - a aba **Música** concentra pesquisa/links da Deezer e restringe o seletor aos formatos de áudio;
 - a aba **Vídeo** mantém os fluxos de YouTube, Kanal D, JW.ORG e demais sites, incluindo extração de áudio quando desejada;
 - permite pesquisar faixas diretamente pelo campo principal usando `deezer: artista música`;
