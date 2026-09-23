@@ -9,7 +9,14 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from c2_update import CREATE_NO_WINDOW
-from audio_library import apply_deezer_metadata, bitrate_from_options, create_deezer_playlists, is_audio_format
+from audio_library import (
+    apply_deezer_metadata,
+    bitrate_from_options,
+    create_deezer_playlists,
+    is_audio_format,
+    music_output_template,
+    music_target_folder,
+)
 from deezer_catalog import is_deezer_url, resolve_deezer_track, resolve_deezer_url, search_deezer_tracks
 from download_control import DownloadCancelled, DownloadSkipped
 from download_queue import RUNNABLE, queue_item
@@ -212,6 +219,13 @@ def run_queue(owner, repository, options, engine):
             try:
                 owner._begin_download_item(ordinal, len(ids), item["title"])
                 folder = Path(options["folder"])
+                if item["kind"] == "deezer_preview":
+                    folder = music_target_folder(
+                        folder,
+                        item,
+                        str(options.get("music_structure") or "Pasta raiz"),
+                    )
+                    folder.mkdir(parents=True, exist_ok=True)
                 if item["kind"] == "jw":
                     key = item["source"]
                     if key not in jw_cache:
@@ -270,7 +284,14 @@ def run_queue(owner, repository, options, engine):
                             url = video.content_url
                             item.update(title=video.title, media_id=video.media_id)
                             repository.update(item_id, title=video.title, media_id=video.media_id)
-                        template = item.get("output_template") or filename_template(item, ordinal)
+                        if item["kind"] == "deezer_preview":
+                            template = item.get("output_template") or music_output_template(
+                                item,
+                                ordinal,
+                                str(options.get("music_filename_template") or "{faixa:02} - {titulo}"),
+                            )
+                        else:
+                            template = item.get("output_template") or filename_template(item, ordinal)
                         repository.update(item_id, output_template=template)
                         command = owner._build_command(engine, folder, effective_format, url,
                                                         output_template=template,
