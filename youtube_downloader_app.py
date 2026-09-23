@@ -390,7 +390,7 @@ class DownloadApp(QueueUI):
 
         ttk.Label(
             music_page,
-            text="Pesquise no catálogo Deezer ou cole um link de faixa, álbum ou playlist.",
+            text="Digite o nome de um artista ou música, ou cole um link da Deezer.",
         ).pack(anchor="w")
         music_row = ttk.Frame(music_page)
         music_row.pack(fill="x", pady=(4, 0))
@@ -401,7 +401,7 @@ class DownloadApp(QueueUI):
         self.music_url_text.configure(yscrollcommand=music_scroll.set)
         wrapping_label(
             music_page,
-            text="Para pesquisar, use: deezer: artista música. Links públicos da Deezer também são aceitos.",
+            text="Exemplos: Adele, Coldplay Yellow, Serhat Durmus La Câlin. Não é necessário escrever deezer:.",
             foreground="#596579",
         )
         music_org = ttk.LabelFrame(music_page, text="Organização da biblioteca", padding=8)
@@ -589,7 +589,7 @@ class DownloadApp(QueueUI):
                 self.analyze_button.configure(text="Pesquisar / listar músicas")
             if not initial:
                 self.download_item_var.set("Modo Música")
-                self.download_metrics_var.set("Pesquise na Deezer ou cole um link de música.")
+                self.download_metrics_var.set("Digite um artista ou música para pesquisar na Deezer.")
         else:
             self.url_text = self.video_url_text
             self.format_combo.configure(values=VIDEO_DOWNLOAD_FORMATS)
@@ -611,11 +611,13 @@ class DownloadApp(QueueUI):
 
     def _set_source_text(self, sources: list[str]) -> None:
         values = [str(source) for source in sources if str(source).strip()]
-        music = bool(values) and all(
+        explicit_deezer = bool(values) and all(
             value.lower().startswith("deezer:")
             or "deezer.com/" in value.lower()
             for value in values
         )
+        plain_queries = bool(values) and all("://" not in value for value in values)
+        music = explicit_deezer or (self.work_mode == "music" and plain_queries)
         mode = "music" if music else "video"
         self.work_tabs.select(0 if music else 1)
         self._apply_work_mode(mode, initial=True)
