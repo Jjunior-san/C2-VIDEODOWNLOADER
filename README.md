@@ -245,6 +245,21 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
+## Versão 1.6.0 — pesquisa integrada no catálogo Deezer
+
+- permite pesquisar faixas diretamente pelo campo principal usando `deezer: artista música`;
+- consulta somente o catálogo público oficial e transforma os resultados em itens da fila existente;
+- com **Baixar playlist/álbum** marcado, lista até 25 resultados para seleção; desmarcado, usa somente o primeiro resultado;
+- mantém metadados, capa, formatos de áudio, taxa de bits, histórico, pausa e fila persistente já existentes;
+- resultados sem prévia pública continuam visíveis como indisponíveis, sem interromper os demais;
+- não solicita cookie `arl`, não acessa mídia protegida e não realiza descriptografia.
+
+Exemplo:
+
+```text
+deezer: Serhat Durmus La Câlin
+```
+
 ## Versão 1.5.1 — formato original e taxa de bits configurável
 
 - adiciona **Áudio original (sem conversão)** para preservar o codec, o contêiner e a taxa da fonte quando disponível;
