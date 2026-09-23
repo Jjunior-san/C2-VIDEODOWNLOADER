@@ -1581,7 +1581,11 @@ class DownloadApp(QueueUI):
         enriched["queue_id"] = getattr(self, "active_queue_id", None)
         self.event_queue.put(("media_progress", enriched))
 
-    def _report_direct_progress(self, downloaded: int, total: int | None) -> None:
+    def _report_direct_progress(self, downloaded: int = 0, total: int | None = None, *args, **kwargs) -> None:
+        if "current_received" in kwargs:
+            downloaded = kwargs["current_received"]
+        if "current_total" in kwargs:
+            total = kwargs["current_total"]
         self.download_control.checkpoint()
         elapsed = max(0.001, self._download_clock() - self.download_item_started_at)
         percent = downloaded * 100 / total if total else 0.0

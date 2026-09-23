@@ -245,6 +245,11 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
+## Versão 1.7.1 — correção no retorno de progresso Deezer
+
+- corrige o encaminhamento de argumentos na emissão de progresso durante o download e decifração de faixas Deezer (`_report_direct_progress`);
+- adiciona suporte a argumentos flexíveis para evitar exceções de argumentos inesperados.
+
 ## Versão 1.7.0 — autenticação Deezer com ARL e faixas completas
 
 - adiciona seção de autenticação Deezer na aba **Configurações** com suporte a cookie `arl`;

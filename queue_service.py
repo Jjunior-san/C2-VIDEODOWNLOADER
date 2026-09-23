@@ -283,17 +283,9 @@ def run_queue(owner, repository, options, engine):
                     else:
                         owner.queue_log(f"Deezer: baixando faixa completa autenticada ({item['title']})...")
 
-                        def _deezer_progress(received, total, speed):
-                            pct = (received / total * 100) if total else 0.0
-                            owner._report_direct_progress(
-                                current_received=received,
-                                current_total=total or received,
-                                speed_bps=speed or 0.0,
-                                current_percent=pct,
-                                current_eta=((total - received) / speed) if (total and speed) else 0.0,
-                                overall_percent=pct,
-                                status_text="Baixando e decifrando Deezer...",
-                            )
+                        def _deezer_progress(received, total, speed=None):
+                            if callable(getattr(owner, "_report_direct_progress", None)):
+                                owner._report_direct_progress(received, total)
 
                         output = download_and_decrypt_track(
                             track_id=str(item.get("media_id") or ""),
