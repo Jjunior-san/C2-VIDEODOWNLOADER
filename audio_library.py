@@ -33,6 +33,8 @@ AUDIO_FORMATS = {
     "Apenas áudio (Opus)": "opus",
 }
 AUDIO_EXTENSIONS = {".m4a", ".mp3", ".opus", ".ogg", ".flac", ".wav"}
+MUSIC_FOLDER_STRUCTURES = ("Pasta raiz", "Artista", "Artista\\Álbum")
+DEFAULT_MUSIC_FILENAME = "{faixa:02} - {titulo}"
 
 
 def is_audio_format(format_choice: str) -> bool:
@@ -72,6 +74,33 @@ def _safe_name(value: str, fallback: str = "Playlist") -> str:
     return cleaned[:120] or fallback
 
 
+def music_target_folder(root: Path, item: dict, structure: str = "Pasta raiz") -> Path:
+    root = Path(root)
+    artist = _safe_name(str(item.get("artist") or "Artista desconhecido"), "Artista desconhecido")
+    album = _safe_name(str(item.get("album") or item.get("collection_title") or "Sem álbum"), "Sem álbum")
+    if structure == "Artista":
+        return root / artist
+    if structure == "Artista\\Álbum":
+        return root / artist / album
+    return root
+
+
+def music_output_template(item: dict, index: int, template: str = DEFAULT_MUSIC_FILENAME) -> str:
+    values = {
+        "faixa": int(item.get("track_number") or index or 1),
+        "titulo": str(item.get("track_title") or item.get("title") or "Música"),
+        "artista": str(item.get("artist") or "Artista desconhecido"),
+        "album": str(item.get("album") or item.get("collection_title") or "Sem álbum"),
+        "ano": str(item.get("release_year") or ""),
+        "id": str(item.get("media_id") or item.get("id") or ""),
+    }
+    try:
+        name = str(template or DEFAULT_MUSIC_FILENAME).format_map(values)
+    except (KeyError, ValueError, TypeError):
+        name = DEFAULT_MUSIC_FILENAME.format_map(values)
+    return f"{_safe_name(name, 'Música')}.%(ext)s"
+
+
 def _cover_bytes(url: str | None) -> bytes | None:
     if not url:
         return None
@@ -101,10 +130,17 @@ def _text_frame(frame_id: str, value: object) -> bytes:
     return frame_id.encode("ascii") + len(payload).to_bytes(4, "big") + b"\x00\x00" + payload
 
 
+def _image_mime(content: bytes | None) -> str:
+    if content and content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    return "image/jpeg"
+
+
 def _picture_frame(content: bytes | None) -> bytes:
     if not content:
         return b""
-    payload = b"\x00image/jpeg\x00\x03Cover\x00" + content
+    mime = _image_mime(content).encode("ascii")
+    payload = b"\x00" + mime + b"\x00\x03Cover\x00" + content
     return b"APIC" + len(payload).to_bytes(4, "big") + b"\x00\x00" + payload
 
 
@@ -148,17 +184,128 @@ def apply_deezer_metadata(path: Path, item: dict, logger=None) -> None:
     track = item.get("track_number")
     disc = item.get("disc_number")
     year = str(item.get("release_year") or "")
-    cover = _cover_bytes(item.get("cover_url"))
+    album_artist = str(item.get("album_artist") or artist)
+    cover = cover_bytes_for_item(item)
 
     frames = b"".join((
         _text_frame("TIT2", title), _text_frame("TPE1", artist),
-        _text_frame("TALB", album), _text_frame("TRCK", track),
-        _text_frame("TPOS", disc), _text_frame("TDRC", year),
-        _picture_frame(cover),
+        _text_frame("TPE2", album_artist), _text_frame("TALB", album),
+        _text_frame("TRCK", track), _text_frame("TPOS", disc),
+        _text_frame("TDRC", year), _picture_frame(cover),
     ))
     _write_mp3_metadata(path, frames)
     if logger:
         logger(f"Metadados e capa aplicados: {path.name}")
+
+
+def cover_bytes_for_item(item: dict) -> bytes | None:
+    custom = str(item.get("custom_cover_path") or "").strip()
+    if custom:
+        path = Path(custom)
+        try:
+            if path.is_file() and 0 < path.stat().st_size <= 8 * 1024 * 1024:
+                return path.read_bytes()
+        except OSError:
+            pass
+    return _cover_bytes(item.get("cover_url"))
+
+
+def read_audio_metadata(path: Path) -> dict[str, str]:
+    """Read editable tags from a local audio file using Mutagen."""
+    from mutagen import File as MutagenFile
+
+    path = Path(path)
+    audio = MutagenFile(path, easy=True)
+    if audio is None:
+        raise ValueError("Formato de áudio não reconhecido para leitura de metadados.")
+
+    result: dict[str, str] = {}
+    aliases = {
+        "track_title": ("title",),
+        "artist": ("artist",),
+        "album": ("album",),
+        "album_artist": ("albumartist",),
+        "track_number": ("tracknumber",),
+        "disc_number": ("discnumber",),
+        "release_year": ("date",),
+    }
+    for target, keys in aliases.items():
+        for key in keys:
+            value = audio.get(key)
+            if value:
+                result[target] = str(value[0])
+                break
+    return result
+
+
+def write_audio_metadata(path: Path, item: dict, *, cover_bytes: bytes | None = None) -> None:
+    """Write common editable tags to MP3/M4A/FLAC/Ogg/Opus files."""
+    from mutagen import File as MutagenFile
+    from mutagen.flac import FLAC, Picture
+    from mutagen.id3 import APIC, ID3, ID3NoHeaderError, PictureType
+    from mutagen.mp4 import MP4, MP4Cover
+
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(path)
+
+    audio = MutagenFile(path, easy=True)
+    if audio is None:
+        raise ValueError("Formato de áudio não reconhecido para edição de metadados.")
+
+    fields = {
+        "title": str(item.get("track_title") or item.get("title") or "").strip(),
+        "artist": str(item.get("artist") or "").strip(),
+        "album": str(item.get("album") or "").strip(),
+        "albumartist": str(item.get("album_artist") or item.get("artist") or "").strip(),
+        "tracknumber": str(item.get("track_number") or "").strip(),
+        "discnumber": str(item.get("disc_number") or "").strip(),
+        "date": str(item.get("release_year") or "").strip(),
+    }
+    for key, value in fields.items():
+        try:
+            if value:
+                audio[key] = [value]
+            elif key in audio:
+                del audio[key]
+        except (KeyError, TypeError):
+            # Some containers do not expose every EasyMutagen key.
+            pass
+    audio.save()
+
+    picture = cover_bytes if cover_bytes is not None else cover_bytes_for_item(item)
+    if not picture:
+        return
+
+    suffix = path.suffix.lower()
+    if suffix == ".mp3":
+        try:
+            tags = ID3(path)
+        except ID3NoHeaderError:
+            tags = ID3()
+        tags.delall("APIC")
+        tags.add(APIC(
+            encoding=3, mime=_image_mime(picture), type=PictureType.COVER_FRONT,
+            desc="Cover", data=picture,
+        ))
+        tags.save(path, v2_version=3)
+    elif suffix == ".m4a":
+        media = MP4(path)
+        if media.tags is None:
+            media.add_tags()
+        image_format = MP4Cover.FORMAT_PNG if _image_mime(picture) == "image/png" else MP4Cover.FORMAT_JPEG
+        media.tags["covr"] = [MP4Cover(picture, imageformat=image_format)]
+        media.save()
+    elif suffix == ".flac":
+        media = FLAC(path)
+        media.clear_pictures()
+        pic = Picture()
+        pic.mime = _image_mime(picture)
+        pic.type = 3
+        pic.desc = "Cover"
+        pic.data = picture
+        media.add_picture(pic)
+        media.save()
 
 
 def create_deezer_playlists(items: list[dict], folder: Path, logger=None) -> list[Path]:

@@ -245,6 +245,32 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
+## Versão 1.6.0 — pesquisa integrada no catálogo Deezer
+
+- reorganiza a interface em abas principais **Música**, **Vídeo**, **Fila**, **Concluídos**, **Configurações** e **Atividade**, reduzindo a necessidade de rolagem;
+- a aba **Música** faz pesquisa instantânea enquanto digita, com atraso curto para evitar consultas excessivas;
+- permite escolher o escopo da pesquisa entre **Música**, **Artista**, **Álbum** e **Playlist**;
+- resultados aparecem imediatamente com tipo, título, artista/álbum/autor, capa e ações para carregar, reproduzir prévia quando disponível ou abrir na Deezer;
+- a aba **Música** concentra pesquisa/links da Deezer e restringe o seletor aos formatos de áudio;
+- a aba **Vídeo** mantém os fluxos de YouTube, Kanal D, JW.ORG e demais sites, incluindo extração de áudio quando desejada;
+- permite pesquisar faixas diretamente pelo campo principal usando `deezer: artista música`;
+- consulta somente o catálogo público oficial e transforma os resultados em itens da fila existente;
+- com **Baixar playlist/álbum** marcado, lista até 25 resultados para seleção; desmarcado, usa somente o primeiro resultado;
+- mantém metadados, capa, formatos de áudio, taxa de bits, histórico, pausa e fila persistente já existentes;
+- resultados sem prévia pública continuam visíveis como indisponíveis, sem interromper os demais;
+- exibe capa, artista, álbum, faixa, disco e ano nos detalhes da música;
+- permite editar metadados e trocar a capa de arquivos concluídos;
+- reproduz arquivos locais e, antes do download, a prévia pública oficial da Deezer diretamente no aplicativo;
+- permite organizar automaticamente a biblioteca em pasta raiz, `Artista` ou `Artista\\Álbum`;
+- permite personalizar o nome do arquivo com `{faixa:02}`, `{titulo}`, `{artista}`, `{album}`, `{ano}` e `{id}`;
+- não solicita cookie `arl`, não acessa mídia protegida e não realiza descriptografia.
+
+Exemplo:
+
+```text
+deezer: Serhat Durmus La Câlin
+```
+
 ## Versão 1.5.1 — formato original e taxa de bits configurável
 
 - adiciona **Áudio original (sem conversão)** para preservar o codec, o contêiner e a taxa da fonte quando disponível;

@@ -14,16 +14,16 @@ class QueueUI:
     def _build_episode_list(self, parent):
         controls = ttk.Frame(parent)
         controls.pack(fill="x", pady=(0, 6))
-        self.analyze_button = ttk.Button(controls, text="Listar vídeos", command=self.analyze_links)
+        self.analyze_button = ttk.Button(controls, text="Listar mídias", command=self.analyze_links)
         self.analyze_button.pack(side="left")
         ttk.Button(controls, text="Marcar todos", command=lambda: self._select_items(True)).pack(side="left", padx=4)
         ttk.Button(controls, text="Desmarcar", command=lambda: self._select_items(False)).pack(side="left")
-        self.queue_count = ttk.Label(parent, text="Liste os vídeos para selecionar os episódios.")
+        self.queue_count = ttk.Label(parent, text="Liste as mídias para selecionar o que deseja baixar.")
         self.queue_count.pack(anchor="w", pady=(0, 4))
         table = ttk.Frame(parent)
-        table.pack(fill="both", pady=(0, 6))
+        table.pack(fill="both", expand=True, pady=(0, 6))
         columns = ("selected", "title", "quality", "status", "percent")
-        self.episode_tree = ttk.Treeview(table, columns=columns, show="headings", height=4, selectmode="extended")
+        self.episode_tree = ttk.Treeview(table, columns=columns, show="headings", height=11, selectmode="extended")
         for name, label, width in zip(columns, ("✓", "Mídia", "Qualidade", "Situação", "%"), (32, 290, 100, 112, 48)):
             self.episode_tree.heading(name, text=label)
             self.episode_tree.column(name, width=width, minwidth=width if name != "title" else 130,
@@ -91,6 +91,22 @@ class QueueUI:
             actions, text="Remover selecionados", command=self.remove_completed_selected,
         )
         self.remove_completed_button.pack(side="right", padx=(0, 6))
+        self.play_completed_button = ttk.Button(
+            actions, text="Reproduzir", command=lambda: self.play_selected_music(completed=True),
+        )
+        self.play_completed_button.pack(side="left")
+        self.edit_completed_button = ttk.Button(
+            actions, text="Editar metadados", command=lambda: self.edit_selected_music_metadata(completed=True),
+        )
+        self.edit_completed_button.pack(side="left", padx=(6, 0))
+        self.cover_completed_button = ttk.Button(
+            actions, text="Alterar capa", command=lambda: self.change_selected_music_cover(completed=True),
+        )
+        self.cover_completed_button.pack(side="left", padx=(6, 0))
+        self.open_folder_button = ttk.Button(
+            actions, text="Abrir pasta", command=self.open_completed_folder,
+        )
+        self.open_folder_button.pack(side="left", padx=(6, 0))
         self.completed_details = ttk.Label(
             parent, text="", width=1, wraplength=600, foreground="#596579", justify="left",
         )
@@ -107,10 +123,20 @@ class QueueUI:
             for key, value in (
                 ("audio_bitrate_mode", AUDIO_AUTO_BITRATE),
                 ("audio_custom_bitrate", "192"),
+                ("music_structure", "Artista\\Álbum"),
+                ("music_filename_template", "{faixa:02} - {titulo}"),
             ):
                 if key not in options:
                     options[key] = value
                     upgraded = True
+            if "work_mode" not in options:
+                sources = [str(source).lower() for source in job.get("sources", []) if str(source).strip()]
+                options["work_mode"] = (
+                    "music"
+                    if sources and all(source.startswith("deezer:") or "deezer.com/" in source for source in sources)
+                    else "video"
+                )
+                upgraded = True
             if upgraded:
                 self.queue_repository.replace(job["items"], options, job.get("sources", []))
             needs_resume = any(item["kind"] != "unresolved" and item["status"] in (RUNNABLE | {"failed"}) for item in job["items"])
@@ -123,9 +149,16 @@ class QueueUI:
                 self.fragments_var.set(str(options["fragments"]))
                 self.cookies_browser_var.set(options.get("cookies_browser", "Nenhum"))
                 self.cookies_file_var.set(options.get("cookies_file", ""))
-            self.url_text.insert("1.0", "\n".join(job.get("sources", [])))
+                if hasattr(self, "music_structure_var"):
+                    self.music_structure_var.set(options.get("music_structure", "Artista\\Álbum"))
+                if hasattr(self, "music_filename_var"):
+                    self.music_filename_var.set(options.get("music_filename_template", "{faixa:02} - {titulo}"))
+            if hasattr(self, "_set_source_text"):
+                self._set_source_text(job.get("sources", []))
+            else:
+                self.url_text.insert("1.0", "\n".join(job.get("sources", [])))
             if needs_resume:
-                self.queue_log("Fila recuperada. Selecione os vídeos e clique em Continuar fila; nenhum download inicia automaticamente.")
+                self.queue_log("Fila recuperada. Selecione os itens e clique em Continuar fila; nenhum download inicia automaticamente.")
         self._refresh_queue()
 
     def _refresh_queue(self):
@@ -171,6 +204,17 @@ class QueueUI:
         completed_state = idle_state if completed_items else "disabled"
         self.clear_completed_button.configure(state=completed_state)
         self.remove_completed_button.configure(state=completed_state)
+        if hasattr(self, "play_completed_button"):
+            selected_completed = self.completed_tree.selection()
+            selected_item = next(
+                (item for item in completed_items if selected_completed and item["id"] == selected_completed[0]),
+                None,
+            )
+            music_selected = bool(selected_item and selected_item.get("kind") == "deezer_preview")
+            self.play_completed_button.configure(state=idle_state if music_selected else "disabled")
+            self.edit_completed_button.configure(state=idle_state if music_selected else "disabled")
+            self.cover_completed_button.configure(state=idle_state if music_selected else "disabled")
+            self.open_folder_button.configure(state=idle_state if selected_item else "disabled")
         if self.queue_running and not self.active_queue_id:
             self.progress.configure(mode="determinate", value=summary["overall"])
         if not self.busy:
@@ -187,14 +231,29 @@ class QueueUI:
             self.episode_details.pack(fill="x", pady=(0, 4), before=self.episode_actions)
         else:
             self.episode_details.pack_forget()
+        if hasattr(self, "_show_music_item"):
+            self._show_music_item(item)
 
     def _show_completed_details(self, _event=None):
         selected = self.completed_tree.selection()
         item = next((item for item in self.queue_items if selected and item["id"] == selected[0]), None)
         files = item.get("files", []) if item else []
-        self.completed_details.configure(
-            text="Arquivos mantidos no computador:\n" + "\n".join(files) if files else "",
-        )
+        details = "Arquivos mantidos no computador:\n" + "\n".join(files) if files else ""
+        if item and item.get("kind") == "deezer_preview":
+            details = (
+                f"{item.get('track_title') or item.get('title') or 'Música'}\n"
+                f"Artista: {item.get('artist') or 'Não informado'}\n"
+                f"Álbum: {item.get('album') or 'Não informado'}\n\n"
+                + details
+            )
+        self.completed_details.configure(text=details)
+        if hasattr(self, "play_completed_button"):
+            idle_state = "normal" if not self.busy else "disabled"
+            music_selected = bool(item and item.get("kind") == "deezer_preview")
+            self.play_completed_button.configure(state=idle_state if music_selected else "disabled")
+            self.edit_completed_button.configure(state=idle_state if music_selected else "disabled")
+            self.cover_completed_button.configure(state=idle_state if music_selected else "disabled")
+            self.open_folder_button.configure(state=idle_state if item else "disabled")
 
     def remove_completed_selected(self):
         if self.busy or self.queue_repository is None:
@@ -310,24 +369,45 @@ class QueueUI:
             self.queue_log("Interrompendo. A fila e os arquivos parciais serão mantidos.")
 
     def _capture_options(self):
-        return dict(folder=self.folder_var.get().strip(), format=self.resolution_var.get(),
-                    audio_bitrate_mode=self.audio_bitrate_mode_var.get(),
-                    audio_custom_bitrate=self.audio_custom_bitrate_var.get().strip() or "192",
-                    playlist=bool(self.playlist_var.get()), fragments=int(self.fragments_var.get()),
-                    cookies_browser=self.cookies_browser_var.get(), cookies_file=self.cookies_file_var.get().strip())
+        return dict(
+            folder=self.folder_var.get().strip(),
+            format=self.resolution_var.get(),
+            audio_bitrate_mode=self.audio_bitrate_mode_var.get(),
+            audio_custom_bitrate=self.audio_custom_bitrate_var.get().strip() or "192",
+            playlist=bool(self.playlist_var.get()),
+            fragments=int(self.fragments_var.get()),
+            cookies_browser=self.cookies_browser_var.get(),
+            cookies_file=self.cookies_file_var.get().strip(),
+            work_mode=getattr(self, "work_mode", "video"),
+            music_structure=self.music_structure_var.get() if hasattr(self, "music_structure_var") else "Artista\\Álbum",
+            music_filename_template=(
+                self.music_filename_var.get().strip()
+                if hasattr(self, "music_filename_var") and self.music_filename_var.get().strip()
+                else "{faixa:02} - {titulo}"
+            ),
+        )
 
     def analyze_links(self):
         self._prepare_queue(False)
 
     def _prepare_queue(self, auto_start):
+        self._prepare_sources(self._get_urls(), auto_start)
+
+    def _prepare_sources(self, sources, auto_start=False):
         if self.busy or self.queue_repository is None:
             return
-        sources = self._get_urls()
+        sources = [str(source).strip() for source in sources if str(source).strip()]
         if not sources:
-            messagebox.showwarning("Fila de downloads", "Informe pelo menos um link.")
+            messagebox.showwarning(
+                "Fila de downloads",
+                "Informe uma pesquisa, link ou mídia para continuar.",
+            )
             return
         if any(item["status"] in RUNNABLE for item in self.queue_items):
-            if not messagebox.askyesno("Fila de downloads", "Substituir a lista salva pelos links informados? Os arquivos já baixados serão preservados."):
+            if not messagebox.askyesno(
+                "Fila de downloads",
+                "Substituir a lista salva pelos novos itens? Os arquivos já baixados serão preservados.",
+            ):
                 return
         options = self._capture_options()
         try:
@@ -342,14 +422,20 @@ class QueueUI:
         self._save_preferences()
         self.download_control = DownloadControl()
         self._set_queue_busy(True)
-        self._set_indeterminate_progress("Listando vídeos e episódios...")
+        self._set_indeterminate_progress("Preparando a fila...")
 
         def worker():
             try:
                 status = self.dependencies.ensure(self.queue_log, force=False)
                 self.dependency_status = status
-                items = discover(sources, options, status.yt_dlp_path, self.download_control,
-                                 self.dependencies.runtime_environment(), self.queue_log)
+                items = discover(
+                    sources,
+                    options,
+                    status.yt_dlp_path,
+                    self.download_control,
+                    self.dependencies.runtime_environment(),
+                    self.queue_log,
+                )
                 self.download_control.checkpoint()
                 self.queue_repository.replace(items, options, sources)
                 self.event_queue.put(("queue_prepared", auto_start))
@@ -378,8 +464,18 @@ class QueueUI:
         self.progress.stop()
         self.progress.configure(mode="determinate", value=0)
         self._refresh_queue()
-        self.download_item_var.set("Selecione os episódios e clique em Continuar fila")
+        if hasattr(self, "queue_page") and hasattr(self, "tabs"):
+            self.tabs.select(self.queue_page)
+        self.download_item_var.set("Selecione os itens e clique em Continuar fila")
         self.download_metrics_var.set("A lista e as seleções são salvas automaticamente.")
+        if getattr(self, "work_mode", "video") == "music":
+            current_items = self.queue_repository.snapshot().get("items", [])
+            if current_items and all(item.get("status") == "failed" for item in current_items):
+                details = "\n".join(
+                    str(item.get("error") or "Falha ao pesquisar na Deezer.")
+                    for item in current_items[:3]
+                )
+                messagebox.showerror("Pesquisa Deezer", details)
         if auto_start:
             self._start_saved_queue()
 

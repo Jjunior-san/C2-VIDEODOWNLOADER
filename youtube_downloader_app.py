@@ -9,9 +9,10 @@ import sys
 import threading
 import time
 import uuid
+import webbrowser
 from datetime import datetime
 from pathlib import Path
-from tkinter import BooleanVar, END, StringVar, Tk, filedialog, messagebox
+from tkinter import BooleanVar, END, StringVar, Tk, Toplevel, filedialog, messagebox
 from tkinter import ttk
 
 from app_config import APP_MUTEX, APP_NAME, APP_VERSION
@@ -20,15 +21,22 @@ from audio_library import (
     AUDIO_BITRATE_CHOICES,
     AUDIO_CUSTOM_BITRATE,
     AUDIO_ORIGINAL_FORMAT,
+    DEFAULT_MUSIC_FILENAME,
+    MUSIC_FOLDER_STRUCTURES,
     audio_codec,
+    cover_bytes_for_item,
     is_audio_format,
+    read_audio_metadata,
+    write_audio_metadata,
 )
+from deezer_catalog import DeezerSearchResult, resolve_deezer_track, search_deezer_catalog
 from download_control import DownloadCancelled, DownloadControl
 from ui_layout import ScrollablePage, build_brand, configure_fonts, fit_window, wrapping_label
 from download_queue import QueueRepository, queue_summary
 from queue_ui import QueueUI
 from queue_service import cookie_arguments
 from media_conversion import codec_arguments, duration_from_probe, run_conversion, stream_compatibility
+from music_player import MusicPlayer, MusicPlayerError
 from process_monitor import ProcessInactivityError, close_process, monitored_lines
 from c2_update import (
     ApplicationUpdater,
@@ -64,7 +72,7 @@ PROGRESS_TEMPLATE = (
     "%(progress.status)s|%(progress.filename)s"
 )
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
-DOWNLOAD_FORMATS = [
+VIDEO_DOWNLOAD_FORMATS = [
     "Melhor MP4 compatível",
     "Melhor qualidade",
     "1080p",
@@ -76,6 +84,13 @@ DOWNLOAD_FORMATS = [
     "Apenas áudio (MP3)",
     "Apenas áudio (Opus)",
 ]
+MUSIC_DOWNLOAD_FORMATS = [
+    AUDIO_ORIGINAL_FORMAT,
+    "Apenas áudio (M4A)",
+    "Apenas áudio (MP3)",
+    "Apenas áudio (Opus)",
+]
+DOWNLOAD_FORMATS = VIDEO_DOWNLOAD_FORMATS
 BROWSERS = ["Nenhum", "Chrome", "Edge", "Firefox", "Brave", "Opera", "Vivaldi"]
 DOWNLOAD_START_INACTIVITY_SECONDS = 90
 
@@ -260,7 +275,17 @@ class DownloadApp(QueueUI):
         saved_bitrate_mode = str(self.user_settings.get("audio_bitrate_mode") or AUDIO_AUTO_BITRATE)
         if saved_bitrate_mode not in AUDIO_BITRATE_CHOICES:
             saved_bitrate_mode = AUDIO_AUTO_BITRATE
+        saved_work_mode = str(self.user_settings.get("work_mode") or "video").lower()
+        if saved_work_mode not in {"music", "video"}:
+            saved_work_mode = "video"
+        saved_music_structure = str(self.user_settings.get("music_structure") or "Artista\\Álbum")
+        if saved_music_structure not in MUSIC_FOLDER_STRUCTURES:
+            saved_music_structure = "Artista\\Álbum"
+        saved_music_filename = str(
+            self.user_settings.get("music_filename_template") or DEFAULT_MUSIC_FILENAME
+        )
 
+        self.work_mode = saved_work_mode
         self.folder_var = StringVar(value=saved_folder)
         self.playlist_var = BooleanVar(value=bool(self.user_settings.get("playlist", True)))
         self.resolution_var = StringVar(value=saved_format)
@@ -271,6 +296,20 @@ class DownloadApp(QueueUI):
         self.cookies_browser_var = StringVar(value=saved_browser)
         self.cookies_file_var = StringVar()
         self.fragments_var = StringVar(value=str(fragment_count(self.user_settings.get("concurrent_fragments", 4))))
+        self.music_structure_var = StringVar(value=saved_music_structure)
+        self.music_filename_var = StringVar(value=saved_music_filename)
+        self.music_search_var = StringVar()
+        self.music_search_type_var = StringVar(
+            value=str(self.user_settings.get("music_search_type") or "Música"),
+        )
+        if self.music_search_type_var.get() not in {"Música", "Artista", "Álbum", "Playlist"}:
+            self.music_search_type_var.set("Música")
+        self.music_search_status_var = StringVar(value="Digite para pesquisar.")
+        self._music_search_after = None
+        self._music_search_generation = 0
+        self._music_search_results = []
+        self._catalog_cover_image = None
+        self._catalog_cover_key = None
         self.download_fragments = fragment_count(self.fragments_var.get())
         self.download_control = DownloadControl()
         self.update_status_var = StringVar(value="Componentes ainda não verificados")
@@ -295,6 +334,9 @@ class DownloadApp(QueueUI):
         self.queue_running = False
         self.download_options = None
         self.ffmpeg_path = FFMPEG_PATH
+        self.music_player = MusicPlayer(DATA_DIR / "preview_cache")
+        self.current_music_item_id = None
+        self._music_cover_image = None
 
         self.dependencies = DependencyManager()
         self.app_updater = ApplicationUpdater(self.dependencies)
@@ -323,81 +365,248 @@ class DownloadApp(QueueUI):
         self.root.after(700, self.start_maintenance)
 
     def _build_ui(self) -> None:
-        shell = ttk.Frame(self.root, padding=12)
+        shell = ttk.Frame(self.root, padding=10)
         shell.pack(fill="both", expand=True)
+
         header = ttk.Frame(shell)
-        header.pack(fill="x", pady=(0, 10))
+        header.pack(fill="x", pady=(0, 8))
         try:
             self._build_site_logo(header).pack(side="left", padx=(0, 12))
         except Exception as exc:
             self.queue_log(f"Aviso: não foi possível carregar a logo ({exc}).")
         ttk.Separator(header, orient="vertical").pack(side="left", fill="y", padx=(0, 12))
-        title = ttk.Label(header, text="Video Downloader", font=(self.display_family, 15, "bold"),
-                          width=1, foreground="#172b4d", wraplength=300)
-        title.pack(side="left", fill="x", expand=True)
-        title.bind("<Configure>", lambda event: title.configure(wraplength=max(1, event.width)))
+        ttk.Label(
+            header,
+            text="C² Downloader",
+            font=(self.display_family, 15, "bold"),
+            foreground="#172b4d",
+        ).pack(side="left")
 
         self.tabs = ttk.Notebook(shell)
         self.tabs.pack(fill="both", expand=True)
-        self.download_page = ScrollablePage(self.tabs)
-        self.completed_page = ScrollablePage(self.tabs)
+
+        self.music_page = ttk.Frame(self.tabs, padding=10)
+        self.video_page = ttk.Frame(self.tabs, padding=10)
+        self.queue_page = ttk.Frame(self.tabs, padding=10)
+        self.completed_page = ttk.Frame(self.tabs, padding=10)
         self.settings_page = ScrollablePage(self.tabs)
-        self.activity_page = ScrollablePage(self.tabs)
-        self.tabs.add(self.download_page, text="  Downloads  ")
+        self.activity_page = ttk.Frame(self.tabs, padding=10)
+
+        self.tabs.add(self.music_page, text="  Música  ")
+        self.tabs.add(self.video_page, text="  Vídeo  ")
+        self.tabs.add(self.queue_page, text="  Fila  ")
         self.tabs.add(self.completed_page, text="  Concluídos  ")
         self.tabs.add(self.settings_page, text="  Configurações  ")
         self.tabs.add(self.activity_page, text="  Atividade  ")
-        frame = self.download_page.body
 
-        ttk.Label(frame, text="Links de vídeos, músicas ou playlists", font=(self.text_family, 10, "bold")).pack(anchor="w")
-        url_row = ttk.Frame(frame)
-        url_row.pack(fill="x", pady=(4, 10))
-        self.url_text = self._make_text(url_row, height=2)
-        self.url_text.pack(side="left", fill="x", expand=True)
-        url_scroll = ttk.Scrollbar(url_row, command=self.url_text.yview)
-        url_scroll.pack(side="right", fill="y")
-        self.url_text.configure(yscrollcommand=url_scroll.set)
-
-        ttk.Label(frame, text="Pasta de destino").pack(anchor="w")
-        folder_row = ttk.Frame(frame)
-        folder_row.pack(fill="x", pady=(4, 10))
-        ttk.Entry(folder_row, textvariable=self.folder_var).pack(side="left", fill="x", expand=True)
-        ttk.Button(folder_row, text="Escolher", command=self.choose_folder).pack(side="left", padx=(8, 0))
-
-        format_frame = ttk.Frame(frame)
-        format_frame.pack(fill="x", pady=(0, 10))
-        ttk.Label(format_frame, text="Formato:").pack(side="left", padx=(0, 8))
+        # Música: pesquisa instantânea e resultados sem precisar de botão Buscar.
+        search_frame = ttk.LabelFrame(self.music_page, text="Pesquisar na Deezer", padding=10)
+        search_frame.pack(fill="x", pady=(0, 8))
+        search_row = ttk.Frame(search_frame)
+        search_row.pack(fill="x")
         ttk.Combobox(
-            format_frame, textvariable=self.resolution_var,
-            values=DOWNLOAD_FORMATS, state="readonly", width=27,
+            search_row,
+            textvariable=self.music_search_type_var,
+            values=("Música", "Artista", "Álbum", "Playlist"),
+            state="readonly",
+            width=12,
+        ).pack(side="left", padx=(0, 8))
+        self.music_search_entry = ttk.Entry(
+            search_row,
+            textvariable=self.music_search_var,
+            font=(self.text_family, 11),
+        )
+        self.music_search_entry.pack(side="left", fill="x", expand=True)
+        ttk.Label(
+            search_frame,
+            textvariable=self.music_search_status_var,
+            foreground="#596579",
+        ).pack(anchor="w", pady=(6, 0))
+
+        result_area = ttk.Panedwindow(self.music_page, orient="horizontal")
+        result_area.pack(fill="both", expand=True, pady=(0, 8))
+
+        result_list = ttk.Frame(result_area)
+        result_detail = ttk.LabelFrame(result_area, text="Detalhes", padding=10)
+        result_area.add(result_list, weight=3)
+        result_area.add(result_detail, weight=2)
+
+        result_table = ttk.Frame(result_list)
+        result_table.pack(fill="both", expand=True)
+        self.music_results_tree = ttk.Treeview(
+            result_table,
+            columns=("type", "title", "detail"),
+            show="headings",
+            height=11,
+            selectmode="browse",
+        )
+        for name, label, width in (
+            ("type", "Tipo", 85),
+            ("title", "Resultado", 280),
+            ("detail", "Artista / Álbum / Autor", 250),
+        ):
+            self.music_results_tree.heading(name, text=label)
+            self.music_results_tree.column(
+                name,
+                width=width,
+                minwidth=70,
+                stretch=name != "type",
+                anchor="w",
+            )
+        self.music_results_tree.grid(row=0, column=0, sticky="nsew")
+        result_table.rowconfigure(0, weight=1)
+        result_table.columnconfigure(0, weight=1)
+        result_scroll = ttk.Scrollbar(
+            result_table,
+            orient="vertical",
+            command=self.music_results_tree.yview,
+        )
+        result_scroll.grid(row=0, column=1, sticky="ns")
+        self.music_results_tree.configure(yscrollcommand=result_scroll.set)
+
+        cover_box = ttk.Frame(result_detail)
+        cover_box.pack(side="left", anchor="n", padx=(0, 12))
+        self.catalog_cover_label = ttk.Label(
+            cover_box,
+            text="Sem capa",
+            width=18,
+            anchor="center",
+        )
+        self.catalog_cover_label.pack()
+        detail_info = ttk.Frame(result_detail)
+        detail_info.pack(side="left", fill="both", expand=True)
+        self.catalog_title_var = StringVar(value="Selecione um resultado")
+        self.catalog_subtitle_var = StringVar()
+        self.catalog_type_var = StringVar()
+        wrapping_label(
+            detail_info,
+            textvariable=self.catalog_title_var,
+            font=(self.text_family, 11, "bold"),
+        )
+        wrapping_label(detail_info, textvariable=self.catalog_subtitle_var)
+        wrapping_label(
+            detail_info,
+            textvariable=self.catalog_type_var,
+            foreground="#596579",
+        )
+        result_buttons = ttk.Frame(detail_info)
+        result_buttons.pack(fill="x", pady=(8, 0))
+        self.catalog_load_button = ttk.Button(
+            result_buttons,
+            text="Adicionar à fila",
+            command=self._load_selected_catalog_result,
+            state="disabled",
+        )
+        self.catalog_load_button.pack(side="left")
+        self.catalog_download_button = ttk.Button(
+            result_buttons,
+            text="Baixar",
+            command=self._download_selected_catalog_result,
+            state="disabled",
+        )
+        self.catalog_download_button.pack(side="left", padx=(6, 0))
+        self.catalog_play_button = ttk.Button(
+            result_buttons,
+            text="Reproduzir prévia",
+            command=self._play_selected_catalog_result,
+            state="disabled",
+        )
+        self.catalog_play_button.pack(side="left", padx=(6, 0))
+        self.catalog_open_button = ttk.Button(
+            result_buttons,
+            text="Abrir no Deezer",
+            command=self._open_selected_catalog_result,
+            state="disabled",
+        )
+        self.catalog_open_button.pack(side="left", padx=(6, 0))
+
+        options = ttk.LabelFrame(self.music_page, text="Download e organização", padding=8)
+        options.pack(fill="x")
+        options.columnconfigure(1, weight=1)
+        options.columnconfigure(5, weight=1)
+
+        ttk.Label(options, text="Pasta:").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=3)
+        ttk.Entry(options, textvariable=self.folder_var).grid(row=0, column=1, columnspan=3, sticky="ew", pady=3)
+        ttk.Button(options, text="Escolher", command=self.choose_folder).grid(row=0, column=4, padx=(6, 12), pady=3)
+
+        ttk.Label(options, text="Formato:").grid(row=0, column=5, sticky="e", padx=(0, 6), pady=3)
+        self.music_format_combo = ttk.Combobox(
+            options,
+            textvariable=self.resolution_var,
+            values=MUSIC_DOWNLOAD_FORMATS,
+            state="readonly",
+            width=21,
+        )
+        self.music_format_combo.grid(row=0, column=6, sticky="ew", pady=3)
+
+        ttk.Label(options, text="Pastas:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=3)
+        ttk.Combobox(
+            options,
+            textvariable=self.music_structure_var,
+            values=MUSIC_FOLDER_STRUCTURES,
+            state="readonly",
+            width=18,
+        ).grid(row=1, column=1, sticky="w", pady=3)
+        ttk.Label(options, text="Nome:").grid(row=1, column=2, sticky="e", padx=(8, 6), pady=3)
+        ttk.Entry(options, textvariable=self.music_filename_var).grid(row=1, column=3, columnspan=2, sticky="ew", pady=3)
+        ttk.Label(options, text="Taxa:").grid(row=1, column=5, sticky="e", padx=(8, 6), pady=3)
+        self._build_audio_controls(options, row=1, column=6)
+        ttk.Checkbutton(
+            options,
+            text="Carregar todas as faixas ao abrir artista, álbum ou playlist",
+            variable=self.playlist_var,
+        ).grid(row=2, column=0, columnspan=7, sticky="w", pady=(4, 0))
+
+        # Vídeo: entrada e opções em uma tela própria.
+        video_input = ttk.LabelFrame(self.video_page, text="Links de vídeo / playlists", padding=10)
+        video_input.pack(fill="both", expand=True, pady=(0, 8))
+        self.video_url_text = self._make_text(video_input, height=8)
+        self.video_url_text.pack(fill="both", expand=True)
+        wrapping_label(
+            video_input,
+            text="Cole um link por linha. YouTube, Kanal D, JW.ORG e outras fontes compatíveis com yt-dlp.",
+            foreground="#596579",
+        )
+
+        video_options = ttk.LabelFrame(self.video_page, text="Opções", padding=8)
+        video_options.pack(fill="x")
+        video_options.columnconfigure(1, weight=1)
+        ttk.Label(video_options, text="Pasta:").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=3)
+        ttk.Entry(video_options, textvariable=self.folder_var).grid(row=0, column=1, sticky="ew", pady=3)
+        ttk.Button(video_options, text="Escolher", command=self.choose_folder).grid(row=0, column=2, padx=(6, 12), pady=3)
+        ttk.Label(video_options, text="Formato:").grid(row=0, column=3, sticky="e", padx=(0, 6), pady=3)
+        self.video_format_combo = ttk.Combobox(
+            video_options,
+            textvariable=self.resolution_var,
+            values=VIDEO_DOWNLOAD_FORMATS,
+            state="readonly",
+            width=24,
+        )
+        self.video_format_combo.grid(row=0, column=4, sticky="w", pady=3)
+        ttk.Checkbutton(
+            video_options,
+            text="Playlist inteira",
+            variable=self.playlist_var,
+        ).grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Label(video_options, text="Taxa do áudio:").grid(row=1, column=3, sticky="e", padx=(0, 6), pady=3)
+        self._build_audio_controls(video_options, row=1, column=4)
+        video_actions = ttk.Frame(video_options)
+        video_actions.grid(row=1, column=2, sticky="e", padx=(6, 12), pady=3)
+        ttk.Button(
+            video_actions,
+            text="Adicionar à fila",
+            command=self.analyze_links,
         ).pack(side="left")
-        ttk.Checkbutton(format_frame, text="Baixar playlist/álbum", variable=self.playlist_var).pack(side="left", padx=(12, 0))
+        ttk.Button(
+            video_actions,
+            text="Baixar",
+            command=self.start_download,
+        ).pack(side="left", padx=(6, 0))
 
-        audio_frame = ttk.Frame(frame)
-        audio_frame.pack(fill="x", pady=(0, 10))
-        ttk.Label(audio_frame, text="Taxa do áudio:").pack(side="left", padx=(0, 8))
-        self.audio_bitrate_combo = ttk.Combobox(
-            audio_frame, textvariable=self.audio_bitrate_mode_var,
-            values=AUDIO_BITRATE_CHOICES, state="readonly", width=20,
-        )
-        self.audio_bitrate_combo.pack(side="left")
-        self.audio_custom_bitrate = ttk.Spinbox(
-            audio_frame, textvariable=self.audio_custom_bitrate_var,
-            from_=32, to=320, increment=1, width=6,
-        )
-        self.audio_custom_bitrate.pack(side="left", padx=(8, 4))
-        self.audio_custom_bitrate_unit = ttk.Label(audio_frame, text="kbps")
-        self.audio_custom_bitrate_unit.pack(side="left")
-        self.audio_bitrate_hint = ttk.Label(audio_frame, text="", foreground="#596579")
-        self.audio_bitrate_hint.pack(side="left", padx=(10, 0))
-        self.resolution_var.trace_add("write", self._update_audio_controls)
-        self.audio_bitrate_mode_var.trace_add("write", self._update_audio_controls)
-        self._update_audio_controls()
-
-        self._build_episode_list(frame)
-
+        # Fila em aba própria: elimina a maior parte do scroll da tela de trabalho.
+        self._build_episode_list(self.queue_page)
         actions = self.episode_actions
-        actions.pack(fill="x", pady=(0, 12))
+        actions.pack(fill="x", pady=(0, 8))
         self.download_button = ttk.Button(actions, text="Baixar", command=self.start_download)
         self.download_button.pack(side="left")
         self.pause_button = ttk.Button(actions, text="Pausar", command=self.toggle_pause, state="disabled")
@@ -405,24 +614,18 @@ class DownloadApp(QueueUI):
         self.stop_button = ttk.Button(actions, text="Parar fila", command=self.stop_queue, state="disabled")
         self.stop_button.pack(side="left", padx=(8, 0))
 
-        progress_frame = ttk.LabelFrame(frame, text="Progresso", padding=10)
-        progress_frame.pack(fill="x", pady=(0, 10))
-        wrapping_label(progress_frame, textvariable=self.download_item_var, font=(self.text_family, 10, "bold"))
+        progress_frame = ttk.LabelFrame(self.queue_page, text="Progresso", padding=8)
+        progress_frame.pack(fill="x")
+        wrapping_label(
+            progress_frame,
+            textvariable=self.download_item_var,
+            font=(self.text_family, 10, "bold"),
+        )
         self.progress = ttk.Progressbar(progress_frame, mode="determinate", maximum=100, value=0)
-        self.progress.pack(fill="x", pady=(0, 8))
+        self.progress.pack(fill="x", pady=(0, 6))
         wrapping_label(progress_frame, textvariable=self.download_metrics_var, foreground="#3f4f5f")
 
-        self._build_completed_list(self.completed_page.body)
-
-        activity = self.activity_page.body
-        ttk.Button(activity, text="Limpar atividade", command=self.clear_log).pack(anchor="e", pady=(0, 8))
-        log_frame = ttk.Frame(activity)
-        log_frame.pack(fill="both", expand=True)
-        self.log = self._make_text(log_frame, height=15)
-        self.log.pack(side="left", fill="both", expand=True)
-        scrollbar = ttk.Scrollbar(log_frame, command=self.log.yview)
-        scrollbar.pack(side="right", fill="y")
-        self.log.configure(yscrollcommand=scrollbar.set, state="disabled")
+        self._build_completed_list(self.completed_page)
 
         settings = self.settings_page.body
         speed_frame = ttk.LabelFrame(settings, text="Desempenho", padding=10)
@@ -430,18 +633,36 @@ class DownloadApp(QueueUI):
         speed_row = ttk.Frame(speed_frame)
         speed_row.pack(fill="x", pady=(0, 8))
         ttk.Label(speed_row, text="Fragmentos simultâneos:").pack(side="left", padx=(0, 8))
-        ttk.Combobox(speed_row, textvariable=self.fragments_var, values=FRAGMENT_CHOICES,
-                     state="readonly", width=3).pack(side="left")
-        wrapping_label(speed_frame, text="HLS/DASH: use 4 normalmente; reduza para 1 ou 2 se houver falhas de conexão.", foreground="#596579")
+        ttk.Combobox(
+            speed_row,
+            textvariable=self.fragments_var,
+            values=FRAGMENT_CHOICES,
+            state="readonly",
+            width=3,
+        ).pack(side="left")
+        wrapping_label(
+            speed_frame,
+            text="HLS/DASH: use 4 normalmente; reduza para 1 ou 2 se houver falhas de conexão.",
+            foreground="#596579",
+        )
 
         cookies_frame = ttk.LabelFrame(settings, text="Acesso a sites com login", padding=10)
         cookies_frame.pack(fill="x", pady=(0, 12))
         browser_row = ttk.Frame(cookies_frame)
         browser_row.pack(fill="x", pady=(0, 8))
         ttk.Label(browser_row, text="Cookies do navegador:").pack(side="left", padx=(0, 8))
-        ttk.Combobox(browser_row, textvariable=self.cookies_browser_var, values=BROWSERS,
-                     state="readonly", width=14).pack(side="left")
-        wrapping_label(cookies_frame, text="Feche o Chrome/Edge antes de usar seus cookies. Fontes públicas do Kanal D não precisam deles.", foreground="#596579")
+        ttk.Combobox(
+            browser_row,
+            textvariable=self.cookies_browser_var,
+            values=BROWSERS,
+            state="readonly",
+            width=14,
+        ).pack(side="left")
+        wrapping_label(
+            cookies_frame,
+            text="Feche o Chrome/Edge antes de usar seus cookies. Fontes públicas do Kanal D não precisam deles.",
+            foreground="#596579",
+        )
         ttk.Label(cookies_frame, text="Ou arquivo cookies.txt:").pack(anchor="w")
         file_row = ttk.Frame(cookies_frame)
         file_row.pack(fill="x", pady=(4, 0))
@@ -451,13 +672,76 @@ class DownloadApp(QueueUI):
 
         about_frame = ttk.LabelFrame(settings, text="Aplicativo", padding=10)
         about_frame.pack(fill="x")
-        wrapping_label(about_frame, text=f"{APP_NAME} • Versão {APP_VERSION}", font=(self.text_family, 10, "bold"))
-        wrapping_label(about_frame, text=f"Fontes: {self.text_family} / {self.display_family}", foreground="#596579")
+        wrapping_label(
+            about_frame,
+            text=f"{APP_NAME} • Versão {APP_VERSION}",
+            font=(self.text_family, 10, "bold"),
+        )
         wrapping_label(about_frame, textvariable=self.update_status_var, foreground="#596579")
-        self.update_button = ttk.Button(about_frame, text="Verificar atualizações", command=lambda: self.start_maintenance(True))
-        self.update_button.pack(anchor="w", pady=(0, 12))
-        wrapping_label(about_frame, text="Nas playlists, itens privados, removidos ou indisponíveis não interrompem os próximos vídeos. Veja os avisos no registro de atividade.", foreground="#596579")
-        wrapping_label(about_frame, text="Cole um link por linha. Baixe apenas mídias suas, livres ou que você tenha permissão para baixar.", foreground="#596579")
+        self.update_button = ttk.Button(
+            about_frame,
+            text="Verificar atualizações",
+            command=lambda: self.start_maintenance(True),
+        )
+        self.update_button.pack(anchor="w", pady=(0, 10))
+
+        activity = self.activity_page
+        ttk.Button(activity, text="Limpar atividade", command=self.clear_log).pack(anchor="e", pady=(0, 8))
+        log_frame = ttk.Frame(activity)
+        log_frame.pack(fill="both", expand=True)
+        self.log = self._make_text(log_frame, height=20)
+        self.log.pack(side="left", fill="both", expand=True)
+        scrollbar = ttk.Scrollbar(log_frame, command=self.log.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.log.configure(yscrollcommand=scrollbar.set, state="disabled")
+
+        self._build_music_details(self.music_page)
+        self._apply_work_mode(self.work_mode, initial=True)
+        self.tabs.select(self.music_page if self.work_mode == "music" else self.video_page)
+        self.tabs.bind("<<NotebookTabChanged>>", self._on_main_tab_changed)
+
+        self.music_search_var.trace_add("write", self._schedule_music_search)
+        self.music_search_type_var.trace_add("write", self._schedule_music_search)
+        self.resolution_var.trace_add("write", self._update_audio_controls)
+        self.audio_bitrate_mode_var.trace_add("write", self._update_audio_controls)
+        self.music_results_tree.bind("<<TreeviewSelect>>", self._show_selected_catalog_result)
+        self.music_results_tree.bind("<Double-1>", lambda _event: self._load_selected_catalog_result())
+        self.music_search_entry.bind("<Return>", lambda _event: self._load_selected_catalog_result())
+        self.music_search_entry.focus_set()
+        self._update_audio_controls()
+
+    def _build_audio_controls(self, parent, *, row: int, column: int) -> None:
+        holder = ttk.Frame(parent)
+        holder.grid(row=row, column=column, sticky="w", pady=3)
+        combo = ttk.Combobox(
+            holder,
+            textvariable=self.audio_bitrate_mode_var,
+            values=AUDIO_BITRATE_CHOICES,
+            state="readonly",
+            width=17,
+        )
+        combo.pack(side="left")
+        custom = ttk.Spinbox(
+            holder,
+            textvariable=self.audio_custom_bitrate_var,
+            from_=32,
+            to=320,
+            increment=1,
+            width=5,
+        )
+        custom.pack(side="left", padx=(5, 2))
+        unit = ttk.Label(holder, text="kbps")
+        unit.pack(side="left")
+        hint = ttk.Label(holder, text="", foreground="#596579")
+        hint.pack(side="left", padx=(6, 0))
+        if not hasattr(self, "audio_control_sets"):
+            self.audio_control_sets = []
+        self.audio_control_sets.append((combo, custom, unit, hint))
+        if len(self.audio_control_sets) == 1:
+            self.audio_bitrate_combo = combo
+            self.audio_custom_bitrate = custom
+            self.audio_custom_bitrate_unit = unit
+            self.audio_bitrate_hint = hint
 
     def _build_site_logo(self, parent) -> ttk.Frame:
         return build_brand(parent, resource_path("assets/c2_logo_horizontal.png"), self.display_family)
@@ -474,21 +758,529 @@ class DownloadApp(QueueUI):
         original_selected = format_choice == AUDIO_ORIGINAL_FORMAT
         if original_selected and self.audio_bitrate_mode_var.get() != AUDIO_AUTO_BITRATE:
             self.audio_bitrate_mode_var.set(AUDIO_AUTO_BITRATE)
-        self.audio_bitrate_combo.configure(state="readonly" if audio_selected and not original_selected else "disabled")
+
         custom_enabled = (
             audio_selected
             and not original_selected
             and self.audio_bitrate_mode_var.get() == AUDIO_CUSTOM_BITRATE
         )
-        self.audio_custom_bitrate.configure(state="normal" if custom_enabled else "disabled")
-        self.audio_custom_bitrate_unit.configure(state="normal" if custom_enabled else "disabled")
         if original_selected:
-            hint = "Preserva o codec e a taxa da fonte."
+            hint_text = "Preserva a fonte."
         elif audio_selected:
-            hint = "Automática usa a melhor qualidade do conversor."
+            hint_text = "Automática = melhor qualidade."
         else:
-            hint = "Disponível ao escolher um formato de áudio."
-        self.audio_bitrate_hint.configure(text=hint)
+            hint_text = "Somente para áudio."
+
+        for combo, custom, unit, hint in getattr(self, "audio_control_sets", []):
+            combo.configure(state="readonly" if audio_selected and not original_selected else "disabled")
+            custom.configure(state="normal" if custom_enabled else "disabled")
+            unit.configure(state="normal" if custom_enabled else "disabled")
+            hint.configure(text=hint_text)
+
+    def _apply_work_mode(self, mode: str, *, initial: bool = False) -> None:
+        mode = "music" if mode == "music" else "video"
+        self.work_mode = mode
+        if mode == "music":
+            if self.resolution_var.get() not in MUSIC_DOWNLOAD_FORMATS:
+                self.resolution_var.set("Apenas áudio (MP3)")
+            if hasattr(self, "analyze_button"):
+                self.analyze_button.configure(text="Atualizar fila")
+            if not initial:
+                self.download_item_var.set("Modo Música")
+                self.download_metrics_var.set("Selecione um resultado da pesquisa para carregar na fila.")
+        else:
+            if self.resolution_var.get() not in VIDEO_DOWNLOAD_FORMATS:
+                self.resolution_var.set("Melhor MP4 compatível")
+            if hasattr(self, "analyze_button"):
+                self.analyze_button.configure(text="Listar links")
+            if not initial:
+                self.download_item_var.set("Modo Vídeo")
+                self.download_metrics_var.set("Cole links de vídeos ou playlists para começar.")
+        self._update_audio_controls()
+
+    def _on_main_tab_changed(self, _event=None) -> None:
+        selected = self.tabs.select()
+        if selected == str(self.music_page):
+            self._apply_work_mode("music")
+        elif selected == str(self.video_page):
+            self._apply_work_mode("video")
+        self._save_preferences()
+
+    def _set_source_text(self, sources: list[str]) -> None:
+        values = [str(source).strip() for source in sources if str(source).strip()]
+        if not values:
+            return
+        music = all(
+            value.lower().startswith("deezer:")
+            or "deezer.com/" in value.lower()
+            or "://" not in value
+            for value in values
+        )
+        if music:
+            self._apply_work_mode("music", initial=True)
+            self.tabs.select(self.music_page)
+            self.music_search_var.set(values[0])
+        else:
+            self._apply_work_mode("video", initial=True)
+            self.tabs.select(self.video_page)
+            self.video_url_text.delete("1.0", END)
+            self.video_url_text.insert("1.0", "\n".join(values))
+
+    def _clear_music_search_results(self) -> None:
+        if not hasattr(self, "music_results_tree"):
+            return
+        for item_id in self.music_results_tree.get_children():
+            self.music_results_tree.delete(item_id)
+        self._music_search_results = []
+        self.catalog_title_var.set("Selecione um resultado")
+        self.catalog_subtitle_var.set("")
+        self.catalog_type_var.set("")
+        self.catalog_load_button.configure(state="disabled")
+        if hasattr(self, "catalog_download_button"):
+            self.catalog_download_button.configure(state="disabled")
+        self.catalog_play_button.configure(state="disabled")
+        self.catalog_open_button.configure(state="disabled")
+        self.catalog_cover_label.configure(image="", text="Sem capa")
+        self._catalog_cover_image = None
+        self._catalog_cover_key = None
+
+    def _schedule_music_search(self, *_args) -> None:
+        if self._music_search_after is not None:
+            try:
+                self.root.after_cancel(self._music_search_after)
+            except Exception:
+                pass
+            self._music_search_after = None
+
+        query = self.music_search_var.get().strip()
+        if not query:
+            self._clear_music_search_results()
+            self.music_search_status_var.set("Digite para pesquisar.")
+            return
+        if query.lower().startswith(("http://", "https://")):
+            self._clear_music_search_results()
+            if "deezer.com/" in query.lower():
+                self.music_search_status_var.set("Link Deezer detectado. Pressione Enter para carregar na fila.")
+            else:
+                self.music_search_status_var.set("Na aba Música, use nome de música, artista, álbum, playlist ou link Deezer.")
+            return
+        if len(query) < 2:
+            self._clear_music_search_results()
+            self.music_search_status_var.set("Digite pelo menos 2 caracteres.")
+            return
+
+        self.music_search_status_var.set("Pesquisando...")
+        self._music_search_after = self.root.after(350, self._start_music_search)
+
+    def _start_music_search(self) -> None:
+        self._music_search_after = None
+        query = self.music_search_var.get().strip()
+        if len(query) < 2 or query.lower().startswith(("http://", "https://")):
+            return
+
+        kind_map = {
+            "Música": "track",
+            "Artista": "artist",
+            "Álbum": "album",
+            "Playlist": "playlist",
+        }
+        kind = kind_map.get(self.music_search_type_var.get(), "track")
+        self._music_search_generation += 1
+        generation = self._music_search_generation
+
+        def worker():
+            try:
+                results = search_deezer_catalog(query, kind=kind, limit=20)
+                self.event_queue.put(("music_search_results", {
+                    "generation": generation,
+                    "query": query,
+                    "results": results,
+                    "error": "",
+                }))
+            except Exception as exc:
+                self.event_queue.put(("music_search_results", {
+                    "generation": generation,
+                    "query": query,
+                    "results": (),
+                    "error": str(exc),
+                }))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _handle_music_search_results(self, payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        if int(payload.get("generation") or 0) != self._music_search_generation:
+            return
+
+        self._clear_music_search_results()
+        error = str(payload.get("error") or "")
+        if error:
+            self.music_search_status_var.set(f"Falha na pesquisa: {error}")
+            return
+
+        results = list(payload.get("results") or [])
+        self._music_search_results = results
+        for index, result in enumerate(results):
+            if not isinstance(result, DeezerSearchResult):
+                continue
+            self.music_results_tree.insert(
+                "",
+                END,
+                iid=str(index),
+                values=(result.kind_label, result.title, result.subtitle),
+            )
+        count = len(results)
+        self.music_search_status_var.set(
+            f"{count} resultado(s). Selecione ou dê duplo clique para carregar."
+            if count
+            else "Nenhum resultado encontrado."
+        )
+        if count:
+            self.music_results_tree.selection_set("0")
+            self.music_results_tree.focus("0")
+            self._show_selected_catalog_result()
+
+    def _selected_catalog_result(self) -> DeezerSearchResult | None:
+        selected = self.music_results_tree.selection()
+        if not selected:
+            return None
+        try:
+            index = int(selected[0])
+        except (TypeError, ValueError):
+            return None
+        if 0 <= index < len(self._music_search_results):
+            result = self._music_search_results[index]
+            return result if isinstance(result, DeezerSearchResult) else None
+        return None
+
+    def _show_selected_catalog_result(self, _event=None) -> None:
+        result = self._selected_catalog_result()
+        if result is None:
+            self.catalog_load_button.configure(state="disabled")
+            self.catalog_download_button.configure(state="disabled")
+            self.catalog_play_button.configure(state="disabled")
+            self.catalog_open_button.configure(state="disabled")
+            return
+
+        self.catalog_title_var.set(result.title)
+        self.catalog_subtitle_var.set(result.subtitle)
+        self.catalog_type_var.set(result.kind_label)
+        self.catalog_load_button.configure(state="normal")
+        self.catalog_download_button.configure(state="normal")
+        self.catalog_open_button.configure(state="normal")
+        self.catalog_play_button.configure(state="normal" if result.kind == "track" else "disabled")
+        self.catalog_cover_label.configure(image="", text="Carregando capa...")
+        self._catalog_cover_image = None
+        self._catalog_cover_key = result.page_url
+
+        def worker():
+            try:
+                data = cover_bytes_for_item({"cover_url": result.cover_url})
+            except Exception:
+                data = None
+            self.event_queue.put(("catalog_cover_ready", (result.page_url, data)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_catalog_cover(self, payload: object) -> None:
+        if not isinstance(payload, tuple) or len(payload) != 2:
+            return
+        key, data = payload
+        if key != self._catalog_cover_key:
+            return
+        if not data:
+            self.catalog_cover_label.configure(image="", text="Sem capa")
+            return
+        try:
+            from io import BytesIO
+            from PIL import Image, ImageTk
+
+            image = Image.open(BytesIO(data))
+            image.thumbnail((150, 150))
+            self._catalog_cover_image = ImageTk.PhotoImage(image)
+            self.catalog_cover_label.configure(image=self._catalog_cover_image, text="")
+        except Exception:
+            self._catalog_cover_image = None
+            self.catalog_cover_label.configure(image="", text="Capa indisponível")
+
+    def _load_selected_catalog_result(self) -> None:
+        result = self._selected_catalog_result()
+        if result is None:
+            query = self.music_search_var.get().strip()
+            if query and "deezer.com/" in query.lower():
+                self._apply_work_mode("music", initial=True)
+                self._prepare_sources([query], False)
+            return
+        self._apply_work_mode("music", initial=True)
+        self._prepare_sources([result.page_url], False)
+
+    def _download_selected_catalog_result(self) -> None:
+        result = self._selected_catalog_result()
+        if result is None:
+            query = self.music_search_var.get().strip()
+            if query and "deezer.com/" in query.lower():
+                self._apply_work_mode("music", initial=True)
+                self._prepare_sources([query], True)
+            return
+        self._apply_work_mode("music", initial=True)
+        self._prepare_sources([result.page_url], True)
+
+    def _play_selected_catalog_result(self) -> None:
+        result = self._selected_catalog_result()
+        if result is None or result.kind != "track":
+            return
+
+        def worker():
+            try:
+                track = resolve_deezer_track(result.item_id)
+                if not track.preview_url:
+                    raise MusicPlayerError("A Deezer não disponibilizou prévia pública para esta faixa.")
+                self.music_player.play_preview(track.preview_url)
+                self.event_queue.put(("music_player_status", f"Reproduzindo prévia: {result.title}"))
+            except Exception as exc:
+                self.event_queue.put(("music_player_error", str(exc)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _open_selected_catalog_result(self) -> None:
+        result = self._selected_catalog_result()
+        if result is not None:
+            webbrowser.open(result.page_url)
+
+    def _build_music_details(self, parent) -> None:
+        self.music_detail_frame = ttk.LabelFrame(parent, text="Detalhes da música", padding=10)
+        cover_column = ttk.Frame(self.music_detail_frame)
+        cover_column.pack(side="left", anchor="n", padx=(0, 12))
+        self.music_cover_label = ttk.Label(cover_column, text="Sem capa", width=18, anchor="center")
+        self.music_cover_label.pack()
+        info = ttk.Frame(self.music_detail_frame)
+        info.pack(side="left", fill="both", expand=True)
+        self.music_title_var = StringVar()
+        self.music_artist_var = StringVar()
+        self.music_album_var = StringVar()
+        self.music_extra_var = StringVar()
+        wrapping_label(info, textvariable=self.music_title_var, font=(self.text_family, 11, "bold"))
+        wrapping_label(info, textvariable=self.music_artist_var)
+        wrapping_label(info, textvariable=self.music_album_var)
+        wrapping_label(info, textvariable=self.music_extra_var, foreground="#596579")
+        buttons = ttk.Frame(info)
+        buttons.pack(fill="x", pady=(8, 0))
+        ttk.Button(buttons, text="Reproduzir", command=self.play_selected_music).pack(side="left")
+        ttk.Button(buttons, text="Abrir no Deezer", command=self.open_selected_in_deezer).pack(side="left", padx=(6, 0))
+        ttk.Button(buttons, text="Parar", command=self.stop_music).pack(side="left", padx=(6, 0))
+        ttk.Button(buttons, text="Editar metadados", command=self.edit_selected_music_metadata).pack(side="left", padx=(6, 0))
+        ttk.Button(buttons, text="Alterar capa", command=self.change_selected_music_cover).pack(side="left", padx=(6, 0))
+
+    def _selected_music_item(self, *, completed: bool = False):
+        selection = self.completed_tree.selection() if completed else self.episode_tree.selection()
+        item_id = selection[0] if selection else self.current_music_item_id
+        return next((item for item in self.queue_items if item.get("id") == item_id), None)
+
+    def _show_music_item(self, item) -> None:
+        if not item or item.get("kind") != "deezer_preview":
+            self.current_music_item_id = None
+            self._music_cover_image = None
+            if hasattr(self, "music_detail_frame"):
+                self.music_detail_frame.pack_forget()
+            return
+        self.current_music_item_id = item.get("id")
+        if not self.music_detail_frame.winfo_manager():
+            self.music_detail_frame.pack(fill="x", pady=(8, 0))
+        self.music_title_var.set(str(item.get("track_title") or item.get("title") or "Música"))
+        self.music_artist_var.set(f"Artista: {item.get('artist') or 'Não informado'}")
+        self.music_album_var.set(f"Álbum: {item.get('album') or 'Não informado'}")
+        extras = []
+        if item.get("track_number"):
+            extras.append(f"Faixa {item.get('track_number')}")
+        if item.get("disc_number"):
+            extras.append(f"Disco {item.get('disc_number')}")
+        if item.get("release_year"):
+            extras.append(str(item.get("release_year")))
+        self.music_extra_var.set(" • ".join(extras))
+        self.music_cover_label.configure(image="", text="Carregando capa...")
+        self._music_cover_image = None
+        item_copy = dict(item)
+
+        def worker():
+            try:
+                cover = cover_bytes_for_item(item_copy)
+            except Exception:
+                cover = None
+            self.event_queue.put(("music_cover_ready", (item_copy.get("id"), cover)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_music_cover(self, payload: object) -> None:
+        if not isinstance(payload, tuple) or len(payload) != 2:
+            return
+        item_id, data = payload
+        if item_id != self.current_music_item_id or not data:
+            if item_id == self.current_music_item_id:
+                self.music_cover_label.configure(image="", text="Sem capa")
+            return
+        try:
+            from io import BytesIO
+            from PIL import Image, ImageTk
+
+            image = Image.open(BytesIO(data))
+            image.thumbnail((140, 140))
+            self._music_cover_image = ImageTk.PhotoImage(image)
+            self.music_cover_label.configure(image=self._music_cover_image, text="")
+        except Exception:
+            self._music_cover_image = None
+            self.music_cover_label.configure(image="", text="Capa indisponível")
+
+    def play_selected_music(self, *, completed: bool = False) -> None:
+        item = self._selected_music_item(completed=completed)
+        if not item or item.get("kind") != "deezer_preview":
+            messagebox.showinfo(APP_NAME, "Selecione uma música da Deezer.")
+            return
+        files = [Path(value) for value in item.get("files", [])]
+        local = next((path for path in files if path.is_file()), None)
+        item_copy = dict(item)
+
+        def worker():
+            try:
+                if local is not None:
+                    mode = self.music_player.play_file(local)
+                    message = "Reproduzindo arquivo local." if mode == "internal" else "Áudio aberto no player padrão do Windows."
+                else:
+                    track = resolve_deezer_track(str(item_copy.get("media_id") or ""))
+                    if not track.preview_url:
+                        raise MusicPlayerError("A Deezer não disponibilizou prévia pública para esta faixa.")
+                    self.music_player.play_preview(track.preview_url)
+                    message = "Reproduzindo a prévia pública da Deezer."
+                self.event_queue.put(("music_player_status", message))
+            except Exception as exc:
+                self.event_queue.put(("music_player_error", str(exc)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def open_selected_in_deezer(self) -> None:
+        item = self._selected_music_item()
+        if not item or item.get("kind") != "deezer_preview":
+            messagebox.showinfo(APP_NAME, "Selecione uma música da Deezer.")
+            return
+        url = str(item.get("source") or "").strip()
+        if not url.startswith("https://www.deezer.com/track/"):
+            messagebox.showinfo(APP_NAME, "O link oficial desta faixa não está disponível.")
+            return
+        webbrowser.open(url)
+
+    def stop_music(self) -> None:
+        try:
+            self.music_player.stop()
+            self.download_metrics_var.set("Reprodução interrompida.")
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Não foi possível parar a reprodução:\n{exc}")
+
+    def _metadata_dialog(self, item: dict, *, completed: bool) -> None:
+        dialog = Toplevel(self.root)
+        dialog.title("Editar metadados")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        body = ttk.Frame(dialog, padding=12)
+        body.pack(fill="both", expand=True)
+
+        fields = [
+            ("Título", "track_title"),
+            ("Artista", "artist"),
+            ("Artista do álbum", "album_artist"),
+            ("Álbum", "album"),
+            ("Número da faixa", "track_number"),
+            ("Número do disco", "disc_number"),
+            ("Ano", "release_year"),
+        ]
+        variables = {}
+        for row, (label, key) in enumerate(fields):
+            ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
+            value = item.get(key)
+            if key == "album_artist" and not value:
+                value = item.get("artist")
+            variable = StringVar(value=str(value or ""))
+            variables[key] = variable
+            ttk.Entry(body, textvariable=variable, width=42).grid(row=row, column=1, sticky="ew", pady=4)
+        body.columnconfigure(1, weight=1)
+
+        def save():
+            changes = {key: variable.get().strip() for key, variable in variables.items()}
+            for numeric in ("track_number", "disc_number"):
+                text = changes[numeric]
+                changes[numeric] = int(text) if text.isdigit() else None
+            title = changes["track_title"] or str(item.get("track_title") or item.get("title") or "Música")
+            artist = changes["artist"]
+            changes["title"] = f"{artist} - {title} (prévia Deezer)" if artist else f"{title} (prévia Deezer)"
+            try:
+                self.queue_repository.update(item["id"], **changes)
+                merged = dict(item)
+                merged.update(changes)
+                if completed:
+                    local = next((Path(value) for value in merged.get("files", []) if Path(value).is_file()), None)
+                    if local is not None:
+                        write_audio_metadata(local, merged, cover_bytes=b"")
+                self._refresh_queue()
+                self._show_music_item(merged)
+                dialog.destroy()
+            except Exception as exc:
+                messagebox.showerror(APP_NAME, f"Não foi possível salvar os metadados:\n{exc}", parent=dialog)
+
+        buttons = ttk.Frame(body)
+        buttons.grid(row=len(fields), column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(buttons, text="Cancelar", command=dialog.destroy).pack(side="right")
+        ttk.Button(buttons, text="Salvar", command=save).pack(side="right", padx=(0, 6))
+
+    def edit_selected_music_metadata(self, *, completed: bool = False) -> None:
+        item = self._selected_music_item(completed=completed)
+        if not item or item.get("kind") != "deezer_preview":
+            messagebox.showinfo(APP_NAME, "Selecione uma música da Deezer.")
+            return
+        if completed:
+            local = next((Path(value) for value in item.get("files", []) if Path(value).is_file()), None)
+            if local is not None:
+                try:
+                    existing = read_audio_metadata(local)
+                    merged = dict(item)
+                    merged.update(existing)
+                    item = merged
+                except Exception:
+                    pass
+        self._metadata_dialog(dict(item), completed=completed)
+
+    def change_selected_music_cover(self, *, completed: bool = False) -> None:
+        item = self._selected_music_item(completed=completed)
+        if not item or item.get("kind") != "deezer_preview":
+            messagebox.showinfo(APP_NAME, "Selecione uma música da Deezer.")
+            return
+        selected = filedialog.askopenfilename(
+            title="Selecionar capa",
+            filetypes=[("Imagens", "*.jpg *.jpeg *.png"), ("Todos os arquivos", "*.*")],
+        )
+        if not selected:
+            return
+        try:
+            data = Path(selected).read_bytes()
+            if not data or len(data) > 8 * 1024 * 1024:
+                raise ValueError("A imagem deve ter no máximo 8 MB.")
+            self.queue_repository.update(item["id"], custom_cover_path=selected)
+            merged = dict(item)
+            merged["custom_cover_path"] = selected
+            if completed:
+                local = next((Path(value) for value in merged.get("files", []) if Path(value).is_file()), None)
+                if local is not None:
+                    write_audio_metadata(local, merged, cover_bytes=data)
+            self._refresh_queue()
+            self._show_music_item(merged)
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Não foi possível alterar a capa:\n{exc}")
+
+    def open_completed_folder(self) -> None:
+        item = self._selected_music_item(completed=True)
+        if not item:
+            return
+        local = next((Path(value) for value in item.get("files", []) if Path(value).exists()), None)
+        if local is not None and os.name == "nt":
+            subprocess.Popen(["explorer.exe", "/select,", str(local)])
 
     def choose_folder(self) -> None:
         initial = Path(self.folder_var.get().strip() or str(Path.home()))
@@ -502,6 +1294,10 @@ class DownloadApp(QueueUI):
     def _save_preferences(self) -> None:
         settings: dict[str, object] = {
             "download_folder": self.folder_var.get().strip() or str(Path.home() / "Downloads"),
+            "work_mode": self.work_mode,
+            "music_structure": self.music_structure_var.get(),
+            "music_filename_template": self.music_filename_var.get().strip() or DEFAULT_MUSIC_FILENAME,
+            "music_search_type": self.music_search_type_var.get(),
             "format": self.resolution_var.get(),
             "audio_bitrate_mode": self.audio_bitrate_mode_var.get(),
             "audio_custom_bitrate": self.audio_custom_bitrate_var.get().strip() or "192",
@@ -809,6 +1605,16 @@ class DownloadApp(QueueUI):
                     self.update_button.configure(state="normal")
                     self.update_status_var.set("Falha ao baixar atualização")
                     messagebox.showerror(APP_NAME, str(payload))
+                elif event == "music_search_results":
+                    self._handle_music_search_results(payload)
+                elif event == "catalog_cover_ready":
+                    self._apply_catalog_cover(payload)
+                elif event == "music_cover_ready":
+                    self._apply_music_cover(payload)
+                elif event == "music_player_status":
+                    self.download_metrics_var.set(str(payload))
+                elif event == "music_player_error":
+                    messagebox.showerror(APP_NAME, str(payload))
         except queue.Empty:
             pass
 
@@ -921,7 +1727,10 @@ class DownloadApp(QueueUI):
         QueueUI.start_download(self)
 
     def _get_urls(self) -> list[str]:
-        raw = self.url_text.get("1.0", END)
+        if self.work_mode == "music":
+            query = self.music_search_var.get().strip()
+            return [query] if query else []
+        raw = self.video_url_text.get("1.0", END)
         return [line.strip() for line in raw.splitlines() if line.strip()]
 
     def _download(self, urls: list[str], folder: Path, format_choice: str) -> None:

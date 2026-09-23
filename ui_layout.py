@@ -52,8 +52,8 @@ def desktop_work_area(root) -> tuple[int, int, int, int]:
 def window_dimensions(area: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
     left, top, right, bottom = area
     # Leave room for the native title bar, resize borders and desktop margins.
-    width = min(820, max(1, right - left - 40))
-    height = min(720, max(1, bottom - top - 80))
+    width = min(1180, max(1, right - left - 50))
+    height = min(820, max(1, bottom - top - 80))
     return width, height, left + (right - left - width) // 2, top + 20
 
 

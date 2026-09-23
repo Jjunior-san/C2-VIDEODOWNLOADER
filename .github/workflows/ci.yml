@@ -1,0 +1,37 @@
+name: Test Python application
+
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip pytest
+          python -m pip install -r requirements.txt
+          python -m pip install --upgrade yt-dlp
+      - name: Compile Python sources
+        shell: pwsh
+        run: |
+          python -m compileall -q .
+      - name: Run tests
+        shell: pwsh
+        run: |
+          python -m pytest -q

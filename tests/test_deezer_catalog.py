@@ -32,7 +32,7 @@ def test_recognizes_only_supported_public_deezer_pages():
     assert deezer_catalog.parse_deezer_url("https://deezer.com/album/302127?utm=x") == ("album", "302127")
     assert deezer_catalog.parse_deezer_url("https://www.deezer.com/playlist/123/") == ("playlist", "123")
     assert deezer_catalog.parse_deezer_url("https://evil.example/track/3135556") is None
-    assert deezer_catalog.parse_deezer_url("https://www.deezer.com/artist/27") is None
+    assert deezer_catalog.parse_deezer_url("https://www.deezer.com/artist/27") == ("artist", "27")
 
 
 def test_album_uses_public_metadata_and_filters_untrusted_preview(monkeypatch):
@@ -197,3 +197,182 @@ def test_mp3_metadata_writer_preserves_file_with_corrupt_oversized_id3(tmp_path,
     result = path.read_bytes()
     assert result.startswith(b"ID3\x03")
     assert result.endswith(original)
+
+def test_public_deezer_search_encodes_query_limits_results_and_deduplicates(monkeypatch):
+    requested = []
+
+    def fake_api(url):
+        requested.append(url)
+        return {"data": [
+            {"id": 10, "title": "La Câlin", "preview": "https://cdnt-preview.dzcdn.net/a.mp3",
+             "artist": {"name": "Serhat Durmus"}, "album": {"title": "La Câlin"}},
+            {"id": 10, "title": "La Câlin", "preview": "https://cdnt-preview.dzcdn.net/a.mp3",
+             "artist": {"name": "Serhat Durmus"}, "album": {"title": "La Câlin"}},
+            {"id": 11, "title": "Other", "preview": "https://cdnt-preview.dzcdn.net/b.mp3",
+             "artist": {"name": "Artist"}, "album": {"title": "Album"}},
+        ]}
+
+    monkeypatch.setattr(deezer_catalog, "_api_json", fake_api)
+    tracks = deezer_catalog.search_deezer_tracks("Serhat Durmus La Câlin", limit=50)
+
+    assert [track.track_id for track in tracks] == ["10", "11"]
+    assert "q=Serhat%20Durmus%20La%20C%C3%A2lin" in requested[0]
+    assert "limit=50" in requested[0]
+
+
+def test_deezer_search_source_adds_results_to_queue(tmp_path, monkeypatch):
+    tracks = (
+        DeezerTrack("10", "La Câlin", "Serhat Durmus", "La Câlin",
+                    "https://cdnt-preview.dzcdn.net/a.mp3"),
+        DeezerTrack("11", "Other", "Artist", "Album", None),
+    )
+    calls = []
+    monkeypatch.setattr(
+        queue_service,
+        "search_deezer_tracks",
+        lambda query, limit=25: calls.append((query, limit)) or tracks,
+    )
+    options = {"folder": str(tmp_path), "format": "Apenas áudio (MP3)", "playlist": True,
+               "fragments": 4, "cookies_browser": "Nenhum", "cookies_file": ""}
+
+    items = queue_service.discover(
+        ["deezer: Serhat Durmus"], options, Path("engine"),
+        DownloadControl(), {}, lambda line: None,
+    )
+
+    assert calls == [("Serhat Durmus", 25)]
+    assert [item["media_id"] for item in items] == ["10", "11"]
+    assert items[0]["source"] == "https://www.deezer.com/track/10"
+    assert items[0]["collection_title"] == "Pesquisa Deezer - Serhat Durmus"
+    assert items[1]["status"] == "skipped" and not items[1]["enabled"]
+
+@pytest.mark.parametrize("query", ["Adele", "Coldplay Yellow", "Serhat Durmus La Câlin"])
+def test_music_mode_plain_text_searches_deezer(tmp_path, monkeypatch, query):
+    calls = []
+    tracks = (
+        DeezerTrack("10", "Result", "Artist", "Album",
+                    "https://cdnt-preview.dzcdn.net/a.mp3"),
+    )
+    monkeypatch.setattr(
+        queue_service,
+        "search_deezer_tracks",
+        lambda value, limit=25: calls.append((value, limit)) or tracks,
+    )
+    options = {
+        "folder": str(tmp_path),
+        "format": "Apenas áudio (MP3)",
+        "playlist": True,
+        "fragments": 4,
+        "cookies_browser": "Nenhum",
+        "cookies_file": "",
+        "work_mode": "music",
+    }
+
+    items = queue_service.discover(
+        [query], options, Path("engine"),
+        DownloadControl(), {}, lambda line: None,
+    )
+
+    assert calls == [(query, 25)]
+    assert len(items) == 1
+    assert items[0]["kind"] == "deezer_preview"
+
+
+def test_plain_text_in_video_mode_is_not_treated_as_deezer_search(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        queue_service,
+        "search_deezer_tracks",
+        lambda *args, **kwargs: pytest.fail("Deezer search should not run in video mode"),
+    )
+    monkeypatch.setattr(
+        queue_service,
+        "read_metadata",
+        lambda *args, **kwargs: {"id": "v1", "title": "Generic result", "webpage_url": "https://example.com/v1"},
+    )
+    options = {
+        "folder": str(tmp_path),
+        "format": "Melhor MP4 compatível",
+        "playlist": True,
+        "fragments": 4,
+        "cookies_browser": "Nenhum",
+        "cookies_file": "",
+        "work_mode": "video",
+    }
+
+    items = queue_service.discover(
+        ["Adele"], options, Path("engine"),
+        DownloadControl(), {}, lambda line: None,
+    )
+
+    assert items[0]["kind"] == "ytdlp"
+
+@pytest.mark.parametrize(
+    "kind,endpoint,title_key",
+    [
+        ("track", "/search?q=", "title"),
+        ("artist", "/search/artist?q=", "name"),
+        ("album", "/search/album?q=", "title"),
+        ("playlist", "/search/playlist?q=", "title"),
+    ],
+)
+def test_catalog_search_supports_music_artist_album_and_playlist(monkeypatch, kind, endpoint, title_key):
+    requested = []
+
+    def fake_api(url):
+        requested.append(url)
+        if kind == "track":
+            return {"data": [{
+                "id": 1, "title": "Song",
+                "artist": {"name": "Artist"},
+                "album": {"title": "Album", "cover_medium": "https://cdn-images.dzcdn.net/cover.jpg"},
+            }]}
+        if kind == "artist":
+            return {"data": [{
+                "id": 2, "name": "Artist",
+                "picture_medium": "https://cdn-images.dzcdn.net/artist.jpg",
+            }]}
+        if kind == "album":
+            return {"data": [{
+                "id": 3, "title": "Album",
+                "artist": {"name": "Artist"},
+                "cover_medium": "https://cdn-images.dzcdn.net/album.jpg",
+            }]}
+        return {"data": [{
+            "id": 4, "title": "Playlist",
+            "user": {"name": "Owner"},
+            "picture_medium": "https://cdn-images.dzcdn.net/playlist.jpg",
+        }]}
+
+    monkeypatch.setattr(deezer_catalog, "_api_json", fake_api)
+    result = deezer_catalog.search_deezer_catalog("hello", kind=kind, limit=10)
+
+    assert len(result) == 1
+    assert result[0].kind == kind
+    assert result[0].page_url == f"https://www.deezer.com/{kind}/{result[0].item_id}"
+    assert endpoint in requested[0]
+
+
+def test_artist_url_resolves_top_tracks(monkeypatch):
+    calls = []
+
+    def fake_api(url):
+        calls.append(url)
+        if "/artist/27/top" in url:
+            return {"data": [{
+                "id": 101,
+                "title": "Top Song",
+                "artist": {"name": "Daft Punk"},
+                "album": {"title": "Album"},
+                "preview": "https://cdnt-preview.dzcdn.net/a.mp3",
+            }]}
+        if "/artist/27" in url:
+            return {"id": 27, "name": "Daft Punk"}
+        raise AssertionError(url)
+
+    monkeypatch.setattr(deezer_catalog, "_api_json", fake_api)
+    collection = deezer_catalog.resolve_deezer_url("https://www.deezer.com/artist/27")
+
+    assert collection.kind == "artist"
+    assert collection.title == "Daft Punk"
+    assert collection.tracks[0].title == "Top Song"
+
