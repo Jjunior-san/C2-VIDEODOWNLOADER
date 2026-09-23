@@ -66,6 +66,7 @@ Pré-requisitos:
 - Windows 10/11 64 bits;
 - Python 3.13 ou superior;
 - Inno Setup 6.
+- VLC Media Player 3.x para reprodução de vídeos dentro do aplicativo.
 
 Saída:
 
@@ -249,6 +250,21 @@ Vídeos não listados, mas acessíveis pelo link, continuam elegíveis. Conteúd
 removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem no registro
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
+
+## Versão 2.0.0 — player de vídeo integrado
+
+- reproduz vídeos dentro da aba **Vídeo**, sem abrir outra janela;
+- aceita arquivos já baixados e transmissões resolvidas a partir do link colado;
+- oferece reproduzir/pausar, parar, avançar ou retroceder e ajustar o volume;
+- habilita o botão de reprodução da aba **Concluídos** também para arquivos de vídeo;
+- resolve links em segundo plano para manter a interface responsiva;
+- usa o motor instalado do VLC Media Player 3.x, com mensagem clara quando ele não estiver disponível.
+- simplifica o cabeçalho para a marca azul **C² - Downloader** e move **C2 Sistemas**
+  para a nova guia **Sobre**.
+
+O instalador do C² Downloader permanece compacto e não incorpora os binários do VLC.
+Para usar o player integrado, instale o [VLC Media Player](https://www.videolan.org/vlc/)
+no local padrão do Windows.
 
 ## Versão 1.9.0 — área de trabalho contextual e pesquisa mais rápida
 

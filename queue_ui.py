@@ -113,11 +113,11 @@ class QueueUI:
         )
         self.remove_completed_button.pack(side="right", padx=(0, 6))
         self.play_completed_button = ttk.Button(
-            actions, text="▶", width=3, command=lambda: self.play_selected_music(completed=True),
+            actions, text="▶", width=3, command=self.play_completed_media, state="disabled",
         )
         self.play_completed_button.pack(side="left")
         self.stop_completed_button = ttk.Button(
-            actions, text="■", width=3, command=self.stop_music,
+            actions, text="■", width=3, command=self.stop_completed_media, state="disabled",
         )
         self.stop_completed_button.pack(side="left", padx=(6, 0))
         add_tooltip(self.play_completed_button, "Reproduzir ou pausar")
@@ -273,8 +273,12 @@ class QueueUI:
                 (item for item in completed_items if selected_completed and item["id"] == selected_completed[0]),
                 None,
             )
-            music_selected = bool(selected_item and selected_item.get("kind") == "deezer_preview")
-            self.play_completed_button.configure(state=idle_state if music_selected else "disabled")
+            music_selected = bool(selected_item and selected_item.get("kind") in {"deezer_preview", "deezer_full"})
+            playable = self._is_completed_playable(selected_item)
+            self.play_completed_button.configure(state=idle_state if playable else "disabled")
+            self.stop_completed_button.configure(
+                state="normal" if self.music_player.is_active() or self.video_player.is_active() else "disabled"
+            )
             self.edit_completed_button.configure(state=idle_state if music_selected else "disabled")
             self.cover_completed_button.configure(state=idle_state if music_selected else "disabled")
             self.open_folder_button.configure(state=idle_state if selected_item else "disabled")
@@ -341,7 +345,7 @@ class QueueUI:
         item = next((item for item in self.queue_items if selected and item["id"] == selected[0]), None)
         files = item.get("files", []) if item else []
         details = "Arquivos mantidos no computador:\n" + "\n".join(files) if files else ""
-        if item and item.get("kind") == "deezer_preview":
+        if item and item.get("kind") in {"deezer_preview", "deezer_full"}:
             details = (
                 f"{item.get('track_title') or item.get('title') or 'Música'}\n"
                 f"Artista: {item.get('artist') or 'Não informado'}\n"
@@ -351,8 +355,12 @@ class QueueUI:
         self.completed_details.configure(text=details)
         if hasattr(self, "play_completed_button"):
             idle_state = "normal" if not self.busy else "disabled"
-            music_selected = bool(item and item.get("kind") == "deezer_preview")
-            self.play_completed_button.configure(state=idle_state if music_selected else "disabled")
+            music_selected = bool(item and item.get("kind") in {"deezer_preview", "deezer_full"})
+            playable = self._is_completed_playable(item)
+            self.play_completed_button.configure(state=idle_state if playable else "disabled")
+            self.stop_completed_button.configure(
+                state="normal" if self.music_player.is_active() or self.video_player.is_active() else "disabled"
+            )
             self.edit_completed_button.configure(state=idle_state if music_selected else "disabled")
             self.cover_completed_button.configure(state=idle_state if music_selected else "disabled")
             self.open_folder_button.configure(state=idle_state if item else "disabled")

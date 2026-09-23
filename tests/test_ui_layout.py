@@ -55,13 +55,14 @@ def test_compact_window_keeps_controls_reachable(window, geometry):
     root.update()
     assert root.winfo_width() == int(geometry.split("x")[0])
     assert root.winfo_height() == int(geometry.split("x")[1])
-    assert len(instance.tabs.tabs()) == 5
+    assert len(instance.tabs.tabs()) == 6
     for page in (
         instance.music_page,
         instance.video_page,
         instance.queue_page,
         instance.completed_page,
         instance.activity_page,
+        instance.about_page,
     ):
         instance.tabs.select(page)
         root.update()
@@ -304,6 +305,9 @@ def test_player_uses_compact_icons_and_settings_cancel_restores_values(window):
     assert instance.catalog_play_button.cget("text") == "▶"
     assert instance.catalog_stop_button.cget("text") == "■"
     assert instance.music_play_button.cget("text") == "▶"
+    assert instance.video_play_button.cget("text") == "▶"
+    assert instance.video_stop_button.cget("text") == "■"
+    assert hasattr(instance.video_play_button, "_c2_tooltip")
     assert hasattr(instance.catalog_play_button, "_c2_tooltip")
 
     original = instance.fragments_var.get()
@@ -311,6 +315,23 @@ def test_player_uses_compact_icons_and_settings_cancel_restores_values(window):
     instance.fragments_var.set("1" if original != "1" else "2")
     instance._close_settings(False)
     assert instance.fragments_var.get() == original
+
+
+def test_completed_video_is_available_to_embedded_player(window, tmp_path):
+    from download_queue import queue_item
+
+    _, instance = window
+    media = tmp_path / "episode.mp4"
+    media.write_bytes(b"video")
+    item = queue_item("https://example.com/episode", "Episode", kind="video")
+    item.update(status="completed", files=[str(media)])
+    instance.queue_repository.replace([item], instance._capture_options(), [])
+    instance._refresh_queue()
+    instance.completed_tree.selection_set(item["id"])
+    instance._show_completed_details()
+
+    assert instance._local_video_for_item(item) == media
+    assert str(instance.play_completed_button["state"]) == "normal"
 
 
 def test_recent_deezer_search_uses_memory_cache(window, monkeypatch):

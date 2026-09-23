@@ -12,7 +12,7 @@ import uuid
 import webbrowser
 from datetime import datetime
 from pathlib import Path
-from tkinter import BooleanVar, DoubleVar, END, StringVar, Tk, Toplevel, filedialog, messagebox
+from tkinter import BooleanVar, DoubleVar, END, Frame, StringVar, Tk, Toplevel, filedialog, messagebox
 from tkinter import ttk
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
@@ -46,6 +46,7 @@ from queue_ui import QueueUI
 from queue_service import cookie_arguments
 from media_conversion import codec_arguments, duration_from_probe, run_conversion, stream_compatibility
 from music_player import MusicPlayer, MusicPlayerError
+from video_player import EmbeddedVideoPlayer, VideoPlayerError
 from process_monitor import ProcessInactivityError, close_process, monitored_lines
 from kanald_downloader import is_kanald_url, resolve_kanald_video
 from c2_update import (
@@ -128,6 +129,69 @@ def fetch_video_preview_info(url: str, yt_dlp_path: Path | None = None) -> dict:
         "author": author or host,
         "cover_data": data,
     }
+
+
+def resolve_video_stream(
+    url: str,
+    yt_dlp_path: Path,
+    environment: dict[str, str],
+    options: dict | None = None,
+) -> str:
+    """Resolve one public video page into a stream suitable for libVLC."""
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise VideoPlayerError("Informe um link HTTP ou HTTPS válido para assistir.")
+    if is_kanald_url(url):
+        return resolve_kanald_video(url).content_url
+    engine = Path(yt_dlp_path)
+    if not engine.is_file():
+        raise VideoPlayerError("O yt-dlp ainda não está pronto. Aguarde a verificação de componentes.")
+    command = [
+        str(engine),
+        "--ignore-config",
+        "--no-playlist",
+        "--no-warnings",
+        "--no-color",
+        "--socket-timeout", "20",
+        "--extractor-retries", "2",
+        "--get-url",
+        "-f", "best[ext=mp4]/best",
+        *cookie_arguments(options or {}),
+    ]
+    deno = engine.with_name("deno.exe")
+    if deno.is_file():
+        command += ["--js-runtimes", f"deno:{deno}"]
+    command += ["--", url]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=CREATE_NO_WINDOW,
+            env=environment,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise VideoPlayerError("A fonte do vídeo demorou demais para responder.") from exc
+    streams = [line.strip() for line in result.stdout.splitlines() if line.strip().startswith(("http://", "https://"))]
+    if result.returncode != 0 or not streams:
+        detail = next(
+            (line.strip() for line in reversed(result.stderr.splitlines()) if line.strip()),
+            "O site não forneceu uma fonte compatível para reprodução.",
+        )
+        raise VideoPlayerError(detail)
+    return streams[0]
+
+
+def format_player_time(milliseconds: int | float) -> str:
+    seconds = max(0, int(float(milliseconds) / 1000))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02}:{seconds:02}"
+    return f"{minutes:02}:{seconds:02}"
 
 try:
     import imageio_ffmpeg
@@ -447,6 +511,14 @@ class DownloadApp(QueueUI):
         self._video_preview_after = None
         self._last_video_preview_url = None
         self._video_cover_image = None
+        self.video_player = EmbeddedVideoPlayer()
+        self.video_player_status_var = StringVar(value="Pronto para reproduzir.")
+        self.video_player_time_var = StringVar(value="00:00 / 00:00")
+        self.video_player_seek_var = DoubleVar(value=0.0)
+        self.video_volume_var = DoubleVar(value=80.0)
+        self._video_seek_dragging = False
+        self._video_source_key = None
+        self._video_resolve_request = None
         self.download_fragments = fragment_count(self.fragments_var.get())
         self.download_control = DownloadControl()
         self.update_status_var = StringVar(value="Componentes ainda não verificados")
@@ -518,13 +590,12 @@ class DownloadApp(QueueUI):
             self._build_site_logo(header).pack(side="left", padx=(0, 12))
         except Exception as exc:
             self.queue_log(f"Aviso: não foi possível carregar a logo ({exc}).")
-        ttk.Separator(header, orient="vertical").pack(side="left", fill="y", padx=(0, 12))
-        ttk.Label(
-            header,
-            text="C² Downloader",
-            font=(self.display_family, 15, "bold"),
-            foreground="#172b4d",
-        ).pack(side="left")
+            ttk.Label(
+                header,
+                text="C² - Downloader",
+                font=(self.display_family, 15, "bold"),
+                foreground="#1876d2",
+            ).pack(side="left")
         self.settings_button = ttk.Button(
             header,
             text="⚙",
@@ -542,6 +613,7 @@ class DownloadApp(QueueUI):
         self.queue_page = ttk.Frame(self.tabs, padding=10)
         self.completed_page = ttk.Frame(self.tabs, padding=10)
         self.activity_page = ttk.Frame(self.tabs, padding=10)
+        self.about_page = ttk.Frame(self.tabs, padding=18)
 
         self.settings_dialog = Toplevel(self.root)
         self.settings_dialog.withdraw()
@@ -557,6 +629,45 @@ class DownloadApp(QueueUI):
         self.tabs.add(self.queue_page, text="  Fila geral  ")
         self.tabs.add(self.completed_page, text="  Concluídos  ")
         self.tabs.add(self.activity_page, text="  Atividade  ")
+        self.tabs.add(self.about_page, text="  Sobre  ")
+
+        about_brand = ttk.Frame(self.about_page)
+        about_brand.pack(anchor="center", pady=(24, 12))
+        try:
+            self._build_site_logo(about_brand).pack()
+        except Exception:
+            ttk.Label(
+                about_brand,
+                text="C² - Downloader",
+                font=(self.display_family, 18, "bold"),
+                foreground="#1876d2",
+            ).pack()
+        ttk.Label(
+            self.about_page,
+            text="C2 Sistemas",
+            font=(self.display_family, 14, "bold"),
+            foreground="#172b4d",
+        ).pack(pady=(0, 4))
+        ttk.Label(
+            self.about_page,
+            text=f"Versão {APP_VERSION}",
+            foreground="#596579",
+        ).pack()
+        about_text = ttk.Label(
+            self.about_page,
+            text=(
+                "Aplicativo para organizar, baixar e reproduzir mídias compatíveis.\n"
+                "Use somente conteúdo próprio, livre ou autorizado pelo titular."
+            ),
+            justify="center",
+            wraplength=620,
+        )
+        about_text.pack(fill="x", pady=(18, 12))
+        ttk.Button(
+            self.about_page,
+            text="Abrir projeto no GitHub",
+            command=lambda: webbrowser.open("https://github.com/Jjunior-san/C2-VIDEODOWNLOADER"),
+        ).pack()
 
         music = self.music_page.body
         video = self.video_page.body
@@ -769,6 +880,67 @@ class DownloadApp(QueueUI):
         wrapping_label(
             video_detail_info,
             textvariable=self.video_preview_author_var,
+            foreground="#596579",
+        )
+
+        player = ttk.LabelFrame(video, text="Player", padding=8)
+        player.pack(fill="x", pady=(0, 8))
+        self.video_surface = Frame(
+            player,
+            background="#05070a",
+            height=300,
+            highlightthickness=1,
+            highlightbackground="#26364a",
+        )
+        self.video_surface.pack(fill="x")
+        self.video_surface.pack_propagate(False)
+        controls = ttk.Frame(player)
+        controls.pack(fill="x", pady=(8, 0))
+        self.video_play_button = ttk.Button(
+            controls,
+            text="▶",
+            width=3,
+            command=self.play_selected_video,
+        )
+        self.video_play_button.pack(side="left")
+        self.video_stop_button = ttk.Button(
+            controls,
+            text="■",
+            width=3,
+            command=self.stop_video,
+            state="disabled",
+        )
+        self.video_stop_button.pack(side="left", padx=(6, 8))
+        add_tooltip(self.video_play_button, "Reproduzir ou pausar o vídeo")
+        add_tooltip(self.video_stop_button, "Parar o vídeo")
+        self.video_seek_scale = ttk.Scale(
+            controls,
+            from_=0,
+            to=100,
+            variable=self.video_player_seek_var,
+        )
+        self.video_seek_scale.pack(side="left", fill="x", expand=True)
+        self.video_seek_scale.bind("<ButtonPress-1>", self._begin_video_seek)
+        self.video_seek_scale.bind("<ButtonRelease-1>", self._finish_video_seek)
+        ttk.Label(
+            controls,
+            textvariable=self.video_player_time_var,
+            width=15,
+            anchor="center",
+        ).pack(side="left", padx=(8, 8))
+        ttk.Label(controls, text="🔊").pack(side="left")
+        self.video_volume_scale = ttk.Scale(
+            controls,
+            from_=0,
+            to=100,
+            variable=self.video_volume_var,
+            command=self._set_video_volume,
+            length=100,
+        )
+        self.video_volume_scale.pack(side="left", padx=(4, 0))
+        wrapping_label(
+            player,
+            textvariable=self.video_player_status_var,
             foreground="#596579",
         )
 
@@ -1287,6 +1459,185 @@ class DownloadApp(QueueUI):
             self._video_cover_image = None
             self.video_cover_label.configure(image="", text="Capa indisponível")
 
+    def _video_url_from_input(self) -> str | None:
+        raw_text = self.video_url_text.get("1.0", "end").strip()
+        return next(
+            (line.strip() for line in raw_text.splitlines() if line.strip().startswith(("http://", "https://"))),
+            None,
+        )
+
+    def _selected_video_item(self, *, completed: bool = False):
+        tree = self.completed_tree if completed else self.episode_tree
+        selection = tree.selection()
+        return next(
+            (item for item in self.queue_items if selection and item.get("id") == selection[0]),
+            None,
+        )
+
+    @staticmethod
+    def _local_video_for_item(item) -> Path | None:
+        if not item:
+            return None
+        return next(
+            (
+                path for path in (Path(value) for value in item.get("files", []))
+                if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
+            ),
+            None,
+        )
+
+    def _is_completed_playable(self, item) -> bool:
+        if not item:
+            return False
+        if item.get("kind") in {"deezer_preview", "deezer_full"}:
+            return True
+        return self._local_video_for_item(item) is not None
+
+    def play_completed_media(self) -> None:
+        item = self._selected_video_item(completed=True)
+        if item and item.get("kind") in {"deezer_preview", "deezer_full"}:
+            self.play_selected_music(completed=True)
+        else:
+            self.play_selected_video(completed=True)
+
+    def stop_completed_media(self) -> None:
+        if self.video_player.is_active() or self.video_player.source:
+            self.stop_video()
+        else:
+            self.stop_music()
+
+    def play_selected_video(self, *, completed: bool = False) -> None:
+        item = self._selected_video_item(completed=completed)
+        local = self._local_video_for_item(item)
+        page_url = None if completed else str((item or {}).get("source") or "").strip()
+        if not page_url.startswith(("http://", "https://")):
+            page_url = None if completed else self._video_url_from_input()
+        source_key = str(local) if local is not None else page_url
+        if not source_key:
+            messagebox.showinfo(
+                APP_NAME,
+                "Selecione um vídeo concluído ou cole um link na aba Vídeo.",
+            )
+            return
+
+        if self._video_source_key == source_key and self.video_player.is_playing():
+            self.video_player.pause()
+            self.video_player_status_var.set("Reprodução pausada.")
+            self._update_video_player()
+            return
+        if self._video_source_key == source_key and self.video_player.is_paused():
+            self.video_player.resume()
+            self.video_player_status_var.set("Reproduzindo.")
+            self._update_video_player()
+            return
+
+        request_id = uuid.uuid4().hex
+        self._video_resolve_request = request_id
+        self._video_source_key = source_key
+        self.video_play_button.configure(state="disabled")
+        self.video_player_status_var.set(
+            "Abrindo arquivo local..." if local is not None else "Localizando a transmissão do vídeo..."
+        )
+
+        if local is not None:
+            self.event_queue.put(("video_source_ready", (request_id, str(local), source_key)))
+            return
+
+        def worker(url: str, token: str, key: str) -> None:
+            try:
+                stream = resolve_video_stream(
+                    url,
+                    self.dependencies.yt_dlp_path,
+                    self.dependencies.runtime_environment(),
+                    self._capture_options(),
+                )
+                self.event_queue.put(("video_source_ready", (token, stream, key)))
+            except Exception as exc:
+                self.event_queue.put(("video_player_error", (token, str(exc))))
+
+        threading.Thread(target=worker, args=(page_url, request_id, source_key), daemon=True).start()
+
+    def _start_video_source(self, payload: object) -> None:
+        if not isinstance(payload, tuple) or len(payload) != 3:
+            return
+        request_id, source, source_key = payload
+        if request_id != self._video_resolve_request:
+            return
+        try:
+            self.music_player.stop()
+            self._playing_item_id = None
+            self._catalog_playing_active = False
+            self.video_surface.update_idletasks()
+            self.video_player.play(str(source), self.video_surface.winfo_id())
+            self.video_player.set_volume(self.video_volume_var.get())
+            self._video_source_key = source_key
+            self.video_player_status_var.set("Reproduzindo.")
+        except Exception as exc:
+            self._video_source_key = None
+            self.video_player_status_var.set("Não foi possível reproduzir o vídeo.")
+            messagebox.showerror(APP_NAME, str(exc))
+        finally:
+            self.video_play_button.configure(state="normal")
+            self._update_video_player()
+
+    def _handle_video_player_error(self, payload: object) -> None:
+        request_id, message = payload if isinstance(payload, tuple) and len(payload) == 2 else (None, payload)
+        if request_id is not None and request_id != self._video_resolve_request:
+            return
+        self._video_source_key = None
+        self.video_play_button.configure(state="normal")
+        self.video_player_status_var.set("Não foi possível abrir este vídeo.")
+        messagebox.showerror(APP_NAME, str(message))
+
+    def stop_video(self) -> None:
+        try:
+            self._video_resolve_request = None
+            self.video_player.stop()
+            self._video_source_key = None
+            self.video_player_seek_var.set(0)
+            self.video_player_time_var.set("00:00 / 00:00")
+            self.video_player_status_var.set("Reprodução interrompida.")
+            self._update_video_player()
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Não foi possível parar o vídeo:\n{exc}")
+
+    def _begin_video_seek(self, _event=None) -> None:
+        self._video_seek_dragging = True
+
+    def _finish_video_seek(self, _event=None) -> None:
+        self._video_seek_dragging = False
+        if self.video_player.is_active():
+            self.video_player.set_position(self.video_player_seek_var.get() / 100)
+
+    def _set_video_volume(self, value) -> None:
+        try:
+            self.video_player.set_volume(float(value))
+        except (TypeError, ValueError):
+            pass
+
+    def _update_video_player(self) -> None:
+        active = self.video_player.is_active()
+        playing = self.video_player.is_playing()
+        if hasattr(self, "video_play_button"):
+            self.video_play_button.configure(text="⏸" if playing else "▶")
+        if hasattr(self, "video_stop_button"):
+            self.video_stop_button.configure(state="normal" if active else "disabled")
+        if hasattr(self, "play_completed_button") and active:
+            self.play_completed_button.configure(text="⏸" if playing else "▶")
+        if hasattr(self, "stop_completed_button"):
+            self.stop_completed_button.configure(
+                state="normal" if active or self.music_player.is_active() else "disabled"
+            )
+        if active:
+            elapsed = self.video_player.get_time()
+            total = self.video_player.get_length()
+            if not self._video_seek_dragging:
+                position = self.video_player.get_position()
+                self.video_player_seek_var.set(position * 100)
+            self.video_player_time_var.set(
+                f"{format_player_time(elapsed)} / {format_player_time(total)}"
+            )
+
     def _on_main_tab_changed(self, _event=None) -> None:
         selected = self.tabs.select()
         if selected == str(self.music_page):
@@ -1686,6 +2037,9 @@ class DownloadApp(QueueUI):
             self._update_player_buttons()
             return
 
+        if self.video_player.is_active() or self.video_player.source:
+            self.stop_video()
+
         files = [Path(value) for value in item.get("files", [])]
         local = next((path for path in files if path.is_file()), None)
         item_copy = dict(item)
@@ -1729,6 +2083,9 @@ class DownloadApp(QueueUI):
             self.download_metrics_var.set(f"Reproduzindo prévia: {result.title}")
             self._update_player_buttons()
             return
+
+        if self.video_player.is_active() or self.video_player.source:
+            self.stop_video()
 
         def worker():
             try:
@@ -1955,6 +2312,11 @@ class DownloadApp(QueueUI):
                 return
         self._save_preferences()
         self._stop_music_search_workers()
+        try:
+            self.music_player.stop()
+            self.video_player.release()
+        except Exception:
+            pass
         self.root.destroy()
 
     def _stop_music_search_workers(self) -> None:
@@ -2353,6 +2715,10 @@ class DownloadApp(QueueUI):
                     self._apply_music_cover(payload)
                 elif event == "video_preview_ready":
                     self._apply_video_preview(payload)
+                elif event == "video_source_ready":
+                    self._start_video_source(payload)
+                elif event == "video_player_error":
+                    self._handle_video_player_error(payload)
                 elif event == "music_player_status":
                     self.download_metrics_var.set(str(payload))
                 elif event == "music_player_error":
@@ -2361,6 +2727,7 @@ class DownloadApp(QueueUI):
             pass
 
         self._update_player_buttons()
+        self._update_video_player()
         self.root.after(150, self._poll_queues)
 
     def start_maintenance(self, force: bool = False) -> None:

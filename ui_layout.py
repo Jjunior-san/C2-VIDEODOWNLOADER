@@ -215,7 +215,7 @@ def add_tooltip(widget, text: str):
 
 def build_brand(parent, logo_path, family="Segoe UI"):
     brand = ttk.Frame(parent)
-    # The PNG is the first frame of the site's animation: crop the symbol only.
+    # Crop only the blue C² symbol and use it as the product-name initial.
     brand.source_image = PhotoImage(file=str(logo_path))
     brand.logo_image = PhotoImage(width=36, height=40)
     brand.logo_image.tk.call(
@@ -223,6 +223,10 @@ def build_brand(parent, logo_path, family="Segoe UI"):
         "-from", 58, 48, 305, 327, "-to", 0, 0, "-subsample", 7, 7,
     )
     ttk.Label(brand, image=brand.logo_image).pack(side="left")
-    ttk.Label(brand, text="C² SISTEMAS", font=(family, 10, "bold"),
-              foreground="#0b1730").pack(side="left", padx=(6, 0))
+    ttk.Label(
+        brand,
+        text="² - Downloader",
+        font=(family, 15, "bold"),
+        foreground="#172b4d",
+    ).pack(side="left", padx=(3, 0))
     return brand
