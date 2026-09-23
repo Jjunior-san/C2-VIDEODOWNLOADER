@@ -544,6 +544,11 @@ class DownloadApp(QueueUI):
         ttk.Entry(options, textvariable=self.music_filename_var).grid(row=1, column=3, columnspan=2, sticky="ew", pady=3)
         ttk.Label(options, text="Taxa:").grid(row=1, column=5, sticky="e", padx=(8, 6), pady=3)
         self._build_audio_controls(options, row=1, column=6)
+        ttk.Checkbutton(
+            options,
+            text="Carregar todas as faixas ao abrir artista, álbum ou playlist",
+            variable=self.playlist_var,
+        ).grid(row=2, column=0, columnspan=7, sticky="w", pady=(4, 0))
 
         # Vídeo: entrada e opções em uma tela própria.
         video_input = ttk.LabelFrame(self.video_page, text="Links de vídeo / playlists", padding=10)
