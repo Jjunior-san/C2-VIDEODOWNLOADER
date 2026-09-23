@@ -12,11 +12,13 @@ from c2_update import CREATE_NO_WINDOW
 from audio_library import (
     apply_deezer_metadata,
     bitrate_from_options,
+    create_collection_zip,
     create_deezer_playlists,
     is_audio_format,
     music_output_template,
     music_target_folder,
 )
+from deezer_auth import DeezerAuthError, DeezerStreamError, download_and_decrypt_track
 from deezer_catalog import is_deezer_url, resolve_deezer_track, resolve_deezer_url, search_deezer_tracks
 from download_control import DownloadCancelled, DownloadSkipped
 from download_queue import RUNNABLE, queue_item
@@ -114,11 +116,34 @@ def metadata_items(info: dict, source: str) -> list[dict]:
 
 def _deezer_queue_items(tracks, collection_title: str, options) -> list[dict]:
     items = []
+    has_arl = bool(str(options.get("deezer_arl") or "").strip())
+    quality_pref = str(options.get("deezer_quality") or "auto").strip().lower()
+
     for position, track in enumerate(tracks, 1):
+        if has_arl:
+            kind = "deezer_full"
+            display_title = track.display_title
+            if quality_pref in {"flac", "lossless"}:
+                quality_label = "Deezer HiFi (FLAC)"
+            elif quality_pref in {"mp3_320", "320"}:
+                quality_label = "Deezer 320 kbps"
+            elif quality_pref in {"mp3_128", "128"}:
+                quality_label = "Deezer 128 kbps"
+            else:
+                quality_label = "Deezer Completo"
+        else:
+            kind = "deezer_preview"
+            display_title = f"{track.display_title} (prévia Deezer)"
+            quality_label = (
+                f"Prévia oficial • {options['format']}"
+                if is_audio_format(options["format"])
+                else "Prévia oficial MP3"
+            )
+
         item = queue_item(
             track.page_url,
-            f"{track.display_title} (prévia Deezer)",
-            kind="deezer_preview",
+            display_title,
+            kind=kind,
             media_id=track.track_id,
             track_title=track.title,
             artist=track.artist,
@@ -129,13 +154,9 @@ def _deezer_queue_items(tracks, collection_title: str, options) -> list[dict]:
             duration=track.duration,
             cover_url=track.cover_url,
             collection_title=collection_title,
-            quality=(
-                f"Prévia oficial • {options['format']}"
-                if is_audio_format(options["format"])
-                else "Prévia oficial MP3"
-            ),
+            quality=quality_label,
         )
-        if not track.preview_url:
+        if not has_arl and not track.preview_url:
             item.update(
                 status="skipped", enabled=False,
                 error="A Deezer não disponibilizou uma prévia pública para esta faixa.",
@@ -158,7 +179,10 @@ def discover(sources, options, engine, control, environment, log):
             )
 
             if is_deezer_url(source):
-                log("Deezer: consultando o catálogo público; somente prévias oficiais serão incluídas.")
+                if bool(str(options.get("deezer_arl") or "").strip()):
+                    log("Deezer: autenticado com ARL; faixas completas serão incluídas na fila.")
+                else:
+                    log("Deezer: consultando o catálogo público; somente prévias oficiais serão incluídas.")
                 collection = resolve_deezer_url(source)
                 tracks = collection.tracks if options["playlist"] else collection.tracks[:1]
                 items.extend(_deezer_queue_items(tracks, collection.title, options))
@@ -166,7 +190,7 @@ def discover(sources, options, engine, control, environment, log):
                 query = source.split(":", 1)[1].strip() if source.lower().startswith("deezer:") else source.strip()
                 if len(query) < 2:
                     raise RuntimeError("Digite ao menos dois caracteres para pesquisar artista ou música.")
-                log(f"Deezer: pesquisando no catálogo público por '{query}'.")
+                log(f"Deezer: pesquisando no catálogo por '{query}'.")
                 limit = 25 if options["playlist"] else 1
                 tracks = search_deezer_tracks(query, limit=limit)
                 if not tracks:
@@ -230,14 +254,61 @@ def run_queue(owner, repository, options, engine):
             try:
                 owner._begin_download_item(ordinal, len(ids), item["title"])
                 folder = Path(options["folder"])
-                if item["kind"] == "deezer_preview":
+                if item["kind"] in {"deezer_preview", "deezer_full"}:
                     folder = music_target_folder(
                         folder,
                         item,
                         str(options.get("music_structure") or "Pasta raiz"),
                     )
                     folder.mkdir(parents=True, exist_ok=True)
-                if item["kind"] == "jw":
+                if item["kind"] == "deezer_full":
+                    arl = str(options.get("deezer_arl") or "").strip()
+                    pref_quality = str(options.get("deezer_quality") or "auto")
+                    template = item.get("output_template") or music_output_template(
+                        item,
+                        ordinal,
+                        str(options.get("music_filename_template") or "{faixa:02} - {titulo}"),
+                    )
+                    clean_filename = template.replace(".%(ext)s", "")
+                    initial_file = folder / f"{clean_filename}.audio"
+
+                    possible_existing = [
+                        folder / f"{clean_filename}.flac",
+                        folder / f"{clean_filename}.mp3",
+                    ]
+                    existing_done = next((p for p in possible_existing if p.is_file() and p.stat().st_size > 0), None)
+                    if existing_done:
+                        owner.queue_log(f"Deezer: arquivo já concluído: {existing_done.name}")
+                        output = existing_done
+                    else:
+                        owner.queue_log(f"Deezer: baixando faixa completa autenticada ({item['title']})...")
+
+                        def _deezer_progress(received, total, speed):
+                            pct = (received / total * 100) if total else 0.0
+                            owner._report_direct_progress(
+                                current_received=received,
+                                current_total=total or received,
+                                speed_bps=speed or 0.0,
+                                current_percent=pct,
+                                current_eta=((total - received) / speed) if (total and speed) else 0.0,
+                                overall_percent=pct,
+                                status_text="Baixando e decifrando Deezer...",
+                            )
+
+                        output = download_and_decrypt_track(
+                            track_id=str(item.get("media_id") or ""),
+                            output_path=initial_file,
+                            arl=arl,
+                            quality_preference=pref_quality,
+                            progress_callback=_deezer_progress,
+                            check_cancelled=owner.download_control.checkpoint,
+                        )
+
+                    repository.update(item_id, status="finalizing")
+                    owner.event_queue.put(("queue_changed", None))
+                    apply_deezer_metadata(output, item, owner.queue_log)
+                    files = [str(output)]
+                elif item["kind"] == "jw":
                     key = item["source"]
                     if key not in jw_cache:
                         jw_cache[key] = resolve_category_items(key, options["format"], include_subcategories=options["playlist"], logger=owner.queue_log)
@@ -351,9 +422,11 @@ def run_queue(owner, repository, options, engine):
     finally:
         items = repository.snapshot()["items"]
         try:
-            create_deezer_playlists(items, Path(options["folder"]), owner.queue_log)
+            created_playlists = create_deezer_playlists(items, Path(options["folder"]), owner.queue_log)
+            if options.get("create_collection_zip"):
+                create_collection_zip(items, Path(options["folder"]), playlists=created_playlists, logger=owner.queue_log)
         except OSError as exc:
-            owner.queue_log(f"Aviso: não foi possível criar a playlist local: {exc}")
+            owner.queue_log(f"Aviso: não foi possível criar a playlist local ou arquivo ZIP: {exc}")
         owner.event_queue.put(("download_finished", {
             "failures": sum(item["enabled"] and item["status"] in {"failed", "skipped"} for item in items),
             "completed": sum(item["enabled"] and item["status"] == "completed" for item in items),

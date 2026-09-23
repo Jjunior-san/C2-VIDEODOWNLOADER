@@ -175,9 +175,34 @@ def _write_mp3_metadata(path: Path, frames: bytes) -> None:
 
 
 def apply_deezer_metadata(path: Path, item: dict, logger=None) -> None:
-    """Attach public catalog metadata to an official preview file."""
-    if not path.is_file() or path.suffix.lower() != ".mp3":
+    """Attach metadata and cover to an audio file (MP3 or FLAC)."""
+    if not path.is_file():
         return
+    suffix = path.suffix.lower()
+    if suffix not in {".mp3", ".flac", ".m4a", ".opus"}:
+        return
+
+    # Use Mutagen for FLAC or other non-mp3 containers
+    if suffix == ".flac":
+        try:
+            write_audio_metadata(path, item)
+            if logger:
+                logger(f"Metadados FLAC e capa aplicados: {path.name}")
+            return
+        except Exception as exc:
+            if logger:
+                logger(f"Aviso: falha ao gravar tags FLAC ({exc}).")
+            return
+
+    # For MP3: attempt EasyMutagen / ID3 first
+    try:
+        write_audio_metadata(path, item)
+        if logger:
+            logger(f"Metadados e capa aplicados: {path.name}")
+        return
+    except Exception:
+        pass
+
     title = str(item.get("track_title") or item.get("title") or "")
     artist = str(item.get("artist") or "")
     album = str(item.get("album") or item.get("collection_title") or "")
@@ -311,9 +336,9 @@ def write_audio_metadata(path: Path, item: dict, *, cover_bytes: bytes | None = 
 def create_deezer_playlists(items: list[dict], folder: Path, logger=None) -> list[Path]:
     groups: dict[str, list[tuple[dict, Path]]] = defaultdict(list)
     for item in items:
-        if item.get("kind") != "deezer_preview" or item.get("status") != "completed":
+        if item.get("kind") not in {"deezer_preview", "deezer_full"} or item.get("status") != "completed":
             continue
-        collection = str(item.get("collection_title") or "Prévia Deezer")
+        collection = str(item.get("collection_title") or "Coleção Deezer")
         for filename in item.get("files", []):
             path = Path(filename)
             if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS:
@@ -338,3 +363,59 @@ def create_deezer_playlists(items: list[dict], folder: Path, logger=None) -> lis
         if logger:
             logger(f"Playlist local criada: {playlist.name}")
     return created
+
+
+def create_collection_zip(items: list[dict], folder: Path, playlists: list[Path] | None = None, logger=None) -> list[Path]:
+    """Package audio files and matching .m3u8 playlists into .ZIP archives for collections."""
+    import zipfile
+
+    groups: dict[str, list[Path]] = defaultdict(list)
+    for item in items:
+        if item.get("status") != "completed":
+            continue
+        collection = str(item.get("collection_title") or "").strip()
+        if not collection:
+            continue
+        for filename in item.get("files", []):
+            path = Path(filename)
+            if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS:
+                if path not in groups[collection]:
+                    groups[collection].append(path)
+
+    playlist_map = {pl.stem: pl for pl in (playlists or []) if pl.is_file()}
+    created_zips = []
+
+    for collection, files in groups.items():
+        if len(files) < 2:
+            continue
+        zip_path = folder / f"{_safe_name(collection)}.zip"
+        temp_zip = zip_path.with_suffix(".zip.tmp")
+        try:
+            with zipfile.ZipFile(temp_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for file_path in files:
+                    try:
+                        arcname = file_path.relative_to(folder)
+                    except ValueError:
+                        arcname = file_path.name
+                    zf.write(file_path, arcname=str(arcname))
+
+                # Include corresponding m3u8 playlist if available
+                safe_name = _safe_name(collection)
+                matching_pl = playlist_map.get(safe_name) or (folder / f"{safe_name}.m3u8")
+                if matching_pl.is_file():
+                    try:
+                        pl_arc = matching_pl.relative_to(folder)
+                    except ValueError:
+                        pl_arc = matching_pl.name
+                    zf.write(matching_pl, arcname=str(pl_arc))
+
+            temp_zip.replace(zip_path)
+            created_zips.append(zip_path)
+            if logger:
+                logger(f"Arquivo ZIP criado: {zip_path.name}")
+        except Exception as exc:
+            temp_zip.unlink(missing_ok=True)
+            if logger:
+                logger(f"Aviso: falha ao gerar ZIP da coleção '{collection}' ({exc}).")
+
+    return created_zips
