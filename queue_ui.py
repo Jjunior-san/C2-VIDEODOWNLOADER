@@ -91,6 +91,22 @@ class QueueUI:
             actions, text="Remover selecionados", command=self.remove_completed_selected,
         )
         self.remove_completed_button.pack(side="right", padx=(0, 6))
+        self.play_completed_button = ttk.Button(
+            actions, text="Reproduzir", command=lambda: self.play_selected_music(completed=True),
+        )
+        self.play_completed_button.pack(side="left")
+        self.edit_completed_button = ttk.Button(
+            actions, text="Editar metadados", command=lambda: self.edit_selected_music_metadata(completed=True),
+        )
+        self.edit_completed_button.pack(side="left", padx=(6, 0))
+        self.cover_completed_button = ttk.Button(
+            actions, text="Alterar capa", command=lambda: self.change_selected_music_cover(completed=True),
+        )
+        self.cover_completed_button.pack(side="left", padx=(6, 0))
+        self.open_folder_button = ttk.Button(
+            actions, text="Abrir pasta", command=self.open_completed_folder,
+        )
+        self.open_folder_button.pack(side="left", padx=(6, 0))
         self.completed_details = ttk.Label(
             parent, text="", width=1, wraplength=600, foreground="#596579", justify="left",
         )
@@ -107,6 +123,8 @@ class QueueUI:
             for key, value in (
                 ("audio_bitrate_mode", AUDIO_AUTO_BITRATE),
                 ("audio_custom_bitrate", "192"),
+                ("music_structure", "Artista\\Álbum"),
+                ("music_filename_template", "{faixa:02} - {titulo}"),
             ):
                 if key not in options:
                     options[key] = value
@@ -123,6 +141,10 @@ class QueueUI:
                 self.fragments_var.set(str(options["fragments"]))
                 self.cookies_browser_var.set(options.get("cookies_browser", "Nenhum"))
                 self.cookies_file_var.set(options.get("cookies_file", ""))
+                if hasattr(self, "music_structure_var"):
+                    self.music_structure_var.set(options.get("music_structure", "Artista\\Álbum"))
+                if hasattr(self, "music_filename_var"):
+                    self.music_filename_var.set(options.get("music_filename_template", "{faixa:02} - {titulo}"))
             if hasattr(self, "_set_source_text"):
                 self._set_source_text(job.get("sources", []))
             else:
@@ -174,6 +196,17 @@ class QueueUI:
         completed_state = idle_state if completed_items else "disabled"
         self.clear_completed_button.configure(state=completed_state)
         self.remove_completed_button.configure(state=completed_state)
+        if hasattr(self, "play_completed_button"):
+            selected_completed = self.completed_tree.selection()
+            selected_item = next(
+                (item for item in completed_items if selected_completed and item["id"] == selected_completed[0]),
+                None,
+            )
+            music_selected = bool(selected_item and selected_item.get("kind") == "deezer_preview")
+            self.play_completed_button.configure(state=idle_state if music_selected else "disabled")
+            self.edit_completed_button.configure(state=idle_state if music_selected else "disabled")
+            self.cover_completed_button.configure(state=idle_state if music_selected else "disabled")
+            self.open_folder_button.configure(state=idle_state if selected_item else "disabled")
         if self.queue_running and not self.active_queue_id:
             self.progress.configure(mode="determinate", value=summary["overall"])
         if not self.busy:
@@ -190,14 +223,29 @@ class QueueUI:
             self.episode_details.pack(fill="x", pady=(0, 4), before=self.episode_actions)
         else:
             self.episode_details.pack_forget()
+        if hasattr(self, "_show_music_item"):
+            self._show_music_item(item)
 
     def _show_completed_details(self, _event=None):
         selected = self.completed_tree.selection()
         item = next((item for item in self.queue_items if selected and item["id"] == selected[0]), None)
         files = item.get("files", []) if item else []
-        self.completed_details.configure(
-            text="Arquivos mantidos no computador:\n" + "\n".join(files) if files else "",
-        )
+        details = "Arquivos mantidos no computador:\n" + "\n".join(files) if files else ""
+        if item and item.get("kind") == "deezer_preview":
+            details = (
+                f"{item.get('track_title') or item.get('title') or 'Música'}\n"
+                f"Artista: {item.get('artist') or 'Não informado'}\n"
+                f"Álbum: {item.get('album') or 'Não informado'}\n\n"
+                + details
+            )
+        self.completed_details.configure(text=details)
+        if hasattr(self, "play_completed_button"):
+            idle_state = "normal" if not self.busy else "disabled"
+            music_selected = bool(item and item.get("kind") == "deezer_preview")
+            self.play_completed_button.configure(state=idle_state if music_selected else "disabled")
+            self.edit_completed_button.configure(state=idle_state if music_selected else "disabled")
+            self.cover_completed_button.configure(state=idle_state if music_selected else "disabled")
+            self.open_folder_button.configure(state=idle_state if item else "disabled")
 
     def remove_completed_selected(self):
         if self.busy or self.queue_repository is None:
@@ -313,11 +361,23 @@ class QueueUI:
             self.queue_log("Interrompendo. A fila e os arquivos parciais serão mantidos.")
 
     def _capture_options(self):
-        return dict(folder=self.folder_var.get().strip(), format=self.resolution_var.get(),
-                    audio_bitrate_mode=self.audio_bitrate_mode_var.get(),
-                    audio_custom_bitrate=self.audio_custom_bitrate_var.get().strip() or "192",
-                    playlist=bool(self.playlist_var.get()), fragments=int(self.fragments_var.get()),
-                    cookies_browser=self.cookies_browser_var.get(), cookies_file=self.cookies_file_var.get().strip())
+        return dict(
+            folder=self.folder_var.get().strip(),
+            format=self.resolution_var.get(),
+            audio_bitrate_mode=self.audio_bitrate_mode_var.get(),
+            audio_custom_bitrate=self.audio_custom_bitrate_var.get().strip() or "192",
+            playlist=bool(self.playlist_var.get()),
+            fragments=int(self.fragments_var.get()),
+            cookies_browser=self.cookies_browser_var.get(),
+            cookies_file=self.cookies_file_var.get().strip(),
+            work_mode=getattr(self, "work_mode", "video"),
+            music_structure=self.music_structure_var.get() if hasattr(self, "music_structure_var") else "Artista\\Álbum",
+            music_filename_template=(
+                self.music_filename_var.get().strip()
+                if hasattr(self, "music_filename_var") and self.music_filename_var.get().strip()
+                else "{faixa:02} - {titulo}"
+            ),
+        )
 
     def analyze_links(self):
         self._prepare_queue(False)
