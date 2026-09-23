@@ -245,6 +245,15 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
+## Versão 1.5.1 — formato original e taxa de bits configurável
+
+- adiciona **Áudio original (sem conversão)** para preservar o codec, o contêiner e a taxa da fonte quando disponível;
+- permite escolher 64, 96, 128, 160, 192, 256 ou 320 kbps para M4A, MP3 e Opus;
+- oferece taxa personalizada entre 32 e 320 kbps, com validação antes do início da fila;
+- mantém a opção **Original / automática**, que evita recodificação quando o formato já corresponde e usa a melhor qualidade automática nas conversões;
+- salva as escolhas nas preferências e na fila persistente, incluindo compatibilidade com filas criadas em versões anteriores;
+- aplica formato e taxa escolhidos também às prévias oficiais da Deezer e aos áudios do JW.ORG.
+
 ## Versão 1.5.0 — biblioteca de áudio e catálogo Deezer
 
 - adiciona os formatos de áudio MP3 e Opus, além do M4A existente;

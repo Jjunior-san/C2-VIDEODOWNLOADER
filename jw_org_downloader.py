@@ -13,6 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 from app_config import APP_VERSION
+from audio_library import AUDIO_ORIGINAL_FORMAT, is_audio_format
 from download_control import DownloadControl
 from media_conversion import run_conversion
 
@@ -207,7 +208,7 @@ def _select_file(
     if not files:
         return None
 
-    audio_only = format_choice.startswith("Apenas áudio (")
+    audio_only = is_audio_format(format_choice)
     if audio_only:
         audio_files = [item for item in files if item["_kind"] == "audio"]
         if audio_files:
@@ -488,7 +489,12 @@ def convert_to_audio(
     logger: Callable[[str], None] | None = None,
     control: DownloadControl | None = None,
     progress: Callable[[dict[str, object]], None] | None = None,
+    bitrate_kbps: int | None = None,
 ) -> Path:
+    if format_choice == AUDIO_ORIGINAL_FORMAT:
+        if logger:
+            logger(f"Áudio original preservado sem recodificação: {media_path.name}")
+        return media_path
     formats = {
         "Apenas áudio (M4A)": (".m4a", ["-c:a", "aac", "-profile:a", "aac_low", "-b:a", "160k", "-movflags", "+faststart"]),
         "Apenas áudio (MP3)": (".mp3", ["-c:a", "libmp3lame", "-q:a", "0"]),
@@ -497,8 +503,15 @@ def convert_to_audio(
     if format_choice not in formats:
         raise JWOrgError(f"Formato de áudio não reconhecido: {format_choice}")
     extension, codec_arguments = formats[format_choice]
+    if bitrate_kbps:
+        if format_choice == "Apenas áudio (M4A)":
+            codec_arguments = ["-c:a", "aac", "-profile:a", "aac_low", "-b:a", f"{bitrate_kbps}k", "-movflags", "+faststart"]
+        elif format_choice == "Apenas áudio (MP3)":
+            codec_arguments = ["-c:a", "libmp3lame", "-b:a", f"{bitrate_kbps}k"]
+        else:
+            codec_arguments = ["-c:a", "libopus", "-b:a", f"{bitrate_kbps}k"]
     label = extension[1:].upper()
-    if media_path.suffix.lower() == extension:
+    if media_path.suffix.lower() == extension and bitrate_kbps is None:
         return media_path
     if not ffmpeg_path:
         raise JWOrgError(f"FFmpeg não está disponível para gerar o arquivo {label}.")

@@ -15,7 +15,14 @@ from tkinter import BooleanVar, END, StringVar, Tk, filedialog, messagebox
 from tkinter import ttk
 
 from app_config import APP_MUTEX, APP_NAME, APP_VERSION
-from audio_library import audio_codec, is_audio_format
+from audio_library import (
+    AUDIO_AUTO_BITRATE,
+    AUDIO_BITRATE_CHOICES,
+    AUDIO_CUSTOM_BITRATE,
+    AUDIO_ORIGINAL_FORMAT,
+    audio_codec,
+    is_audio_format,
+)
 from download_control import DownloadCancelled, DownloadControl
 from ui_layout import ScrollablePage, build_brand, configure_fonts, fit_window, wrapping_label
 from download_queue import QueueRepository, queue_summary
@@ -64,6 +71,7 @@ DOWNLOAD_FORMATS = [
     "720p",
     "480p",
     "360p",
+    AUDIO_ORIGINAL_FORMAT,
     "Apenas áudio (M4A)",
     "Apenas áudio (MP3)",
     "Apenas áudio (Opus)",
@@ -249,10 +257,17 @@ class DownloadApp(QueueUI):
         saved_browser = str(self.user_settings.get("cookies_browser") or "Nenhum")
         if saved_browser not in BROWSERS:
             saved_browser = "Nenhum"
+        saved_bitrate_mode = str(self.user_settings.get("audio_bitrate_mode") or AUDIO_AUTO_BITRATE)
+        if saved_bitrate_mode not in AUDIO_BITRATE_CHOICES:
+            saved_bitrate_mode = AUDIO_AUTO_BITRATE
 
         self.folder_var = StringVar(value=saved_folder)
         self.playlist_var = BooleanVar(value=bool(self.user_settings.get("playlist", True)))
         self.resolution_var = StringVar(value=saved_format)
+        self.audio_bitrate_mode_var = StringVar(value=saved_bitrate_mode)
+        self.audio_custom_bitrate_var = StringVar(
+            value=str(self.user_settings.get("audio_custom_bitrate") or "192"),
+        )
         self.cookies_browser_var = StringVar(value=saved_browser)
         self.cookies_file_var = StringVar()
         self.fragments_var = StringVar(value=str(fragment_count(self.user_settings.get("concurrent_fragments", 4))))
@@ -358,6 +373,27 @@ class DownloadApp(QueueUI):
         ).pack(side="left")
         ttk.Checkbutton(format_frame, text="Baixar playlist/álbum", variable=self.playlist_var).pack(side="left", padx=(12, 0))
 
+        audio_frame = ttk.Frame(frame)
+        audio_frame.pack(fill="x", pady=(0, 10))
+        ttk.Label(audio_frame, text="Taxa do áudio:").pack(side="left", padx=(0, 8))
+        self.audio_bitrate_combo = ttk.Combobox(
+            audio_frame, textvariable=self.audio_bitrate_mode_var,
+            values=AUDIO_BITRATE_CHOICES, state="readonly", width=20,
+        )
+        self.audio_bitrate_combo.pack(side="left")
+        self.audio_custom_bitrate = ttk.Spinbox(
+            audio_frame, textvariable=self.audio_custom_bitrate_var,
+            from_=32, to=320, increment=1, width=6,
+        )
+        self.audio_custom_bitrate.pack(side="left", padx=(8, 4))
+        self.audio_custom_bitrate_unit = ttk.Label(audio_frame, text="kbps")
+        self.audio_custom_bitrate_unit.pack(side="left")
+        self.audio_bitrate_hint = ttk.Label(audio_frame, text="", foreground="#596579")
+        self.audio_bitrate_hint.pack(side="left", padx=(10, 0))
+        self.resolution_var.trace_add("write", self._update_audio_controls)
+        self.audio_bitrate_mode_var.trace_add("write", self._update_audio_controls)
+        self._update_audio_controls()
+
         self._build_episode_list(frame)
 
         actions = self.episode_actions
@@ -432,6 +468,28 @@ class DownloadApp(QueueUI):
         return Text(parent, height=height, width=1, wrap="word", font=(self.text_family, 10),
                     relief="solid", borderwidth=1, padx=8, pady=6)
 
+    def _update_audio_controls(self, *_args) -> None:
+        format_choice = self.resolution_var.get()
+        audio_selected = is_audio_format(format_choice)
+        original_selected = format_choice == AUDIO_ORIGINAL_FORMAT
+        if original_selected and self.audio_bitrate_mode_var.get() != AUDIO_AUTO_BITRATE:
+            self.audio_bitrate_mode_var.set(AUDIO_AUTO_BITRATE)
+        self.audio_bitrate_combo.configure(state="readonly" if audio_selected and not original_selected else "disabled")
+        custom_enabled = (
+            audio_selected
+            and not original_selected
+            and self.audio_bitrate_mode_var.get() == AUDIO_CUSTOM_BITRATE
+        )
+        self.audio_custom_bitrate.configure(state="normal" if custom_enabled else "disabled")
+        self.audio_custom_bitrate_unit.configure(state="normal" if custom_enabled else "disabled")
+        if original_selected:
+            hint = "Preserva o codec e a taxa da fonte."
+        elif audio_selected:
+            hint = "Automática usa a melhor qualidade do conversor."
+        else:
+            hint = "Disponível ao escolher um formato de áudio."
+        self.audio_bitrate_hint.configure(text=hint)
+
     def choose_folder(self) -> None:
         initial = Path(self.folder_var.get().strip() or str(Path.home()))
         if not initial.exists():
@@ -445,6 +503,8 @@ class DownloadApp(QueueUI):
         settings: dict[str, object] = {
             "download_folder": self.folder_var.get().strip() or str(Path.home() / "Downloads"),
             "format": self.resolution_var.get(),
+            "audio_bitrate_mode": self.audio_bitrate_mode_var.get(),
+            "audio_custom_bitrate": self.audio_custom_bitrate_var.get().strip() or "192",
             "playlist": bool(self.playlist_var.get()),
             "cookies_browser": self.cookies_browser_var.get(),
             "concurrent_fragments": fragment_count(self.fragments_var.get()),
@@ -924,6 +984,7 @@ class DownloadApp(QueueUI):
         *,
         output_template: str | None = None,
         include_cookies: bool = True,
+        audio_bitrate: int | None = None,
     ) -> list[str]:
         def compatible_selector(height: int | None = None) -> str:
             height_filter = f"[height<={height}]" if height else ""
@@ -942,6 +1003,7 @@ class DownloadApp(QueueUI):
             "720p": compatible_selector(720),
             "480p": compatible_selector(480),
             "360p": compatible_selector(360),
+            AUDIO_ORIGINAL_FORMAT: "ba/bestaudio/best",
             "Apenas áudio (M4A)": "ba/bestaudio/best",
             "Apenas áudio (MP3)": "ba/bestaudio/best",
             "Apenas áudio (Opus)": "ba/bestaudio/best",
@@ -1004,9 +1066,17 @@ class DownloadApp(QueueUI):
         if deno and Path(deno).is_file():
             command.extend(["--js-runtimes", f"deno:{deno}"])
         codec = audio_codec(format_choice)
-        if codec:
+        if format_choice == AUDIO_ORIGINAL_FORMAT:
+            # Keep the downloaded audio bitstream untouched; even metadata or
+            # thumbnail embedding could force a container rewrite.
+            pass
+        elif is_audio_format(format_choice):
+            if codec:
+                command.extend([
+                    "--extract-audio", "--audio-format", codec,
+                    "--audio-quality", f"{audio_bitrate}K" if audio_bitrate else "0",
+                ])
             command.extend([
-                "--extract-audio", "--audio-format", codec, "--audio-quality", "0",
                 "--embed-metadata", "--embed-thumbnail", "--convert-thumbnails", "jpg",
                 "--no-embed-chapters",
             ])

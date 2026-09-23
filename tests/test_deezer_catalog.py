@@ -1,6 +1,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import audio_library
 import deezer_catalog
 import queue_service
@@ -8,6 +10,21 @@ from audio_library import create_deezer_playlists
 from deezer_catalog import DeezerCollection, DeezerTrack
 from download_control import DownloadControl
 from download_queue import QueueRepository, queue_item
+
+
+@pytest.mark.parametrize("mode,custom,expected", [
+    ("Original / automática", "192", None),
+    ("64 kbps", "192", 64),
+    ("Personalizada", "173", 173),
+])
+def test_audio_bitrate_selection(mode, custom, expected):
+    assert audio_library.audio_bitrate_kbps(mode, custom) == expected
+
+
+@pytest.mark.parametrize("value", ["", "31", "321", "invalid"])
+def test_custom_audio_bitrate_is_validated(value):
+    with pytest.raises(ValueError):
+        audio_library.audio_bitrate_kbps("Personalizada", value)
 
 
 def test_recognizes_only_supported_public_deezer_pages():
@@ -89,6 +106,44 @@ def test_deezer_preview_refreshes_url_omits_cookies_and_uses_mp3(tmp_path, monke
     assert args[2] == "Apenas áudio (MP3)"
     assert args[3] == "https://cdnt-preview.dzcdn.net/fresh.mp3"
     assert kwargs["include_cookies"] is False
+    assert repository.snapshot()["items"][0]["status"] == "completed"
+
+
+def test_deezer_preview_respects_selected_audio_format_and_bitrate(tmp_path, monkeypatch):
+    item = queue_item(
+        "https://www.deezer.com/track/1", "Artist - Title (prévia Deezer)",
+        kind="deezer_preview", media_id="1", collection_title="Album",
+    )
+    options = {
+        "folder": str(tmp_path), "format": "Apenas áudio (Opus)", "playlist": True,
+        "fragments": 4, "cookies_browser": "Nenhum", "cookies_file": "",
+        "audio_bitrate_mode": "Personalizada", "audio_custom_bitrate": "128",
+    }
+    repository = QueueRepository(tmp_path / "queue-opus.db")
+    repository.replace([item], options, [item["source"]])
+    output = tmp_path / "preview.opus"
+    output.write_bytes(b"preview")
+    owner = SimpleNamespace(
+        download_control=DownloadControl(), event_queue=SimpleNamespace(put=lambda value: None),
+        queue_log=lambda message: None, active_queue_id=None, download_completed_files=0,
+        _begin_download_item=lambda *args: None, finalized_files=[],
+    )
+    commands = []
+    owner._build_command = lambda *args, **kwargs: commands.append((args, kwargs)) or ["engine"]
+    owner._run_downloader = lambda command: (0, [output])
+    owner._finalize_downloaded_files = lambda code, outputs, fmt: (
+        setattr(owner, "finalized_files", outputs) or True
+    )
+    monkeypatch.setattr(queue_service, "resolve_deezer_track", lambda track_id: DeezerTrack(
+        "1", "Title", "Artist", "Album", "https://cdnt-preview.dzcdn.net/fresh.mp3",
+    ))
+    monkeypatch.setattr(queue_service, "apply_deezer_metadata", lambda *args: None)
+
+    queue_service.run_queue(owner, repository, options, Path("engine"))
+
+    args, kwargs = commands[0]
+    assert args[2] == "Apenas áudio (Opus)"
+    assert kwargs["audio_bitrate"] == 128
     assert repository.snapshot()["items"][0]["status"] == "completed"
 
 

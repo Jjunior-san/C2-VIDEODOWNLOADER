@@ -4,6 +4,7 @@ import threading
 from pathlib import Path
 from tkinter import END, messagebox, ttk
 
+from audio_library import AUDIO_AUTO_BITRATE, bitrate_from_options, is_audio_format
 from download_control import DownloadCancelled, DownloadControl
 from download_queue import ACTIVE, LABELS, RUNNABLE, queue_summary
 from queue_service import discover, run_queue
@@ -101,11 +102,23 @@ class QueueUI:
     def _restore_queue(self):
         job = self.queue_repository.recover()
         if job["items"]:
-            options = job["options"]
+            options = dict(job["options"])
+            upgraded = False
+            for key, value in (
+                ("audio_bitrate_mode", AUDIO_AUTO_BITRATE),
+                ("audio_custom_bitrate", "192"),
+            ):
+                if key not in options:
+                    options[key] = value
+                    upgraded = True
+            if upgraded:
+                self.queue_repository.replace(job["items"], options, job.get("sources", []))
             needs_resume = any(item["kind"] != "unresolved" and item["status"] in (RUNNABLE | {"failed"}) for item in job["items"])
             if needs_resume:
                 self.folder_var.set(options["folder"])
                 self.resolution_var.set(options["format"])
+                self.audio_bitrate_mode_var.set(options["audio_bitrate_mode"])
+                self.audio_custom_bitrate_var.set(str(options["audio_custom_bitrate"]))
                 self.playlist_var.set(options["playlist"])
                 self.fragments_var.set(str(options["fragments"]))
                 self.cookies_browser_var.set(options.get("cookies_browser", "Nenhum"))
@@ -298,6 +311,8 @@ class QueueUI:
 
     def _capture_options(self):
         return dict(folder=self.folder_var.get().strip(), format=self.resolution_var.get(),
+                    audio_bitrate_mode=self.audio_bitrate_mode_var.get(),
+                    audio_custom_bitrate=self.audio_custom_bitrate_var.get().strip() or "192",
                     playlist=bool(self.playlist_var.get()), fragments=int(self.fragments_var.get()),
                     cookies_browser=self.cookies_browser_var.get(), cookies_file=self.cookies_file_var.get().strip())
 
@@ -315,6 +330,12 @@ class QueueUI:
             if not messagebox.askyesno("Fila de downloads", "Substituir a lista salva pelos links informados? Os arquivos já baixados serão preservados."):
                 return
         options = self._capture_options()
+        try:
+            if is_audio_format(options["format"]):
+                bitrate_from_options(options)
+        except ValueError as exc:
+            messagebox.showwarning("Taxa de bits", str(exc))
+            return
         if not options["folder"]:
             options["folder"] = str(Path.home() / "Downloads")
             self.folder_var.set(options["folder"])
@@ -378,6 +399,12 @@ class QueueUI:
             messagebox.showinfo("Fila de downloads", "Marque vídeos pendentes ou use Repetir falhas. Os concluídos não serão baixados novamente.")
             return
         options = job["options"]
+        try:
+            if is_audio_format(options["format"]):
+                bitrate_from_options(options)
+        except ValueError as exc:
+            messagebox.showwarning("Taxa de bits", str(exc))
+            return
         current = self._capture_options()
         if current != options:
             messagebox.showinfo("Fila de downloads", "A fila usa a pasta, o formato e as opções definidos ao listar os vídeos. Para alterar, clique em Listar vídeos novamente.")

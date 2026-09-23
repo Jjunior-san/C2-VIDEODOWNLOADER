@@ -99,6 +99,21 @@ def test_activity_is_persisted_and_can_be_cleared(window):
     assert app.ACTIVITY_LOG_FILE.read_text(encoding="utf-8") == ""
 
 
+def test_audio_format_enables_bitrate_and_original_disables_conversion_controls(window):
+    root, instance = window
+    instance.resolution_var.set("Apenas áudio (MP3)")
+    instance.audio_bitrate_mode_var.set("Personalizada")
+    root.update()
+    assert str(instance.audio_bitrate_combo["state"]) == "readonly"
+    assert str(instance.audio_custom_bitrate["state"]) == "normal"
+
+    instance.resolution_var.set("Áudio original (sem conversão)")
+    root.update()
+    assert instance.audio_bitrate_mode_var.get() == "Original / automática"
+    assert str(instance.audio_bitrate_combo["state"]) == "disabled"
+    assert str(instance.audio_custom_bitrate["state"]) == "disabled"
+
+
 def test_queue_table_selections_retry_and_stop_race(window):
     from download_queue import queue_item
     _, instance = window

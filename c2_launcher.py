@@ -12,7 +12,7 @@ from jw_org_downloader import (
     is_jw_category_url,
     resolve_category_items,
 )
-from audio_library import is_audio_format
+from audio_library import bitrate_from_options, is_audio_format
 from kanald_downloader import (
     is_kanald_collection_url,
     is_kanald_url,
@@ -73,6 +73,12 @@ def _download_with_jw_categories(
     failures = 0
     attempted = 0
     self.download_completed_files = 0
+    bitrate_options = {}
+    if hasattr(self, "audio_bitrate_mode_var"):
+        bitrate_options["audio_bitrate_mode"] = self.audio_bitrate_mode_var.get()
+    if hasattr(self, "audio_custom_bitrate_var"):
+        bitrate_options["audio_custom_bitrate"] = self.audio_custom_bitrate_var.get()
+    selected_bitrate = bitrate_from_options(bitrate_options) if is_audio_format(format_choice) else None
     try:
         status = self.dependencies.ensure(self.queue_log, force=False)
         self.dependency_status = status
@@ -93,6 +99,7 @@ def _download_with_jw_categories(
                 download_url,
                 output_template=filename_template,
                 include_cookies=include_cookies,
+                audio_bitrate=selected_bitrate,
             )
             return_code, output_files = self._run_downloader(command)
             return self._finalize_downloaded_files(return_code, output_files, format_choice)
@@ -135,6 +142,7 @@ def _download_with_jw_categories(
                                 output_file,
                                 format_choice,
                                 app.FFMPEG_PATH,
+                                bitrate_kbps=selected_bitrate,
                                 logger=self.queue_log,
                                 control=self.download_control,
                                 progress=lambda payload: self.event_queue.put((

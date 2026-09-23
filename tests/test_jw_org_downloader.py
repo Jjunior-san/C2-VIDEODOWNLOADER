@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+
+import jw_org_downloader
 
 from jw_org_downloader import (
     JWOrgError,
     _select_file,
     parse_jw_category_url,
+    convert_to_audio,
 )
 
 
@@ -107,12 +111,32 @@ class SelectFileTests(unittest.TestCase):
                 },
             ]
         }
-        for format_choice in ("Apenas áudio (M4A)", "Apenas áudio (MP3)", "Apenas áudio (Opus)"):
+        for format_choice in (
+            "Áudio original (sem conversão)",
+            "Apenas áudio (M4A)", "Apenas áudio (MP3)", "Apenas áudio (Opus)",
+        ):
             with self.subTest(format_choice=format_choice):
                 selected = _select_file(media, format_choice)
                 self.assertIsNotNone(selected)
                 assert selected is not None
                 self.assertEqual(selected["_kind"], "audio")
+
+
+def test_custom_bitrate_is_forwarded_to_ffmpeg(tmp_path, monkeypatch):
+    source = tmp_path / "source.wav"
+    source.write_bytes(b"source")
+    commands = []
+
+    def complete(command, *args, **kwargs):
+        commands.append(command)
+        Path(command[-1]).write_bytes(b"converted")
+
+    monkeypatch.setattr(jw_org_downloader, "run_conversion", complete)
+    output = convert_to_audio(source, "Apenas áudio (MP3)", "ffmpeg", bitrate_kbps=192)
+
+    assert output.suffix == ".mp3"
+    assert commands[0][commands[0].index("-b:a") + 1] == "192k"
+    assert not source.exists()
 
 
 if __name__ == "__main__":

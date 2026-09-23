@@ -213,6 +213,28 @@ def test_audio_commands_embed_metadata_and_cover(tmp_path, monkeypatch, choice, 
     assert "--merge-output-format" not in command
 
 
+def test_original_audio_preserves_source_without_conversion(tmp_path, monkeypatch):
+    instance, _, _, _ = make_download(tmp_path, monkeypatch, "https://example.com/audio")
+    command = instance._build_command(
+        Path("yt-dlp"), tmp_path, "Áudio original (sem conversão)",
+        "https://example.com/audio", include_cookies=False,
+    )
+    assert command[command.index("-f") + 1] == "ba/bestaudio/best"
+    assert "--extract-audio" not in command
+    assert "--audio-format" not in command
+    assert "--merge-output-format" not in command
+    assert "--embed-thumbnail" not in command
+
+
+def test_custom_audio_bitrate_is_forwarded_to_ytdlp(tmp_path, monkeypatch):
+    instance, _, _, _ = make_download(tmp_path, monkeypatch, "https://example.com/audio")
+    command = instance._build_command(
+        Path("yt-dlp"), tmp_path, "Apenas áudio (MP3)",
+        "https://example.com/audio", include_cookies=False, audio_bitrate=192,
+    )
+    assert command[command.index("--audio-quality") + 1] == "192K"
+
+
 def test_discovery_uses_actual_cli_to_expand_playlist(tmp_path, monkeypatch, server):
     from queue_service import metadata_items, read_metadata
     port = server[0].rsplit(":", 1)[1]

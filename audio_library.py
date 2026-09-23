@@ -12,7 +12,22 @@ from urllib.request import Request, urlopen
 from app_config import APP_VERSION
 
 
+AUDIO_ORIGINAL_FORMAT = "Áudio original (sem conversão)"
+AUDIO_AUTO_BITRATE = "Original / automática"
+AUDIO_CUSTOM_BITRATE = "Personalizada"
+AUDIO_BITRATE_CHOICES = (
+    AUDIO_AUTO_BITRATE,
+    "64 kbps",
+    "96 kbps",
+    "128 kbps",
+    "160 kbps",
+    "192 kbps",
+    "256 kbps",
+    "320 kbps",
+    AUDIO_CUSTOM_BITRATE,
+)
 AUDIO_FORMATS = {
+    AUDIO_ORIGINAL_FORMAT: None,
     "Apenas áudio (M4A)": "m4a",
     "Apenas áudio (MP3)": "mp3",
     "Apenas áudio (Opus)": "opus",
@@ -26,6 +41,30 @@ def is_audio_format(format_choice: str) -> bool:
 
 def audio_codec(format_choice: str) -> str | None:
     return AUDIO_FORMATS.get(format_choice)
+
+
+def audio_bitrate_kbps(mode: object = AUDIO_AUTO_BITRATE, custom: object = "192") -> int | None:
+    """Return a validated target bitrate, or None for source/default quality."""
+    selected = str(mode or AUDIO_AUTO_BITRATE).strip()
+    if selected == AUDIO_AUTO_BITRATE:
+        return None
+    value = str(custom if selected == AUDIO_CUSTOM_BITRATE else selected).lower()
+    value = value.removesuffix("kbps").strip()
+    try:
+        bitrate = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Informe uma taxa de bits inteira entre 32 e 320 kbps.") from exc
+    if not 32 <= bitrate <= 320:
+        raise ValueError("A taxa de bits personalizada deve ficar entre 32 e 320 kbps.")
+    return bitrate
+
+
+def bitrate_from_options(options: dict | None) -> int | None:
+    values = options or {}
+    return audio_bitrate_kbps(
+        values.get("audio_bitrate_mode", AUDIO_AUTO_BITRATE),
+        values.get("audio_custom_bitrate", "192"),
+    )
 
 
 def _safe_name(value: str, fallback: str = "Playlist") -> str:
