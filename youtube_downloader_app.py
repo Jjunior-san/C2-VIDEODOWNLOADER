@@ -685,6 +685,7 @@ class DownloadApp(QueueUI):
         self.music_search_type_var.trace_add("write", self._schedule_music_search)
         self.music_results_tree.bind("<<TreeviewSelect>>", self._show_selected_catalog_result)
         self.music_results_tree.bind("<Double-1>", lambda _event: self._load_selected_catalog_result())
+        self.music_search_entry.bind("<Return>", lambda _event: self._load_selected_catalog_result())
         self.music_search_entry.focus_set()
         self._update_audio_controls()
 
@@ -1255,6 +1256,7 @@ class DownloadApp(QueueUI):
             "work_mode": self.work_mode,
             "music_structure": self.music_structure_var.get(),
             "music_filename_template": self.music_filename_var.get().strip() or DEFAULT_MUSIC_FILENAME,
+            "music_search_type": self.music_search_type_var.get(),
             "format": self.resolution_var.get(),
             "audio_bitrate_mode": self.audio_bitrate_mode_var.get(),
             "audio_custom_bitrate": self.audio_custom_bitrate_var.get().strip() or "192",
@@ -1562,6 +1564,10 @@ class DownloadApp(QueueUI):
                     self.update_button.configure(state="normal")
                     self.update_status_var.set("Falha ao baixar atualização")
                     messagebox.showerror(APP_NAME, str(payload))
+                elif event == "music_search_results":
+                    self._handle_music_search_results(payload)
+                elif event == "catalog_cover_ready":
+                    self._apply_catalog_cover(payload)
                 elif event == "music_cover_ready":
                     self._apply_music_cover(payload)
                 elif event == "music_player_status":
@@ -1680,8 +1686,10 @@ class DownloadApp(QueueUI):
         QueueUI.start_download(self)
 
     def _get_urls(self) -> list[str]:
-        source_widget = self.music_url_text if self.work_mode == "music" else self.video_url_text
-        raw = source_widget.get("1.0", END)
+        if self.work_mode == "music":
+            query = self.music_search_var.get().strip()
+            return [query] if query else []
+        raw = self.video_url_text.get("1.0", END)
         return [line.strip() for line in raw.splitlines() if line.strip()]
 
     def _download(self, urls: list[str], folder: Path, format_choice: str) -> None:
