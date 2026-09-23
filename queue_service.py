@@ -10,7 +10,7 @@ from urllib.parse import unquote, urlparse
 
 from c2_update import CREATE_NO_WINDOW
 from audio_library import apply_deezer_metadata, bitrate_from_options, create_deezer_playlists, is_audio_format
-from deezer_catalog import is_deezer_url, resolve_deezer_track, resolve_deezer_url
+from deezer_catalog import is_deezer_url, resolve_deezer_track, resolve_deezer_url, search_deezer_tracks
 from download_control import DownloadCancelled, DownloadSkipped
 from download_queue import RUNNABLE, queue_item
 from jw_org_downloader import is_jw_category_url, resolve_category_items, download_item, convert_to_audio
@@ -104,42 +104,56 @@ def metadata_items(info: dict, source: str) -> list[dict]:
     return result
 
 
+
+def _deezer_queue_items(tracks, collection_title: str, options) -> list[dict]:
+    items = []
+    for position, track in enumerate(tracks, 1):
+        item = queue_item(
+            track.page_url,
+            f"{track.display_title} (prévia Deezer)",
+            kind="deezer_preview",
+            media_id=track.track_id,
+            track_title=track.title,
+            artist=track.artist,
+            album=track.album,
+            track_number=track.track_number or position,
+            disc_number=track.disc_number,
+            release_year=track.release_year,
+            duration=track.duration,
+            cover_url=track.cover_url,
+            collection_title=collection_title,
+            quality=(
+                f"Prévia oficial • {options['format']}"
+                if is_audio_format(options["format"])
+                else "Prévia oficial MP3"
+            ),
+        )
+        if not track.preview_url:
+            item.update(
+                status="skipped", enabled=False,
+                error="A Deezer não disponibilizou uma prévia pública para esta faixa.",
+            )
+        items.append(item)
+    return items
+
 def discover(sources, options, engine, control, environment, log):
     items = []
     for source in sources:
         control.checkpoint()
         try:
-            if is_deezer_url(source):
+            if source.lower().startswith("deezer:"):
+                query = source.split(":", 1)[1].strip()
+                log(f"Deezer: pesquisando no catálogo público por '{query}'.")
+                limit = 25 if options["playlist"] else 1
+                tracks = search_deezer_tracks(query, limit=limit)
+                if not tracks:
+                    raise RuntimeError("Nenhuma faixa foi encontrada na pesquisa da Deezer.")
+                items.extend(_deezer_queue_items(tracks, f"Pesquisa Deezer - {query}", options))
+            elif is_deezer_url(source):
                 log("Deezer: consultando o catálogo público; somente prévias oficiais serão incluídas.")
                 collection = resolve_deezer_url(source)
                 tracks = collection.tracks if options["playlist"] else collection.tracks[:1]
-                for position, track in enumerate(tracks, 1):
-                    item = queue_item(
-                        track.page_url,
-                        f"{track.display_title} (prévia Deezer)",
-                        kind="deezer_preview",
-                        media_id=track.track_id,
-                        track_title=track.title,
-                        artist=track.artist,
-                        album=track.album,
-                        track_number=track.track_number or position,
-                        disc_number=track.disc_number,
-                        release_year=track.release_year,
-                        duration=track.duration,
-                        cover_url=track.cover_url,
-                        collection_title=collection.title,
-                        quality=(
-                            f"Prévia oficial • {options['format']}"
-                            if is_audio_format(options["format"])
-                            else "Prévia oficial MP3"
-                        ),
-                    )
-                    if not track.preview_url:
-                        item.update(
-                            status="skipped", enabled=False,
-                            error="A Deezer não disponibilizou uma prévia pública para esta faixa.",
-                        )
-                    items.append(item)
+                items.extend(_deezer_queue_items(tracks, collection.title, options))
             elif is_jw_category_url(source):
                 for media in resolve_category_items(source, options["format"], include_subcategories=options["playlist"], logger=log):
                     items.append(queue_item(source, media.title, kind="jw", media_id=media.media_id,
