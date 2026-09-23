@@ -11,7 +11,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from tkinter import BooleanVar, END, StringVar, Tk, filedialog, messagebox
+from tkinter import BooleanVar, END, StringVar, Tk, Toplevel, filedialog, messagebox
 from tkinter import ttk
 
 from app_config import APP_MUTEX, APP_NAME, APP_VERSION
@@ -20,15 +20,22 @@ from audio_library import (
     AUDIO_BITRATE_CHOICES,
     AUDIO_CUSTOM_BITRATE,
     AUDIO_ORIGINAL_FORMAT,
+    DEFAULT_MUSIC_FILENAME,
+    MUSIC_FOLDER_STRUCTURES,
     audio_codec,
+    cover_bytes_for_item,
     is_audio_format,
+    read_audio_metadata,
+    write_audio_metadata,
 )
+from deezer_catalog import resolve_deezer_track
 from download_control import DownloadCancelled, DownloadControl
 from ui_layout import ScrollablePage, build_brand, configure_fonts, fit_window, wrapping_label
 from download_queue import QueueRepository, queue_summary
 from queue_ui import QueueUI
 from queue_service import cookie_arguments
 from media_conversion import codec_arguments, duration_from_probe, run_conversion, stream_compatibility
+from music_player import MusicPlayer, MusicPlayerError
 from process_monitor import ProcessInactivityError, close_process, monitored_lines
 from c2_update import (
     ApplicationUpdater,
@@ -270,6 +277,12 @@ class DownloadApp(QueueUI):
         saved_work_mode = str(self.user_settings.get("work_mode") or "video").lower()
         if saved_work_mode not in {"music", "video"}:
             saved_work_mode = "video"
+        saved_music_structure = str(self.user_settings.get("music_structure") or "Artista\\Álbum")
+        if saved_music_structure not in MUSIC_FOLDER_STRUCTURES:
+            saved_music_structure = "Artista\\Álbum"
+        saved_music_filename = str(
+            self.user_settings.get("music_filename_template") or DEFAULT_MUSIC_FILENAME
+        )
 
         self.work_mode = saved_work_mode
         self.folder_var = StringVar(value=saved_folder)
@@ -282,6 +295,8 @@ class DownloadApp(QueueUI):
         self.cookies_browser_var = StringVar(value=saved_browser)
         self.cookies_file_var = StringVar()
         self.fragments_var = StringVar(value=str(fragment_count(self.user_settings.get("concurrent_fragments", 4))))
+        self.music_structure_var = StringVar(value=saved_music_structure)
+        self.music_filename_var = StringVar(value=saved_music_filename)
         self.download_fragments = fragment_count(self.fragments_var.get())
         self.download_control = DownloadControl()
         self.update_status_var = StringVar(value="Componentes ainda não verificados")
@@ -306,6 +321,9 @@ class DownloadApp(QueueUI):
         self.queue_running = False
         self.download_options = None
         self.ffmpeg_path = FFMPEG_PATH
+        self.music_player = MusicPlayer(DATA_DIR / "preview_cache")
+        self.current_music_item_id = None
+        self._music_cover_image = None
 
         self.dependencies = DependencyManager()
         self.app_updater = ApplicationUpdater(self.dependencies)
@@ -385,6 +403,27 @@ class DownloadApp(QueueUI):
             text="Para pesquisar, use: deezer: artista música. Links públicos da Deezer também são aceitos.",
             foreground="#596579",
         )
+        music_org = ttk.LabelFrame(music_page, text="Organização da biblioteca", padding=8)
+        music_org.pack(fill="x", pady=(8, 0))
+        org_row = ttk.Frame(music_org)
+        org_row.pack(fill="x", pady=(0, 6))
+        ttk.Label(org_row, text="Criar pastas:").pack(side="left", padx=(0, 8))
+        ttk.Combobox(
+            org_row,
+            textvariable=self.music_structure_var,
+            values=MUSIC_FOLDER_STRUCTURES,
+            state="readonly",
+            width=18,
+        ).pack(side="left")
+        name_row = ttk.Frame(music_org)
+        name_row.pack(fill="x")
+        ttk.Label(name_row, text="Nome do arquivo:").pack(side="left", padx=(0, 8))
+        ttk.Entry(name_row, textvariable=self.music_filename_var).pack(side="left", fill="x", expand=True)
+        wrapping_label(
+            music_org,
+            text="Campos: {faixa:02}, {titulo}, {artista}, {album}, {ano}, {id}",
+            foreground="#596579",
+        )
 
         ttk.Label(
             video_page,
@@ -439,6 +478,7 @@ class DownloadApp(QueueUI):
         self._update_audio_controls()
 
         self._build_episode_list(frame)
+        self._build_music_details(frame)
         self._apply_work_mode(self.work_mode, initial=True)
         self.work_tabs.bind("<<NotebookTabChanged>>", self._on_work_mode_changed)
 
@@ -582,6 +622,228 @@ class DownloadApp(QueueUI):
         target.delete("1.0", END)
         target.insert("1.0", "\n".join(values))
 
+    def _build_music_details(self, parent) -> None:
+        self.music_detail_frame = ttk.LabelFrame(parent, text="Detalhes da música", padding=10)
+        cover_column = ttk.Frame(self.music_detail_frame)
+        cover_column.pack(side="left", anchor="n", padx=(0, 12))
+        self.music_cover_label = ttk.Label(cover_column, text="Sem capa", width=18, anchor="center")
+        self.music_cover_label.pack()
+        info = ttk.Frame(self.music_detail_frame)
+        info.pack(side="left", fill="both", expand=True)
+        self.music_title_var = StringVar()
+        self.music_artist_var = StringVar()
+        self.music_album_var = StringVar()
+        self.music_extra_var = StringVar()
+        wrapping_label(info, textvariable=self.music_title_var, font=(self.text_family, 11, "bold"))
+        wrapping_label(info, textvariable=self.music_artist_var)
+        wrapping_label(info, textvariable=self.music_album_var)
+        wrapping_label(info, textvariable=self.music_extra_var, foreground="#596579")
+        buttons = ttk.Frame(info)
+        buttons.pack(fill="x", pady=(8, 0))
+        ttk.Button(buttons, text="Reproduzir", command=self.play_selected_music).pack(side="left")
+        ttk.Button(buttons, text="Parar", command=self.stop_music).pack(side="left", padx=(6, 0))
+        ttk.Button(buttons, text="Editar metadados", command=self.edit_selected_music_metadata).pack(side="left", padx=(6, 0))
+        ttk.Button(buttons, text="Alterar capa", command=self.change_selected_music_cover).pack(side="left", padx=(6, 0))
+
+    def _selected_music_item(self, *, completed: bool = False):
+        selection = self.completed_tree.selection() if completed else self.episode_tree.selection()
+        item_id = selection[0] if selection else self.current_music_item_id
+        return next((item for item in self.queue_items if item.get("id") == item_id), None)
+
+    def _show_music_item(self, item) -> None:
+        if not item or item.get("kind") != "deezer_preview":
+            self.current_music_item_id = None
+            self._music_cover_image = None
+            if hasattr(self, "music_detail_frame"):
+                self.music_detail_frame.pack_forget()
+            return
+        self.current_music_item_id = item.get("id")
+        if not self.music_detail_frame.winfo_manager():
+            self.music_detail_frame.pack(fill="x", pady=(0, 8), before=self.episode_actions)
+        self.music_title_var.set(str(item.get("track_title") or item.get("title") or "Música"))
+        self.music_artist_var.set(f"Artista: {item.get('artist') or 'Não informado'}")
+        self.music_album_var.set(f"Álbum: {item.get('album') or 'Não informado'}")
+        extras = []
+        if item.get("track_number"):
+            extras.append(f"Faixa {item.get('track_number')}")
+        if item.get("disc_number"):
+            extras.append(f"Disco {item.get('disc_number')}")
+        if item.get("release_year"):
+            extras.append(str(item.get("release_year")))
+        self.music_extra_var.set(" • ".join(extras))
+        self.music_cover_label.configure(image="", text="Carregando capa...")
+        self._music_cover_image = None
+        item_copy = dict(item)
+
+        def worker():
+            try:
+                cover = cover_bytes_for_item(item_copy)
+            except Exception:
+                cover = None
+            self.event_queue.put(("music_cover_ready", (item_copy.get("id"), cover)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_music_cover(self, payload: object) -> None:
+        if not isinstance(payload, tuple) or len(payload) != 2:
+            return
+        item_id, data = payload
+        if item_id != self.current_music_item_id or not data:
+            if item_id == self.current_music_item_id:
+                self.music_cover_label.configure(image="", text="Sem capa")
+            return
+        try:
+            from io import BytesIO
+            from PIL import Image, ImageTk
+
+            image = Image.open(BytesIO(data))
+            image.thumbnail((140, 140))
+            self._music_cover_image = ImageTk.PhotoImage(image)
+            self.music_cover_label.configure(image=self._music_cover_image, text="")
+        except Exception:
+            self._music_cover_image = None
+            self.music_cover_label.configure(image="", text="Capa indisponível")
+
+    def play_selected_music(self, *, completed: bool = False) -> None:
+        item = self._selected_music_item(completed=completed)
+        if not item or item.get("kind") != "deezer_preview":
+            messagebox.showinfo(APP_NAME, "Selecione uma música da Deezer.")
+            return
+        files = [Path(value) for value in item.get("files", [])]
+        local = next((path for path in files if path.is_file()), None)
+        item_copy = dict(item)
+
+        def worker():
+            try:
+                if local is not None:
+                    mode = self.music_player.play_file(local)
+                    message = "Reproduzindo arquivo local." if mode == "internal" else "Áudio aberto no player padrão do Windows."
+                else:
+                    track = resolve_deezer_track(str(item_copy.get("media_id") or ""))
+                    if not track.preview_url:
+                        raise MusicPlayerError("A Deezer não disponibilizou prévia pública para esta faixa.")
+                    self.music_player.play_preview(track.preview_url)
+                    message = "Reproduzindo a prévia pública da Deezer."
+                self.event_queue.put(("music_player_status", message))
+            except Exception as exc:
+                self.event_queue.put(("music_player_error", str(exc)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def stop_music(self) -> None:
+        try:
+            self.music_player.stop()
+            self.download_metrics_var.set("Reprodução interrompida.")
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Não foi possível parar a reprodução:\n{exc}")
+
+    def _metadata_dialog(self, item: dict, *, completed: bool) -> None:
+        dialog = Toplevel(self.root)
+        dialog.title("Editar metadados")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        body = ttk.Frame(dialog, padding=12)
+        body.pack(fill="both", expand=True)
+
+        fields = [
+            ("Título", "track_title"),
+            ("Artista", "artist"),
+            ("Artista do álbum", "album_artist"),
+            ("Álbum", "album"),
+            ("Número da faixa", "track_number"),
+            ("Número do disco", "disc_number"),
+            ("Ano", "release_year"),
+        ]
+        variables = {}
+        for row, (label, key) in enumerate(fields):
+            ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
+            value = item.get(key)
+            if key == "album_artist" and not value:
+                value = item.get("artist")
+            variable = StringVar(value=str(value or ""))
+            variables[key] = variable
+            ttk.Entry(body, textvariable=variable, width=42).grid(row=row, column=1, sticky="ew", pady=4)
+        body.columnconfigure(1, weight=1)
+
+        def save():
+            changes = {key: variable.get().strip() for key, variable in variables.items()}
+            for numeric in ("track_number", "disc_number"):
+                text = changes[numeric]
+                changes[numeric] = int(text) if text.isdigit() else None
+            title = changes["track_title"] or str(item.get("track_title") or item.get("title") or "Música")
+            artist = changes["artist"]
+            changes["title"] = f"{artist} - {title} (prévia Deezer)" if artist else f"{title} (prévia Deezer)"
+            try:
+                self.queue_repository.update(item["id"], **changes)
+                merged = dict(item)
+                merged.update(changes)
+                if completed:
+                    local = next((Path(value) for value in merged.get("files", []) if Path(value).is_file()), None)
+                    if local is not None:
+                        write_audio_metadata(local, merged, cover_bytes=b"")
+                self._refresh_queue()
+                self._show_music_item(merged)
+                dialog.destroy()
+            except Exception as exc:
+                messagebox.showerror(APP_NAME, f"Não foi possível salvar os metadados:\n{exc}", parent=dialog)
+
+        buttons = ttk.Frame(body)
+        buttons.grid(row=len(fields), column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(buttons, text="Cancelar", command=dialog.destroy).pack(side="right")
+        ttk.Button(buttons, text="Salvar", command=save).pack(side="right", padx=(0, 6))
+
+    def edit_selected_music_metadata(self, *, completed: bool = False) -> None:
+        item = self._selected_music_item(completed=completed)
+        if not item or item.get("kind") != "deezer_preview":
+            messagebox.showinfo(APP_NAME, "Selecione uma música da Deezer.")
+            return
+        if completed:
+            local = next((Path(value) for value in item.get("files", []) if Path(value).is_file()), None)
+            if local is not None:
+                try:
+                    existing = read_audio_metadata(local)
+                    merged = dict(item)
+                    merged.update(existing)
+                    item = merged
+                except Exception:
+                    pass
+        self._metadata_dialog(dict(item), completed=completed)
+
+    def change_selected_music_cover(self, *, completed: bool = False) -> None:
+        item = self._selected_music_item(completed=completed)
+        if not item or item.get("kind") != "deezer_preview":
+            messagebox.showinfo(APP_NAME, "Selecione uma música da Deezer.")
+            return
+        selected = filedialog.askopenfilename(
+            title="Selecionar capa",
+            filetypes=[("Imagens", "*.jpg *.jpeg *.png"), ("Todos os arquivos", "*.*")],
+        )
+        if not selected:
+            return
+        try:
+            data = Path(selected).read_bytes()
+            if not data or len(data) > 8 * 1024 * 1024:
+                raise ValueError("A imagem deve ter no máximo 8 MB.")
+            self.queue_repository.update(item["id"], custom_cover_path=selected)
+            merged = dict(item)
+            merged["custom_cover_path"] = selected
+            if completed:
+                local = next((Path(value) for value in merged.get("files", []) if Path(value).is_file()), None)
+                if local is not None:
+                    write_audio_metadata(local, merged, cover_bytes=data)
+            self._refresh_queue()
+            self._show_music_item(merged)
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Não foi possível alterar a capa:\n{exc}")
+
+    def open_completed_folder(self) -> None:
+        item = self._selected_music_item(completed=True)
+        if not item:
+            return
+        local = next((Path(value) for value in item.get("files", []) if Path(value).exists()), None)
+        if local is not None and os.name == "nt":
+            subprocess.Popen(["explorer.exe", "/select,", str(local)])
+
     def choose_folder(self) -> None:
         initial = Path(self.folder_var.get().strip() or str(Path.home()))
         if not initial.exists():
@@ -595,6 +857,8 @@ class DownloadApp(QueueUI):
         settings: dict[str, object] = {
             "download_folder": self.folder_var.get().strip() or str(Path.home() / "Downloads"),
             "work_mode": self.work_mode,
+            "music_structure": self.music_structure_var.get(),
+            "music_filename_template": self.music_filename_var.get().strip() or DEFAULT_MUSIC_FILENAME,
             "format": self.resolution_var.get(),
             "audio_bitrate_mode": self.audio_bitrate_mode_var.get(),
             "audio_custom_bitrate": self.audio_custom_bitrate_var.get().strip() or "192",
@@ -901,6 +1165,12 @@ class DownloadApp(QueueUI):
                     self.progress.stop()
                     self.update_button.configure(state="normal")
                     self.update_status_var.set("Falha ao baixar atualização")
+                    messagebox.showerror(APP_NAME, str(payload))
+                elif event == "music_cover_ready":
+                    self._apply_music_cover(payload)
+                elif event == "music_player_status":
+                    self.download_metrics_var.set(str(payload))
+                elif event == "music_player_error":
                     messagebox.showerror(APP_NAME, str(payload))
         except queue.Empty:
             pass
