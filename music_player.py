@@ -30,6 +30,13 @@ class MusicPlayer:
         self._pygame = None
         self._paused = False
         self._current_source: str | None = None
+        self._current_path: Path | None = None
+        self._duration: float = 0.0
+        self._start_offset: float = 0.0
+        self._volume: float = 0.8
+        self._track_title: str = ""
+        self._track_artist: str = ""
+        self._track_album: str = ""
 
     def _ensure_mixer(self):
         if self._pygame is not None:
@@ -39,6 +46,7 @@ class MusicPlayer:
 
             if not pygame.mixer.get_init():
                 pygame.mixer.init()
+            pygame.mixer.music.set_volume(self._volume)
         except Exception as exc:
             raise MusicPlayerError(f"Não foi possível iniciar o player de áudio: {exc}") from exc
         self._pygame = pygame
@@ -69,13 +77,37 @@ class MusicPlayer:
         temporary.replace(path)
         return path
 
-    def play_preview(self, url: str) -> Path:
+    def play_preview(
+        self,
+        url: str,
+        *,
+        title: str = "",
+        artist: str = "",
+        album: str = "",
+        duration: float = 30.0,
+    ) -> Path:
         path = self._preview_file(url)
-        self.play_file(path, allow_external=False)
+        self.play_file(
+            path,
+            allow_external=False,
+            title=title or "Prévia Deezer",
+            artist=artist,
+            album=album,
+            duration=duration or 30.0,
+        )
         self._current_source = str(url)
         return path
 
-    def play_file(self, path: Path, *, allow_external: bool = True) -> str:
+    def play_file(
+        self,
+        path: Path,
+        *,
+        allow_external: bool = True,
+        title: str = "",
+        artist: str = "",
+        album: str = "",
+        duration: float = 0.0,
+    ) -> str:
         path = Path(path)
         if not path.is_file():
             raise MusicPlayerError("O arquivo de áudio não foi encontrado.")
@@ -88,6 +120,7 @@ class MusicPlayer:
         pygame = self._ensure_mixer()
         try:
             pygame.mixer.music.load(str(path))
+            pygame.mixer.music.set_volume(self._volume)
             pygame.mixer.music.play()
         except Exception as exc:
             if allow_external and os.name == "nt":
@@ -96,7 +129,27 @@ class MusicPlayer:
             raise MusicPlayerError(f"Não foi possível reproduzir o áudio: {exc}") from exc
         self._paused = False
         self._current_source = str(path.resolve())
+        self._current_path = path
+        self._start_offset = 0.0
+        self._track_title = title or path.stem
+        self._track_artist = artist
+        self._track_album = album
+        if duration and duration > 0:
+            self._duration = float(duration)
+        else:
+            self._duration = self._detect_duration(path)
         return "internal"
+
+    def _detect_duration(self, path: Path) -> float:
+        try:
+            import mutagen
+
+            audio = mutagen.File(str(path))
+            if audio is not None and audio.info and getattr(audio.info, "length", None):
+                return float(audio.info.length)
+        except Exception:
+            pass
+        return 0.0
 
     def pause(self) -> None:
         if self._pygame is not None:
@@ -110,9 +163,71 @@ class MusicPlayer:
 
     def stop(self) -> None:
         if self._pygame is not None:
-            self._pygame.mixer.music.stop()
+            try:
+                self._pygame.mixer.music.stop()
+            except Exception:
+                pass
         self._paused = False
         self._current_source = None
+        self._current_path = None
+        self._start_offset = 0.0
+
+    def set_volume(self, volume: float) -> None:
+        """Define volume entre 0.0 e 1.0."""
+        self._volume = max(0.0, min(1.0, float(volume)))
+        if self._pygame is not None:
+            try:
+                self._pygame.mixer.music.set_volume(self._volume)
+            except Exception:
+                pass
+
+    def get_volume(self) -> float:
+        return self._volume
+
+    def set_position(self, seconds: float) -> None:
+        """Avança ou recua para a posição especificada em segundos."""
+        if not self._current_path or not self._current_path.is_file():
+            return
+        target = max(0.0, float(seconds))
+        if self._duration > 0:
+            target = min(target, self._duration)
+        self._start_offset = target
+        if self._pygame is not None:
+            try:
+                self._pygame.mixer.music.play(start=target)
+                if self._paused:
+                    self._pygame.mixer.music.pause()
+            except Exception:
+                try:
+                    self._pygame.mixer.music.set_pos(target)
+                except Exception:
+                    pass
+
+    def get_position(self) -> float:
+        """Retorna a posição atual de reprodução em segundos."""
+        if not self.is_active():
+            return 0.0
+        if self._pygame is None:
+            return self._start_offset
+        try:
+            pos_ms = self._pygame.mixer.music.get_pos()
+            if pos_ms < 0:
+                return self._start_offset
+            current = self._start_offset + (pos_ms / 1000.0)
+            if self._duration > 0:
+                current = min(current, self._duration)
+            return current
+        except Exception:
+            return self._start_offset
+
+    def get_position_ms(self) -> int:
+        return int(self.get_position() * 1000)
+
+    def get_duration(self) -> float:
+        return self._duration
+
+    def get_duration_ms(self) -> int:
+        return int(self._duration * 1000)
 
     @property
     def paused(self) -> bool:
@@ -122,13 +237,31 @@ class MusicPlayer:
     def current_source(self) -> str | None:
         return self._current_source
 
+    @property
+    def track_title(self) -> str:
+        return self._track_title
+
+    @property
+    def track_artist(self) -> str:
+        return self._track_artist
+
+    @property
+    def track_album(self) -> str:
+        return self._track_album
+
     def is_playing(self) -> bool:
         if self._pygame is None:
             return False
         try:
             if not self._pygame.mixer.get_init():
                 return False
-            return bool(self._pygame.mixer.music.get_busy()) and not self._paused
+            busy = bool(self._pygame.mixer.music.get_busy())
+            if not busy and not self._paused and self._current_source:
+                self._current_source = None
+                self._current_path = None
+                self._start_offset = 0.0
+                return False
+            return busy and not self._paused
         except Exception:
             return False
 

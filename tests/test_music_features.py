@@ -67,3 +67,40 @@ def test_music_player_state_transitions(tmp_path: Path):
     assert not player.is_paused()
     assert not player.is_active()
     assert player.current_source is None
+
+
+def test_music_player_volume_control(tmp_path: Path):
+    from music_player import MusicPlayer
+
+    player = MusicPlayer(tmp_path)
+    assert player.get_volume() == 0.8
+    player.set_volume(0.5)
+    assert player.get_volume() == 0.5
+    # Clamp bounds test
+    player.set_volume(1.5)
+    assert player.get_volume() == 1.0
+    player.set_volume(-0.2)
+    assert player.get_volume() == 0.0
+
+
+def test_music_player_position_and_duration(tmp_path: Path):
+    from music_player import MusicPlayer
+
+    player = MusicPlayer(tmp_path)
+    assert player.get_position() == 0.0
+    assert player.get_position_ms() == 0
+    assert player.get_duration() == 0.0
+    assert player.get_duration_ms() == 0
+
+    player._duration = 180.0
+    assert player.get_duration() == 180.0
+    assert player.get_duration_ms() == 180000
+
+
+def test_music_player_metadata_tracking(tmp_path: Path):
+    from music_player import MusicPlayer
+
+    player = MusicPlayer(tmp_path)
+    assert player.track_title == ""
+    assert player.track_artist == ""
+    assert player.track_album == ""

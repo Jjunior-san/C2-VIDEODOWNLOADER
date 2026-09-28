@@ -638,6 +638,15 @@ class DownloadApp(QueueUI):
         self.download_options = None
         self.ffmpeg_path = FFMPEG_PATH
         self.music_player = MusicPlayer(DATA_DIR / "preview_cache")
+        self.music_player_track_var = StringVar(value="Nenhuma faixa em reprodução.")
+        self.music_player_status_var = StringVar(value="Pronto para reproduzir.")
+        self.music_player_time_var = StringVar(value="00:00 / 00:00")
+        self.music_player_seek_var = DoubleVar(value=0.0)
+        self.music_volume_var = DoubleVar(value=80.0)
+        self.music_volume_label_var = StringVar(value="80%")
+        self._music_seek_dragging = False
+        self._music_is_muted = False
+        self._music_prev_volume = 80.0
         self.current_music_item_id = None
         self._music_cover_image = None
 
@@ -933,6 +942,98 @@ class DownloadApp(QueueUI):
             state="disabled",
         )
         self.catalog_open_button.pack(side="left", padx=(6, 0))
+
+        music_player_card = ttk.LabelFrame(music, text="Player de Áudio", padding=8)
+        music_player_card.pack(fill="x", pady=(0, 8))
+
+        player_info_row = ttk.Frame(music_player_card)
+        player_info_row.pack(fill="x", pady=(0, 4))
+        wrapping_label(
+            player_info_row,
+            textvariable=self.music_player_track_var,
+            font=(self.text_family, 10, "bold"),
+        )
+        ttk.Label(
+            player_info_row,
+            textvariable=self.music_player_status_var,
+            foreground="#596579",
+            font=(self.text_family, 9),
+        ).pack(side="right")
+
+        player_ctrls_row = ttk.Frame(music_player_card)
+        player_ctrls_row.pack(fill="x")
+
+        self.audio_play_button = ttk.Button(
+            player_ctrls_row,
+            text="▶",
+            width=3,
+            command=self._toggle_audio_player_playback,
+        )
+        self.audio_play_button.pack(side="left")
+        add_tooltip(self.audio_play_button, "Reproduzir ou pausar")
+
+        self.audio_stop_button = ttk.Button(
+            player_ctrls_row,
+            text="■",
+            width=3,
+            command=self.stop_music,
+            state="disabled",
+        )
+        self.audio_stop_button.pack(side="left", padx=(6, 8))
+        add_tooltip(self.audio_stop_button, "Parar a reprodução")
+
+        self.audio_seek_scale = ttk.Scale(
+            player_ctrls_row,
+            from_=0,
+            to=100,
+            variable=self.music_player_seek_var,
+        )
+        self.audio_seek_scale.pack(side="left", fill="x", expand=True)
+        self.audio_seek_scale.bind("<ButtonPress-1>", self._begin_music_seek)
+        self.audio_seek_scale.bind("<ButtonRelease-1>", self._finish_music_seek)
+
+        ttk.Label(
+            player_ctrls_row,
+            textvariable=self.music_player_time_var,
+            width=15,
+            anchor="center",
+            font=(self.text_family, 9),
+        ).pack(side="left", padx=(8, 8))
+
+        self.audio_mute_button = ttk.Button(
+            player_ctrls_row,
+            text="🔊",
+            width=3,
+            command=self._toggle_music_mute,
+        )
+        self.audio_mute_button.pack(side="left")
+        add_tooltip(self.audio_mute_button, "Silenciar / Restaurar volume")
+
+        self.audio_volume_scale = ttk.Scale(
+            player_ctrls_row,
+            from_=0,
+            to=100,
+            variable=self.music_volume_var,
+            command=self._set_music_volume,
+            length=80,
+        )
+        self.audio_volume_scale.pack(side="left", padx=(4, 4))
+
+        ttk.Label(
+            player_ctrls_row,
+            textvariable=self.music_volume_label_var,
+            width=5,
+            anchor="w",
+            font=(self.text_family, 9),
+        ).pack(side="left", padx=(0, 6))
+
+        open_local_btn = ttk.Button(
+            player_ctrls_row,
+            text="Abrir áudio...",
+            command=self.open_local_audio_file,
+        )
+        open_local_btn.pack(side="left")
+        add_tooltip(open_local_btn, "Reproduzir arquivo de áudio do computador")
 
         options = ttk.LabelFrame(music, text="Download e organização", padding=8)
         options.pack(fill="x")
@@ -1956,6 +2057,145 @@ class DownloadApp(QueueUI):
                 f"{format_player_time(elapsed)} / {format_player_time(total)}"
             )
 
+    def _begin_music_seek(self, _event=None) -> None:
+        self._music_seek_dragging = True
+
+    def _finish_music_seek(self, _event=None) -> None:
+        self._music_seek_dragging = False
+        if self.music_player.is_active():
+            dur_sec = self.music_player.get_duration()
+            percent = self.music_player_seek_var.get() / 100.0
+            target_sec = dur_sec * percent if dur_sec > 0 else 0.0
+            self.music_player.set_position(target_sec)
+
+    def _set_music_volume(self, value) -> None:
+        try:
+            val = float(value)
+            self.music_volume_label_var.set(f"{int(round(val))}%")
+            self.music_player.set_volume(val / 100.0)
+            if val > 0:
+                self._music_is_muted = False
+                if hasattr(self, "audio_mute_button"):
+                    self.audio_mute_button.configure(text="🔊")
+            else:
+                self._music_is_muted = True
+                if hasattr(self, "audio_mute_button"):
+                    self.audio_mute_button.configure(text="🔇")
+        except (TypeError, ValueError):
+            pass
+
+    def _toggle_music_mute(self) -> None:
+        if self._music_is_muted:
+            self._music_is_muted = False
+            restored = self._music_prev_volume if self._music_prev_volume > 0 else 80.0
+            self.music_volume_var.set(restored)
+            self._set_music_volume(restored)
+        else:
+            self._music_prev_volume = self.music_volume_var.get()
+            self._music_is_muted = True
+            self.music_volume_var.set(0)
+            self._set_music_volume(0)
+
+    def _toggle_audio_player_playback(self) -> None:
+        if self.music_player.is_playing():
+            self.music_player.pause()
+            self.music_player_status_var.set("Pausado")
+            self._update_player_buttons()
+            self._update_music_player()
+            return
+        if self.music_player.is_paused():
+            self.music_player.resume()
+            self.music_player_status_var.set("Reproduzindo...")
+            self._update_player_buttons()
+            self._update_music_player()
+            return
+        result = self._selected_catalog_result() if hasattr(self, "_selected_catalog_result") else None
+        if result is not None and result.kind == "track":
+            self._toggle_catalog_playback()
+            return
+        item = self._selected_music_item() or self._selected_music_item(completed=True)
+        if item:
+            self.play_selected_music()
+            return
+        self.open_local_audio_file()
+
+    def open_local_audio_file(self) -> None:
+        from tkinter import filedialog
+
+        file_path = filedialog.askopenfilename(
+            title="Escolha um arquivo de áudio para reproduzir",
+            filetypes=[
+                ("Arquivos de Áudio", "*.mp3 *.flac *.wav *.ogg"),
+                ("MP3", "*.mp3"),
+                ("FLAC", "*.flac"),
+                ("WAV", "*.wav"),
+                ("OGG", "*.ogg"),
+                ("Todos os arquivos", "*.*"),
+            ],
+        )
+        if not file_path:
+            return
+        path = Path(file_path)
+        if not path.is_file():
+            return
+        if self.video_player.is_active() or self.video_player.source:
+            self.stop_video()
+        try:
+            mode = self.music_player.play_file(path, title=path.stem)
+            self._playing_item_id = f"local_{path.name}"
+            self._catalog_playing_active = False
+            self.music_player_track_var.set(f"🎵 {path.name}")
+            self.music_player_status_var.set("Arquivo local" if mode == "internal" else "Player externo")
+            self._update_player_buttons()
+            self._update_music_player()
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Não foi possível abrir o arquivo:\n{exc}")
+
+    def _update_music_player(self) -> None:
+        active = self.music_player.is_active()
+        playing = self.music_player.is_playing()
+        paused = self.music_player.is_paused()
+
+        if hasattr(self, "audio_play_button"):
+            self.audio_play_button.configure(text="⏸" if playing else "▶")
+        if hasattr(self, "audio_stop_button"):
+            self.audio_stop_button.configure(state="normal" if active else "disabled")
+        if hasattr(self, "audio_seek_scale"):
+            self.audio_seek_scale.configure(state="normal" if active else "disabled")
+
+        if active:
+            pos_ms = self.music_player.get_position_ms()
+            dur_ms = self.music_player.get_duration_ms()
+            if not self._music_seek_dragging:
+                if dur_ms > 0:
+                    pct = (pos_ms / dur_ms) * 100.0
+                    self.music_player_seek_var.set(min(100.0, max(0.0, pct)))
+                else:
+                    self.music_player_seek_var.set(0.0)
+            self.music_player_time_var.set(
+                f"{format_player_time(pos_ms)} / {format_player_time(dur_ms)}"
+            )
+            title = self.music_player.track_title
+            artist = self.music_player.track_artist
+            if title and artist:
+                display_track = f"{title} • {artist}"
+            elif title:
+                display_track = title
+            else:
+                display_track = "Reproduzindo áudio"
+            self.music_player_track_var.set(f"🎵 {display_track}")
+            if paused:
+                self.music_player_status_var.set("Pausado")
+            elif playing:
+                self.music_player_status_var.set("Reproduzindo...")
+        else:
+            if not self._music_seek_dragging:
+                self.music_player_seek_var.set(0.0)
+            self.music_player_time_var.set("00:00 / 00:00")
+            if not self.music_player.current_source:
+                self.music_player_track_var.set("Nenhuma faixa em reprodução.")
+                self.music_player_status_var.set("Pronto para reproduzir.")
+
     def _on_main_tab_changed(self, _event=None) -> None:
         selected = self.tabs.select()
         if selected == str(self.music_page):
@@ -2532,14 +2772,28 @@ class DownloadApp(QueueUI):
 
         def worker():
             try:
+                title = str(item_copy.get("track_title") or item_copy.get("title") or "")
+                artist = str(item_copy.get("artist") or "")
+                album = str(item_copy.get("album") or "")
                 if local is not None:
-                    mode = self.music_player.play_file(local)
+                    mode = self.music_player.play_file(
+                        local,
+                        title=title or local.stem,
+                        artist=artist,
+                        album=album,
+                    )
                     message = "Reproduzindo arquivo local." if mode == "internal" else "Áudio aberto no player padrão do Windows."
                 else:
                     track = resolve_deezer_track(str(item_copy.get("media_id") or ""))
                     if not track.preview_url:
                         raise MusicPlayerError("A Deezer não disponibilizou prévia pública para esta faixa.")
-                    self.music_player.play_preview(track.preview_url)
+                    self.music_player.play_preview(
+                        track.preview_url,
+                        title=title or track.title,
+                        artist=artist or track.artist,
+                        album=album or track.album,
+                        duration=track.duration or 30.0,
+                    )
                     message = "Reproduzindo a prévia pública da Deezer."
                 self._playing_item_id = item_id
                 self._catalog_playing_active = False
@@ -2578,7 +2832,12 @@ class DownloadApp(QueueUI):
                 track = resolve_deezer_track(result.item_id)
                 if not track.preview_url:
                     raise MusicPlayerError("A Deezer não disponibilizou prévia pública para esta faixa.")
-                self.music_player.play_preview(track.preview_url)
+                self.music_player.play_preview(
+                    track.preview_url,
+                    title=result.title,
+                    artist=result.subtitle,
+                    duration=track.duration or 30.0,
+                )
                 self._playing_item_id = catalog_id
                 self._catalog_playing_active = True
                 self.event_queue.put(("music_player_status", f"Reproduzindo prévia: {result.title}"))
@@ -2605,8 +2864,13 @@ class DownloadApp(QueueUI):
             self.music_player.stop()
             self._playing_item_id = None
             self._catalog_playing_active = False
+            self.music_player_seek_var.set(0)
+            self.music_player_time_var.set("00:00 / 00:00")
+            self.music_player_track_var.set("Nenhuma faixa em reprodução.")
+            self.music_player_status_var.set("Reprodução interrompida.")
             self.download_metrics_var.set("Reprodução interrompida.")
             self._update_player_buttons()
+            self._update_music_player()
         except Exception as exc:
             messagebox.showerror(APP_NAME, f"Não foi possível parar a reprodução:\n{exc}")
 
@@ -2624,6 +2888,14 @@ class DownloadApp(QueueUI):
         if hasattr(self, "catalog_play_button"):
             self.catalog_play_button.configure(
                 text="⏸" if (is_playing and cat_active) else "▶"
+            )
+        if hasattr(self, "audio_play_button"):
+            self.audio_play_button.configure(
+                text="⏸" if is_playing else "▶"
+            )
+        if hasattr(self, "audio_stop_button"):
+            self.audio_stop_button.configure(
+                state="normal" if self.music_player.is_active() else "disabled"
             )
         if hasattr(self, "catalog_stop_button"):
             res = self._selected_catalog_result() if hasattr(self, "_selected_catalog_result") else None
@@ -3358,6 +3630,7 @@ class DownloadApp(QueueUI):
                     self._handle_video_player_error(payload)
                 elif event == "music_player_status":
                     self.download_metrics_var.set(str(payload))
+                    self.music_player_status_var.set(str(payload))
                 elif event == "music_player_error":
                     messagebox.showerror(APP_NAME, str(payload))
         except queue.Empty:
@@ -3365,6 +3638,7 @@ class DownloadApp(QueueUI):
 
         self._update_player_buttons()
         self._update_video_player()
+        self._update_music_player()
         self.root.after(150, self._poll_queues)
 
     def start_maintenance(self, force: bool = False) -> None:
