@@ -19,6 +19,7 @@ from audio_library import (
     music_target_folder,
 )
 from deezer_catalog import is_deezer_url, resolve_deezer_track, resolve_deezer_url, search_deezer_tracks
+from spotify_catalog import is_spotify_url, resolve_spotify_url, match_spotify_track_to_deezer
 from download_control import DownloadCancelled, DownloadSkipped
 from download_queue import RUNNABLE, queue_item
 from jw_org_downloader import is_jw_category_url, resolve_category_items, download_item, convert_to_audio
@@ -199,6 +200,28 @@ def discover(sources, options, engine, control, environment, log):
                 if not tracks:
                     raise RuntimeError(f"Nenhum resultado foi encontrado para '{query}' na Deezer.")
                 items.extend(_deezer_queue_items(tracks, f"Pesquisa Deezer - {query}", options))
+            elif is_spotify_url(source):
+                log(f"Spotify: analisando coleção '{source}'...")
+                sp_collection = resolve_spotify_url(source, engine_path=engine)
+                sp_tracks = sp_collection.tracks if options["playlist"] else sp_collection.tracks[:1]
+                for sp_track in sp_tracks:
+                    matched_deezer = match_spotify_track_to_deezer(sp_track)
+                    if matched_deezer:
+                        items.extend(_deezer_queue_items([matched_deezer], sp_collection.title, options))
+                    else:
+                        search_term = f"ytsearch1:{sp_track.artist} - {sp_track.title}".strip()
+                        items.append(queue_item(
+                            search_term,
+                            sp_track.display_title,
+                            kind="default",
+                            track_title=sp_track.title,
+                            artist=sp_track.artist,
+                            album=sp_track.album or sp_collection.title,
+                            duration=sp_track.duration,
+                            cover_url=sp_track.cover_url,
+                            collection_title=sp_collection.title,
+                            quality="Áudio YouTube" if is_audio_format(options.get("format", "")) else "A definir",
+                        ))
             elif is_jw_category_url(source):
                 for media in resolve_category_items(source, options["format"], include_subcategories=options["playlist"], logger=log):
                     items.append(queue_item(source, media.title, kind="jw", media_id=media.media_id,

@@ -23,7 +23,7 @@ USER_AGENT = (
     "Chrome/153.0.0.0 Safari/537.36 "
     f"C2VideoDownloader/{APP_VERSION}"
 )
-DEEZER_PAGE_HOSTS = {"deezer.com", "www.deezer.com"}
+DEEZER_PAGE_HOSTS = {"deezer.com", "www.deezer.com", "link.deezer.com", "deezer.page.link"}
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 MAX_TRACKS = 1000
 MAX_SEARCH_RESULTS = 50
@@ -86,6 +86,7 @@ class DeezerSearchResult:
             "artist": "Artista",
             "album": "Álbum",
             "playlist": "Playlist",
+            "loved": "Favoritos",
         }.get(self.kind, self.kind.title())
 
 
@@ -97,15 +98,43 @@ class DeezerCollection:
     tracks: tuple[DeezerTrack, ...]
 
 
+def resolve_deezer_shortlink(url: str, timeout: float = 6.0) -> str:
+    """Resolve link.deezer.com and deezer.page.link shortlinks to canonical web URLs."""
+    raw = str(url or "").strip()
+    try:
+        parsed = urlparse(raw)
+        host = (parsed.hostname or "").lower()
+        if host in {"link.deezer.com", "deezer.page.link"}:
+            sess = _http_session()
+            resp = sess.head(raw, allow_redirects=True, timeout=timeout)
+            if resp.url and resp.url != raw:
+                return resp.url
+    except Exception:
+        pass
+    return raw
+
+
 def parse_deezer_url(url: str) -> tuple[str, str] | None:
-    parsed = urlparse(url.strip())
+    raw = str(url or "").strip()
+    parsed = urlparse(raw)
     host = (parsed.hostname or "").lower()
     if parsed.scheme not in {"http", "https"} or host not in DEEZER_PAGE_HOSTS:
         return None
+
+    if host in {"link.deezer.com", "deezer.page.link"}:
+        resolved = resolve_deezer_shortlink(raw)
+        if resolved != raw:
+            return parse_deezer_url(resolved)
+
     match = re.search(r"/(?:[a-z]{2}(?:-[a-z]{2})?/)?(track|artist|album|playlist)/(\d+)(?:/|$)", parsed.path, re.I)
-    if not match:
-        return None
-    return match.group(1).lower(), match.group(2)
+    if match:
+        return match.group(1).lower(), match.group(2)
+
+    match_loved = re.search(r"/(?:[a-z]{2}(?:-[a-z]{2})?/)?(?:profile|user)/(\d+)(?:/(?:loved|tracks))?(?:/|$)", parsed.path, re.I)
+    if match_loved:
+        return "loved", match_loved.group(1)
+
+    return None
 
 
 def is_deezer_url(url: str) -> bool:
@@ -326,13 +355,29 @@ def search_deezer_tracks(query: str, limit: int = 25) -> tuple[DeezerTrack, ...]
     return tuple(tracks)
 
 def resolve_deezer_url(url: str) -> DeezerCollection:
-    parsed = parse_deezer_url(url)
+    resolved_url = resolve_deezer_shortlink(url)
+    parsed = parse_deezer_url(resolved_url)
     if not parsed:
         raise DeezerCatalogError("O endereço da Deezer não é uma faixa, álbum ou playlist reconhecida.")
     kind, identifier = parsed
     if kind == "track":
         track = resolve_deezer_track(identifier)
-        return DeezerCollection(url, track.display_title, kind, (track,))
+        return DeezerCollection(resolved_url, track.display_title, kind, (track,))
+
+    if kind == "loved":
+        try:
+            user_data = _api_json(f"{API_ROOT}/user/{identifier}")
+            user_name = user_data.get("name") or identifier
+        except Exception:
+            user_name = identifier
+        title = f"Músicas Favoritas de {user_name}"
+        tracks_page = _api_json(f"{API_ROOT}/user/{identifier}/tracks?limit=100")
+        if not isinstance(tracks_page, dict):
+            raise DeezerCatalogError("A Deezer não informou as faixas deste usuário.")
+        tracks = _paged_tracks(tracks_page)
+        if not tracks:
+            raise DeezerCatalogError("Nenhuma faixa favorita encontrada para este usuário.")
+        return DeezerCollection(resolved_url, title, "loved", tracks)
 
     payload = _api_json(f"{API_ROOT}/{kind}/{identifier}")
     title = str(
@@ -353,4 +398,53 @@ def resolve_deezer_url(url: str) -> DeezerCollection:
     tracks = _paged_tracks(tracks_page, album_fallback=fallback)
     if not tracks:
         raise DeezerCatalogError("Nenhuma faixa foi encontrada nesta coleção.")
-    return DeezerCollection(url, title, kind, tracks)
+    return DeezerCollection(resolved_url, title, kind, tracks)
+
+
+def get_artist_top_tracks(artist_id: str, limit: int = 30) -> tuple[DeezerTrack, ...]:
+    """Fetch top tracks for an artist."""
+    if not str(artist_id).isdigit():
+        raise DeezerCatalogError("Identificador de artista inválido.")
+    payload = _api_json(f"{API_ROOT}/artist/{artist_id}/top?limit={min(100, max(1, limit))}")
+    return _paged_tracks(payload)
+
+
+def get_artist_albums(artist_id: str, limit: int = 50) -> tuple[DeezerSearchResult, ...]:
+    """Fetch albums by an artist as search results."""
+    if not str(artist_id).isdigit():
+        raise DeezerCatalogError("Identificador de artista inválido.")
+    payload = _api_json(f"{API_ROOT}/artist/{artist_id}/albums?limit={min(100, max(1, limit))}")
+    entries = payload.get("data")
+    if not isinstance(entries, list):
+        return ()
+    results: list[DeezerSearchResult] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        item_id = str(entry.get("id") or "").strip()
+        title = str(entry.get("title") or "").strip()
+        if not item_id or not title:
+            continue
+        year = str(entry.get("release_date") or "")[:4]
+        subtitle = f"Álbum • {year}" if year else "Álbum"
+        cover = _catalog_cover(entry, "cover_medium", "cover_big", "cover")
+        results.append(DeezerSearchResult(
+            kind="album",
+            item_id=item_id,
+            title=title,
+            subtitle=subtitle,
+            cover_url=cover,
+            page_url=f"https://www.deezer.com/album/{item_id}",
+        ))
+    return tuple(results)
+
+
+def get_album_tracks(album_id: str) -> tuple[DeezerTrack, ...]:
+    """Fetch all tracks for a specific album."""
+    if not str(album_id).isdigit():
+        raise DeezerCatalogError("Identificador de álbum inválido.")
+    payload = _api_json(f"{API_ROOT}/album/{album_id}")
+    tracks_page = payload.get("tracks")
+    if not isinstance(tracks_page, dict):
+        raise DeezerCatalogError("A Deezer não informou as faixas deste álbum.")
+    return _paged_tracks(tracks_page, album_fallback=payload)

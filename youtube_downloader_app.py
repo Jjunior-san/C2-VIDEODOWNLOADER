@@ -32,7 +32,16 @@ from audio_library import (
     read_audio_metadata,
     write_audio_metadata,
 )
-from deezer_catalog import DeezerSearchResult, resolve_deezer_track, search_deezer_catalog
+from deezer_catalog import (
+    DeezerSearchResult,
+    resolve_deezer_track,
+    search_deezer_catalog,
+    get_artist_top_tracks,
+    get_artist_albums,
+    get_album_tracks,
+    is_deezer_url,
+)
+from spotify_catalog import is_spotify_url
 from download_control import DownloadCancelled, DownloadControl
 from ui_layout import (
     ScrollablePage,
@@ -770,10 +779,19 @@ class DownloadApp(QueueUI):
         video = self.video_page.body
 
         # Música: pesquisa instantânea e resultados sem precisar de botão Buscar.
-        search_frame = ttk.LabelFrame(music, text="Pesquisar na Deezer", padding=10)
+        search_frame = ttk.LabelFrame(music, text="Pesquisar na Deezer & Spotify", padding=10)
         search_frame.pack(fill="x", pady=(0, 8))
         search_row = ttk.Frame(search_frame)
         search_row.pack(fill="x")
+        self.catalog_back_button = ttk.Button(
+            search_row,
+            text="⬅ Voltar",
+            command=self._restore_previous_music_search,
+            state="disabled",
+            width=9,
+        )
+        self.catalog_back_button.pack(side="left", padx=(0, 6))
+        add_tooltip(self.catalog_back_button, "Voltar para o resultado da busca anterior")
         ttk.Combobox(
             search_row,
             textvariable=self.music_search_type_var,
@@ -876,6 +894,20 @@ class DownloadApp(QueueUI):
             style="Accent.TButton",
         )
         self.catalog_download_button.pack(side="left", padx=(6, 0))
+        self.catalog_drill_button = ttk.Button(
+            result_buttons,
+            text="Ver faixas",
+            command=self._drill_down_selected,
+            state="disabled",
+        )
+        self.catalog_drill_button.pack(side="left", padx=(6, 0))
+        self.catalog_artist_albums_button = ttk.Button(
+            result_buttons,
+            text="Ver álbuns",
+            command=self._drill_artist_albums,
+            state="disabled",
+        )
+        self.catalog_artist_albums_button.pack(side="left", padx=(6, 0))
         self.catalog_play_button = ttk.Button(
             result_buttons,
             text="▶",
@@ -1372,9 +1404,19 @@ class DownloadApp(QueueUI):
         self.folder_var.trace_add("write", self._on_folder_var_changed)
         self.audio_bitrate_mode_var.trace_add("write", self._update_audio_controls)
         self.music_results_tree.bind("<<TreeviewSelect>>", self._show_selected_catalog_result)
-        self.music_results_tree.bind("<Double-1>", lambda _event: self._load_selected_catalog_result())
+        self.music_results_tree.bind("<Double-1>", lambda _event: self._on_music_result_double_click())
         self.music_search_entry.bind("<Return>", lambda _event: self._load_selected_catalog_result())
         self.music_search_entry.focus_set()
+
+        # Atalhos Globais de Teclado
+        self.root.bind("<Control-m>", lambda _e: self._focus_music_search())
+        self.root.bind("<Control-M>", lambda _e: self._focus_music_search())
+        self.root.bind("<Control-Key-1>", lambda _e: self.tabs.select(self.music_page))
+        self.root.bind("<Control-Key-2>", lambda _e: self.tabs.select(self.video_page))
+        self.root.bind("<Control-Key-3>", lambda _e: self.tabs.select(self.queue_page))
+        self.root.bind("<Control-Key-4>", lambda _e: self.tabs.select(self.completed_page))
+        self.root.bind("<Control-Key-5>", lambda _e: self.tabs.select(self.activity_page))
+        self.root.bind("<Control-Key-6>", lambda _e: self.tabs.select(self.about_page))
         self._update_audio_controls()
         if self.deezer_arl_var.get().strip():
             self.root.after(400, lambda: self._check_deezer_arl(show_dialog=False))
@@ -1641,13 +1683,14 @@ class DownloadApp(QueueUI):
         if not text or text == getattr(self, "_last_clipboard_url", None):
             return
 
-        is_media_url = text.startswith(("http://", "https://", "deezer:"))
+        is_media_url = text.startswith(("http://", "https://", "deezer:", "spotify:"))
         if not is_media_url:
             return
 
         known_patterns = (
             "youtube.com", "youtu.be", "instagram.com", "tiktok.com",
             "facebook.com", "fb.watch", "deezer.com", "deezer:",
+            "link.deezer.com", "deezer.page.link", "spotify.com", "spotify:",
             "kanald.com.tr", "jw.org", "twitter.com", "x.com",
             "vimeo.com", "twitch.tv", "soundcloud.com", "reddit.com",
             "dailymotion.com", "bilibili.com"
@@ -1976,12 +2019,14 @@ class DownloadApp(QueueUI):
             self._clear_music_search_results()
             self.music_search_status_var.set("Digite para pesquisar.")
             return
-        if query.lower().startswith(("http://", "https://")):
+        if query.lower().startswith(("http://", "https://", "spotify:", "deezer:")):
             self._clear_music_search_results()
-            if "deezer.com/" in query.lower():
+            if is_deezer_url(query):
                 self.music_search_status_var.set("Link Deezer detectado. Pressione Enter para carregar na fila.")
+            elif is_spotify_url(query):
+                self.music_search_status_var.set("Link Spotify detectado. Pressione Enter para carregar na fila.")
             else:
-                self.music_search_status_var.set("Na aba Música, use nome de música, artista, álbum, playlist ou link Deezer.")
+                self.music_search_status_var.set("Na aba Música, use nome de música, artista, álbum, playlist ou link Deezer / Spotify.")
             return
         if len(query) < 2:
             self._clear_music_search_results()
@@ -1994,7 +2039,7 @@ class DownloadApp(QueueUI):
     def _start_music_search(self) -> None:
         self._music_search_after = None
         query = self.music_search_var.get().strip()
-        if len(query) < 2 or query.lower().startswith(("http://", "https://")):
+        if len(query) < 2 or query.lower().startswith(("http://", "https://", "spotify:", "deezer:")):
             return
 
         kind_map = {
@@ -2115,6 +2160,10 @@ class DownloadApp(QueueUI):
         if result is None:
             self.catalog_load_button.configure(state="disabled")
             self.catalog_download_button.configure(state="disabled")
+            if hasattr(self, "catalog_drill_button"):
+                self.catalog_drill_button.configure(state="disabled", text="Ver faixas")
+            if hasattr(self, "catalog_artist_albums_button"):
+                self.catalog_artist_albums_button.configure(state="disabled")
             self.catalog_play_button.configure(state="disabled", text="▶")
             if hasattr(self, "catalog_stop_button"):
                 self.catalog_stop_button.configure(state="disabled")
@@ -2127,6 +2176,21 @@ class DownloadApp(QueueUI):
         self.catalog_load_button.configure(state="normal")
         self.catalog_download_button.configure(state="normal")
         self.catalog_open_button.configure(state="normal")
+
+        if hasattr(self, "catalog_drill_button"):
+            if result.kind == "album":
+                self.catalog_drill_button.configure(state="normal", text="Ver faixas do álbum")
+            elif result.kind == "artist":
+                self.catalog_drill_button.configure(state="normal", text="Top músicas")
+            else:
+                self.catalog_drill_button.configure(state="disabled", text="Ver faixas")
+
+        if hasattr(self, "catalog_artist_albums_button"):
+            if result.kind == "artist":
+                self.catalog_artist_albums_button.configure(state="normal")
+            else:
+                self.catalog_artist_albums_button.configure(state="disabled")
+
         catalog_id = f"catalog_{result.item_id}"
         is_current = getattr(self, "_playing_item_id", None) == catalog_id
         is_playing = is_current and self.music_player.is_playing()
@@ -2175,7 +2239,7 @@ class DownloadApp(QueueUI):
         result = self._selected_catalog_result()
         if result is None:
             query = self.music_search_var.get().strip()
-            if query and "deezer.com/" in query.lower():
+            if query and (is_deezer_url(query) or is_spotify_url(query)):
                 self._apply_work_mode("music", initial=True)
                 self._prepare_sources([query], False)
             return
@@ -2186,12 +2250,159 @@ class DownloadApp(QueueUI):
         result = self._selected_catalog_result()
         if result is None:
             query = self.music_search_var.get().strip()
-            if query and "deezer.com/" in query.lower():
+            if query and (is_deezer_url(query) or is_spotify_url(query)):
                 self._apply_work_mode("music", initial=True)
                 self._prepare_sources([query], True)
             return
         self._apply_work_mode("music", initial=True)
         self._prepare_sources([result.page_url], True)
+
+    def _save_search_state_before_drill(self) -> None:
+        if not hasattr(self, "_previous_music_search_stack"):
+            self._previous_music_search_stack = []
+        if self._music_search_results:
+            title = self.music_search_var.get().strip() or "Busca"
+            self._previous_music_search_stack.append((title, list(self._music_search_results)))
+        if hasattr(self, "catalog_back_button"):
+            self.catalog_back_button.configure(state="normal")
+
+    def _restore_previous_music_search(self) -> None:
+        if not getattr(self, "_previous_music_search_stack", None):
+            return
+        prev_title, prev_results = self._previous_music_search_stack.pop()
+        self._clear_music_search_results()
+        self._music_search_results = list(prev_results)
+        for index, result in enumerate(prev_results):
+            self.music_results_tree.insert(
+                "",
+                END,
+                iid=str(index),
+                values=(result.kind_label, result.title, result.subtitle),
+            )
+        count = len(prev_results)
+        self.music_search_status_var.set(f"Retornado a: {prev_title} ({count} resultados).")
+        if count:
+            self.music_results_tree.selection_set("0")
+            self.music_results_tree.focus("0")
+            self._show_selected_catalog_result()
+        if hasattr(self, "catalog_back_button"):
+            self.catalog_back_button.configure(
+                state="normal" if getattr(self, "_previous_music_search_stack", None) else "disabled"
+            )
+
+    def _on_music_result_double_click(self, _event=None) -> None:
+        result = self._selected_catalog_result()
+        if result is None:
+            return
+        if result.kind == "album":
+            self._drill_down_album(result.item_id, result.title)
+        elif result.kind == "artist":
+            self._drill_down_artist_top(result.item_id, result.title)
+        else:
+            self._load_selected_catalog_result()
+
+    def _drill_down_selected(self) -> None:
+        result = self._selected_catalog_result()
+        if not result:
+            return
+        if result.kind == "album":
+            self._drill_down_album(result.item_id, result.title)
+        elif result.kind == "artist":
+            self._drill_down_artist_top(result.item_id, result.title)
+
+    def _drill_down_album(self, album_id: str, album_title: str) -> None:
+        self._save_search_state_before_drill()
+        self.music_search_status_var.set(f"Carregando faixas do álbum '{album_title}'...")
+
+        def worker():
+            try:
+                tracks = get_album_tracks(album_id)
+                results = tuple(
+                    DeezerSearchResult(
+                        kind="track",
+                        item_id=t.track_id,
+                        title=t.title,
+                        subtitle=f"{t.artist} • {album_title}",
+                        cover_url=t.cover_url,
+                        page_url=t.page_url,
+                    ) for t in tracks
+                )
+                self.event_queue.put(("music_drill_results", (f"Álbum: {album_title}", results, "")))
+            except Exception as exc:
+                self.event_queue.put(("music_drill_results", (album_title, (), str(exc))))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _drill_down_artist_top(self, artist_id: str, artist_name: str) -> None:
+        self._save_search_state_before_drill()
+        self.music_search_status_var.set(f"Carregando top músicas de '{artist_name}'...")
+
+        def worker():
+            try:
+                tracks = get_artist_top_tracks(artist_id, limit=30)
+                results = tuple(
+                    DeezerSearchResult(
+                        kind="track",
+                        item_id=t.track_id,
+                        title=t.title,
+                        subtitle=f"{artist_name} • {t.album}",
+                        cover_url=t.cover_url,
+                        page_url=t.page_url,
+                    ) for t in tracks
+                )
+                self.event_queue.put(("music_drill_results", (f"Top: {artist_name}", results, "")))
+            except Exception as exc:
+                self.event_queue.put(("music_drill_results", (artist_name, (), str(exc))))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _drill_artist_albums(self) -> None:
+        result = self._selected_catalog_result()
+        if not result or result.kind != "artist":
+            return
+        self._save_search_state_before_drill()
+        artist_id = result.item_id
+        artist_name = result.title
+        self.music_search_status_var.set(f"Carregando discografia de '{artist_name}'...")
+
+        def worker():
+            try:
+                albums = get_artist_albums(artist_id, limit=50)
+                self.event_queue.put(("music_drill_results", (f"Álbuns: {artist_name}", albums, "")))
+            except Exception as exc:
+                self.event_queue.put(("music_drill_results", (artist_name, (), str(exc))))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _handle_music_drill_results(self, payload: tuple) -> None:
+        title, results, error = payload
+        self._clear_music_search_results()
+        if error:
+            self.music_search_status_var.set(f"Falha ao carregar {title}: {error}")
+            return
+        self._music_search_results = list(results)
+        for index, result in enumerate(results):
+            self.music_results_tree.insert(
+                "",
+                END,
+                iid=str(index),
+                values=(result.kind_label, result.title, result.subtitle),
+            )
+        count = len(results)
+        self.music_search_status_var.set(f"{title} • {count} item(ns). Duplo clique ou Baixar.")
+        if count:
+            self.music_results_tree.selection_set("0")
+            self.music_results_tree.focus("0")
+            self._show_selected_catalog_result()
+        if hasattr(self, "catalog_back_button"):
+            self.catalog_back_button.configure(state="normal")
+
+    def _focus_music_search(self) -> None:
+        if hasattr(self, "music_page"):
+            self.tabs.select(self.music_page)
+        if hasattr(self, "music_search_entry"):
+            self.music_search_entry.focus_set()
+            self.music_search_entry.select_range(0, 'end')
 
     def _play_selected_catalog_result(self) -> None:
         self._toggle_catalog_playback()
@@ -3133,6 +3344,8 @@ class DownloadApp(QueueUI):
                     messagebox.showerror(APP_NAME, str(payload))
                 elif event == "music_search_results":
                     self._handle_music_search_results(payload)
+                elif event == "music_drill_results":
+                    self._handle_music_drill_results(payload)
                 elif event == "catalog_cover_ready":
                     self._apply_catalog_cover(payload)
                 elif event == "music_cover_ready":

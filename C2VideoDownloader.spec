@@ -15,6 +15,7 @@ hiddenimports = [
     'Crypto.Cipher.Blowfish',
     'Crypto.Hash.MD5',
     'vlc',
+    'spotify_catalog',
 ]
 
 a = Analysis(
