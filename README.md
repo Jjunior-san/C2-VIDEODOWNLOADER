@@ -396,7 +396,7 @@ deezer: Serhat Durmus La Câlin
 - fontes locais **SF Pro Text/Display** ou **SF UI Text/Display** são priorizadas em toda a interface; computadores sem elas usam Segoe UI/Arial;
 - atividade detalhada em uma aba própria, mantendo a lista e o progresso na tela principal;
 - URLs de mídia temporárias do Kanal D são renovadas ao retomar; o nome de saída fica fixo para localizar os arquivos parciais;
-- downloads diretos do JW.ORG podem continuar com HTTP Range e validação de ETag/Last-Modified; se o conteúdo mudou ou o servidor não permite retomada segura, o arquivo reinicia.
+- downloads diretos podem continuar com HTTP Range e validação de ETag/Last-Modified; se o conteúdo mudou ou o servidor não permite retomada segura, o arquivo reinicia.
 
 ### Uso da fila
 
