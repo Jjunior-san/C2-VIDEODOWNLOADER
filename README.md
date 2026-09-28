@@ -251,6 +251,17 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
+## Versão 2.1.0 — 4K, legendas, SponsorBlock, capítulos e automação
+
+- **Resoluções Ultra-HD e Áudio Hi-Res**: adiciona as opções **2160p (4K)** e **1440p (2K)** com priorização de codecs compatíveis, além dos formatos **Apenas áudio (FLAC)** e **Apenas áudio (WAV)** para extração em qualidade máxima de qualquer mídia;
+- **Suporte completo a Legendas (CC)**: opção de baixar legendas automaticamente nos idiomas configurados (ex: `pt,pt-BR,en`), com opção de embutir no vídeo (soft subtitles) ou salvar como arquivo `.srt` separado, incluindo suporte a legendas automáticas (auto-captions);
+- **Remoção de patrocínios (SponsorBlock)**: integração com SponsorBlock para pular ou cortar automaticamente anúncios patrocinados gravados no vídeo, vinhetas longas de intro/outro e chamadas de inscrição;
+- **Capítulos flexíveis**: permite embutir marcações de capítulos no arquivo ou dividir automaticamente o vídeo em arquivos independentes por capítulo (`--split-chapters`) — ideal para álbuns e podcasts;
+- **Limitador de velocidade (Bandwidth Limiter)**: seletor de taxa de transferência (500 KB/s, 1 MB/s, 2 MB/s, 5 MB/s, 10 MB/s, 20 MB/s ou Ilimitado) para não sobrecarregar conexões compartilhadas;
+- **Suporte a Proxy**: campo dedicado para proxies HTTP, HTTPS ou SOCKS5 nas configurações;
+- **Monitor de Área de Transferência (Clipboard Watcher)**: detecta links de vídeo e áudio copiados no Windows e sugere o download ou preenche a URL automaticamente;
+- **Cobertura de testes**: nova suíte `test_advanced_features.py` cobrindo todas as novas regras de CLI, formatos e persistência.
+
 ## Versão 2.0.0 — player de vídeo integrado
 
 - reproduz vídeos dentro da aba **Vídeo**, sem abrir outra janela;

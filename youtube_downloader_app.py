@@ -4,6 +4,7 @@ import json
 import math
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -221,6 +222,8 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 VIDEO_DOWNLOAD_FORMATS = [
     "Melhor MP4 compatível",
     "Melhor qualidade",
+    "2160p (4K)",
+    "1440p (2K)",
     "1080p",
     "720p",
     "480p",
@@ -229,15 +232,20 @@ VIDEO_DOWNLOAD_FORMATS = [
     "Apenas áudio (M4A)",
     "Apenas áudio (MP3)",
     "Apenas áudio (Opus)",
+    "Apenas áudio (FLAC)",
+    "Apenas áudio (WAV)",
 ]
 MUSIC_DOWNLOAD_FORMATS = [
     AUDIO_ORIGINAL_FORMAT,
     "Apenas áudio (M4A)",
     "Apenas áudio (MP3)",
     "Apenas áudio (Opus)",
+    "Apenas áudio (FLAC)",
+    "Apenas áudio (WAV)",
 ]
 DOWNLOAD_FORMATS = VIDEO_DOWNLOAD_FORMATS
 BROWSERS = ["Nenhum", "Chrome", "Edge", "Firefox", "Brave", "Opera", "Vivaldi"]
+RATE_LIMIT_CHOICES = ["Ilimitado", "500 KB/s", "1 MB/s", "2 MB/s", "5 MB/s", "10 MB/s", "20 MB/s"]
 DOWNLOAD_START_INACTIVITY_SECONDS = 90
 
 def _progress_number(value: str) -> float | None:
@@ -481,6 +489,27 @@ class DownloadApp(QueueUI):
         self.create_zip_var = BooleanVar(value=saved_create_zip)
         self.deezer_show_arl_var = BooleanVar(value=False)
 
+        # Configurações de legendas
+        self.subtitles_enabled_var = BooleanVar(value=bool(self.user_settings.get("subtitles_enabled", False)))
+        self.subtitles_embed_var = BooleanVar(value=bool(self.user_settings.get("subtitles_embed", True)))
+        self.subtitles_auto_var = BooleanVar(value=bool(self.user_settings.get("subtitles_auto", False)))
+        self.subtitles_langs_var = StringVar(value=str(self.user_settings.get("subtitles_langs") or "pt,pt-BR,en"))
+
+        # Recursos de vídeo (SponsorBlock e Capítulos)
+        self.sponsorblock_var = BooleanVar(value=bool(self.user_settings.get("sponsorblock", False)))
+        self.embed_chapters_var = BooleanVar(value=bool(self.user_settings.get("embed_chapters", True)))
+        self.split_chapters_var = BooleanVar(value=bool(self.user_settings.get("split_chapters", False)))
+
+        # Desempenho e Rede (Rate limit, Proxy, Clipboard)
+        saved_rate_limit = str(self.user_settings.get("rate_limit") or "Ilimitado")
+        if saved_rate_limit not in RATE_LIMIT_CHOICES:
+            saved_rate_limit = "Ilimitado"
+        self.rate_limit_var = StringVar(value=saved_rate_limit)
+        self.proxy_url_var = StringVar(value=str(self.user_settings.get("proxy_url") or ""))
+        self.clipboard_monitor_var = BooleanVar(value=bool(self.user_settings.get("clipboard_monitor", False)))
+        self._last_clipboard_url: str | None = None
+        self._clipboard_after_id = None
+
         self.music_filename_var = StringVar(value=saved_music_filename)
         self.music_search_var = StringVar()
         self.music_search_type_var = StringVar(
@@ -577,8 +606,10 @@ class DownloadApp(QueueUI):
             self.queue_log(f"Fila preservada em {QUEUE_FILE}. Erro ao ler/gravar: {queue_error}")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.bind("<Destroy>", self._on_root_destroy, add="+")
+        self.root.bind("<FocusIn>", lambda _e: self._check_clipboard_for_media(), add="+")
         self._poll_queues()
         self.root.after(700, self.start_maintenance)
+        self.root.after(1500, self._schedule_clipboard_tick)
 
     def _build_ui(self) -> None:
         shell = ttk.Frame(self.root, padding=10)
@@ -1011,8 +1042,9 @@ class DownloadApp(QueueUI):
         self._build_completed_list(self.completed_page)
 
         settings = self.settings_page.body
-        speed_frame = ttk.LabelFrame(settings, text="Desempenho", padding=10)
+        speed_frame = ttk.LabelFrame(settings, text="Desempenho e Rede", padding=10)
         speed_frame.pack(fill="x", pady=(0, 12))
+
         speed_row = ttk.Frame(speed_frame)
         speed_row.pack(fill="x", pady=(0, 8))
         ttk.Label(speed_row, text="Fragmentos simultâneos:").pack(side="left", padx=(0, 8))
@@ -1022,10 +1054,84 @@ class DownloadApp(QueueUI):
             values=FRAGMENT_CHOICES,
             state="readonly",
             width=3,
+        ).pack(side="left", padx=(0, 16))
+
+        ttk.Label(speed_row, text="Limite de velocidade:").pack(side="left", padx=(0, 8))
+        ttk.Combobox(
+            speed_row,
+            textvariable=self.rate_limit_var,
+            values=RATE_LIMIT_CHOICES,
+            state="readonly",
+            width=12,
         ).pack(side="left")
+
+        proxy_row = ttk.Frame(speed_frame)
+        proxy_row.pack(fill="x", pady=(0, 6))
+        ttk.Label(proxy_row, text="Proxy (HTTP/SOCKS5):").pack(side="left", padx=(0, 8))
+        ttk.Entry(proxy_row, textvariable=self.proxy_url_var, width=28).pack(side="left", fill="x", expand=True)
+
+        clip_check = ttk.Checkbutton(
+            speed_frame,
+            text="Monitorar área de transferência (detectar links copiados automaticamente)",
+            variable=self.clipboard_monitor_var,
+        )
+        clip_check.pack(anchor="w", pady=(2, 6))
+
         wrapping_label(
             speed_frame,
-            text="HLS/DASH: use 4 normalmente; reduza para 1 ou 2 se houver falhas de conexão.",
+            text="Dica: use 4 fragmentos; limite a velocidade para não sobrecarregar sua conexão.",
+            foreground="#596579",
+        )
+
+        subtitles_frame = ttk.LabelFrame(settings, text="Legendas (Subtitles & CC)", padding=10)
+        subtitles_frame.pack(fill="x", pady=(0, 12))
+        ttk.Checkbutton(
+            subtitles_frame,
+            text="Baixar legendas automaticamente quando disponíveis",
+            variable=self.subtitles_enabled_var,
+        ).pack(anchor="w", pady=(0, 4))
+        sub_opts_row = ttk.Frame(subtitles_frame)
+        sub_opts_row.pack(fill="x", pady=(0, 4))
+        ttk.Checkbutton(
+            sub_opts_row,
+            text="Embutir legendas no arquivo de vídeo (soft subs)",
+            variable=self.subtitles_embed_var,
+        ).pack(side="left", padx=(0, 16))
+        ttk.Checkbutton(
+            sub_opts_row,
+            text="Incluir legendas geradas automaticamente (auto-captions)",
+            variable=self.subtitles_auto_var,
+        ).pack(side="left")
+        langs_row = ttk.Frame(subtitles_frame)
+        langs_row.pack(fill="x", pady=(4, 4))
+        ttk.Label(langs_row, text="Idiomas das legendas:").pack(side="left", padx=(0, 8))
+        ttk.Entry(langs_row, textvariable=self.subtitles_langs_var, width=22).pack(side="left")
+        wrapping_label(
+            subtitles_frame,
+            text="Separe idiomas por vírgula (ex: pt,pt-BR,en,es). Desmarque 'Embutir' para salvar arquivos .srt separados.",
+            foreground="#596579",
+        )
+
+        video_features_frame = ttk.LabelFrame(settings, text="Otimizações de Vídeo & Capítulos", padding=10)
+        video_features_frame.pack(fill="x", pady=(0, 12))
+        ttk.Checkbutton(
+            video_features_frame,
+            text="Remover patrocínios internos e vinhetas (SponsorBlock)",
+            variable=self.sponsorblock_var,
+        ).pack(anchor="w", pady=(0, 4))
+        ttk.Checkbutton(
+            video_features_frame,
+            text="Embutir marcadores de capítulos no arquivo",
+            variable=self.embed_chapters_var,
+        ).pack(anchor="w", pady=(0, 4))
+        ttk.Checkbutton(
+            video_features_frame,
+            text="Dividir vídeo em arquivos separados por capítulo (--split-chapters)",
+            variable=self.split_chapters_var,
+        ).pack(anchor="w", pady=(0, 4))
+        wrapping_label(
+            video_features_frame,
+            text="A divisão por capítulos é recomendada para coletâneas de música ou podcasts em vídeo único.",
             foreground="#596579",
         )
 
@@ -1246,8 +1352,11 @@ class DownloadApp(QueueUI):
             "deezer_arl_var", "deezer_quality_var", "create_zip_var",
             "audio_bitrate_mode_var", "audio_custom_bitrate_var",
             "playlist_var", "music_structure_var", "music_filename_var",
+            "subtitles_enabled_var", "subtitles_embed_var", "subtitles_auto_var", "subtitles_langs_var",
+            "sponsorblock_var", "embed_chapters_var", "split_chapters_var",
+            "rate_limit_var", "proxy_url_var", "clipboard_monitor_var",
         )
-        return {name: getattr(self, name).get() for name in names}
+        return {name: getattr(self, name).get() for name in names if hasattr(self, name)}
 
     def _open_settings(self) -> None:
         self._settings_snapshot = self._settings_variables()
@@ -1391,6 +1500,55 @@ class DownloadApp(QueueUI):
                 self.download_item_var.set("Modo Vídeo")
                 self.download_metrics_var.set("Cole links de vídeos ou playlists para começar.")
         self._update_audio_controls()
+
+    def _schedule_clipboard_tick(self) -> None:
+        try:
+            if hasattr(self, "clipboard_monitor_var") and self.clipboard_monitor_var.get():
+                self._check_clipboard_for_media()
+        except Exception:
+            pass
+        finally:
+            if not getattr(self, "_music_search_shutdown", None) or not self._music_search_shutdown.is_set():
+                try:
+                    self._clipboard_after_id = self.root.after(1500, self._schedule_clipboard_tick)
+                except Exception:
+                    pass
+
+    def _check_clipboard_for_media(self) -> None:
+        if not hasattr(self, "clipboard_monitor_var") or not self.clipboard_monitor_var.get():
+            return
+        try:
+            text = self.root.clipboard_get().strip()
+        except Exception:
+            return
+        if not text or text == getattr(self, "_last_clipboard_url", None):
+            return
+
+        is_media_url = text.startswith(("http://", "https://", "deezer:"))
+        if not is_media_url:
+            return
+
+        known_patterns = (
+            "youtube.com", "youtu.be", "instagram.com", "tiktok.com",
+            "facebook.com", "fb.watch", "deezer.com", "deezer:",
+            "kanald.com.tr", "jw.org", "twitter.com", "x.com",
+            "vimeo.com", "twitch.tv", "soundcloud.com", "reddit.com",
+            "dailymotion.com", "bilibili.com"
+        )
+        lower = text.lower()
+        if not any(pattern in lower for pattern in known_patterns) and not lower.endswith(tuple(VIDEO_EXTENSIONS)):
+            return
+
+        self._last_clipboard_url = text
+        if hasattr(self, "video_url_text"):
+            current = self.video_url_text.get("1.0", "end").strip()
+            if text not in current:
+                if not current:
+                    self.video_url_text.insert("1.0", text)
+                else:
+                    self.video_url_text.insert("end", f"\n{text}")
+                self.queue_log(f"Área de transferência: link detectado e adicionado ({text[:60]}...)")
+                self._schedule_video_preview_check()
 
     def _schedule_video_preview_check(self, _event=None) -> None:
         if self._video_preview_after is not None:
@@ -2291,6 +2449,16 @@ class DownloadApp(QueueUI):
             "deezer_arl": self.deezer_arl_var.get().strip(),
             "deezer_quality": self.deezer_quality_var.get(),
             "create_collection_zip": bool(self.create_zip_var.get()),
+            "subtitles_enabled": bool(self.subtitles_enabled_var.get()),
+            "subtitles_embed": bool(self.subtitles_embed_var.get()),
+            "subtitles_auto": bool(self.subtitles_auto_var.get()),
+            "subtitles_langs": self.subtitles_langs_var.get().strip() or "pt,pt-BR,en",
+            "sponsorblock": bool(self.sponsorblock_var.get()),
+            "embed_chapters": bool(self.embed_chapters_var.get()),
+            "split_chapters": bool(self.split_chapters_var.get()),
+            "rate_limit": self.rate_limit_var.get().strip() or "Ilimitado",
+            "proxy_url": self.proxy_url_var.get().strip(),
+            "clipboard_monitor": bool(self.clipboard_monitor_var.get()),
         }
         try:
             save_user_settings(settings)
@@ -2311,6 +2479,12 @@ class DownloadApp(QueueUI):
                 messagebox.showerror(APP_NAME, f"Não foi possível interromper o trabalho: {exc}")
                 return
         self._save_preferences()
+        if getattr(self, "_clipboard_after_id", None) is not None:
+            try:
+                self.root.after_cancel(self._clipboard_after_id)
+            except Exception:
+                pass
+            self._clipboard_after_id = None
         self._stop_music_search_workers()
         try:
             self.music_player.stop()
@@ -2926,6 +3100,8 @@ class DownloadApp(QueueUI):
         format_map = {
             "Melhor qualidade": "bv*+ba/best",
             "Melhor MP4 compatível": compatible_selector(),
+            "2160p (4K)": compatible_selector(2160),
+            "1440p (2K)": compatible_selector(1440),
             "1080p": compatible_selector(1080),
             "720p": compatible_selector(720),
             "480p": compatible_selector(480),
@@ -2934,6 +3110,8 @@ class DownloadApp(QueueUI):
             "Apenas áudio (M4A)": "ba/bestaudio/best",
             "Apenas áudio (MP3)": "ba/bestaudio/best",
             "Apenas áudio (Opus)": "ba/bestaudio/best",
+            "Apenas áudio (FLAC)": "ba/bestaudio/best",
+            "Apenas áudio (WAV)": "ba/bestaudio/best",
         }
         selected_format = format_map.get(format_choice, compatible_selector())
         selected_output_template = output_template or (
@@ -2992,6 +3170,19 @@ class DownloadApp(QueueUI):
         deno = getattr(getattr(self, "dependencies", None), "deno_path", None)
         if deno and Path(deno).is_file():
             command.extend(["--js-runtimes", f"deno:{deno}"])
+
+        # Capítulos
+        embed_chapters = (
+            options.get("embed_chapters", True)
+            if options is not None
+            else (self.embed_chapters_var.get() if hasattr(self, "embed_chapters_var") else True)
+        )
+        split_chapters = (
+            options.get("split_chapters", False)
+            if options is not None
+            else (self.split_chapters_var.get() if hasattr(self, "split_chapters_var") else False)
+        )
+
         codec = audio_codec(format_choice)
         if format_choice == AUDIO_ORIGINAL_FORMAT:
             # Keep the downloaded audio bitstream untouched; even metadata or
@@ -3005,16 +3196,91 @@ class DownloadApp(QueueUI):
                 ])
             command.extend([
                 "--embed-metadata", "--embed-thumbnail", "--convert-thumbnails", "jpg",
-                "--no-embed-chapters",
             ])
+            if split_chapters:
+                command.append("--split-chapters")
+            elif embed_chapters:
+                command.append("--embed-chapters")
+            else:
+                command.append("--no-embed-chapters")
         else:
             command.extend(["--merge-output-format", "mp4"])
+            if split_chapters:
+                command.append("--split-chapters")
+            elif embed_chapters:
+                command.append("--embed-chapters")
+            else:
+                command.append("--no-embed-chapters")
+
+            # Legendas
+            subtitles_enabled = (
+                options.get("subtitles_enabled", False)
+                if options is not None
+                else (self.subtitles_enabled_var.get() if hasattr(self, "subtitles_enabled_var") else False)
+            )
+            if subtitles_enabled:
+                subtitles_embed = (
+                    options.get("subtitles_embed", True)
+                    if options is not None
+                    else (self.subtitles_embed_var.get() if hasattr(self, "subtitles_embed_var") else True)
+                )
+                subtitles_auto = (
+                    options.get("subtitles_auto", False)
+                    if options is not None
+                    else (self.subtitles_auto_var.get() if hasattr(self, "subtitles_auto_var") else False)
+                )
+                subtitles_langs = (
+                    str(options.get("subtitles_langs") or "pt,pt-BR,en")
+                    if options is not None
+                    else (self.subtitles_langs_var.get().strip() or "pt,pt-BR,en" if hasattr(self, "subtitles_langs_var") else "pt,pt-BR,en")
+                )
+                command.extend(["--write-subs", "--sub-langs", subtitles_langs])
+                if subtitles_auto:
+                    command.append("--write-auto-subs")
+                if subtitles_embed:
+                    command.append("--embed-subs")
+                else:
+                    command.extend(["--convert-subs", "srt"])
+
+        # SponsorBlock
+        sponsorblock = (
+            options.get("sponsorblock", False)
+            if options is not None
+            else (self.sponsorblock_var.get() if hasattr(self, "sponsorblock_var") else False)
+        )
+        if sponsorblock:
+            command.extend(["--sponsorblock-remove", "all"])
+
+        # Limite de taxa de download (Bandwidth Limiter)
+        rate_limit = (
+            options.get("rate_limit")
+            if options is not None
+            else (self.rate_limit_var.get() if hasattr(self, "rate_limit_var") else "")
+        )
+        rate_str = str(rate_limit or "").strip()
+        if rate_str and rate_str.lower() not in {"ilimitado", "none", "0", ""}:
+            match = re.search(r"(\d+(?:\.\d+)?)\s*([KkMmGg])?", rate_str)
+            if match:
+                val = match.group(1)
+                unit = (match.group(2) or "M").upper()
+                command.extend(["--limit-rate", f"{val}{unit}"])
+
+        # Proxy de rede
+        proxy_url = (
+            options.get("proxy_url")
+            if options is not None
+            else (self.proxy_url_var.get().strip() if hasattr(self, "proxy_url_var") else "")
+        )
+        if proxy_url:
+            command.extend(["--proxy", proxy_url])
 
         if include_cookies:
             if options is not None:
                 command.extend(cookie_arguments(options))
             else:
-                command.extend(cookie_arguments({"cookies_browser": self.cookies_browser_var.get(), "cookies_file": self.cookies_file_var.get()}))
+                browser = self.cookies_browser_var.get() if hasattr(self, "cookies_browser_var") else "Nenhum"
+                cfile = self.cookies_file_var.get() if hasattr(self, "cookies_file_var") else ""
+                command.extend(cookie_arguments({"cookies_browser": browser, "cookies_file": cfile}))
 
         command.extend(["--", url])
         return command

@@ -499,6 +499,8 @@ def convert_to_audio(
         "Apenas áudio (M4A)": (".m4a", ["-c:a", "aac", "-profile:a", "aac_low", "-b:a", "160k", "-movflags", "+faststart"]),
         "Apenas áudio (MP3)": (".mp3", ["-c:a", "libmp3lame", "-q:a", "0"]),
         "Apenas áudio (Opus)": (".opus", ["-c:a", "libopus", "-b:a", "160k"]),
+        "Apenas áudio (FLAC)": (".flac", ["-c:a", "flac"]),
+        "Apenas áudio (WAV)": (".wav", ["-c:a", "pcm_s16le"]),
     }
     if format_choice not in formats:
         raise JWOrgError(f"Formato de áudio não reconhecido: {format_choice}")

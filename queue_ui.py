@@ -531,6 +531,15 @@ class QueueUI:
             deezer_arl=self.deezer_arl_var.get().strip() if hasattr(self, "deezer_arl_var") else "",
             deezer_quality=self.deezer_quality_var.get().strip() if hasattr(self, "deezer_quality_var") else "auto",
             create_collection_zip=bool(self.create_zip_var.get()) if hasattr(self, "create_zip_var") else False,
+            subtitles_enabled=bool(self.subtitles_enabled_var.get()) if hasattr(self, "subtitles_enabled_var") else False,
+            subtitles_embed=bool(self.subtitles_embed_var.get()) if hasattr(self, "subtitles_embed_var") else True,
+            subtitles_auto=bool(self.subtitles_auto_var.get()) if hasattr(self, "subtitles_auto_var") else False,
+            subtitles_langs=self.subtitles_langs_var.get().strip() if hasattr(self, "subtitles_langs_var") else "pt,pt-BR,en",
+            sponsorblock=bool(self.sponsorblock_var.get()) if hasattr(self, "sponsorblock_var") else False,
+            embed_chapters=bool(self.embed_chapters_var.get()) if hasattr(self, "embed_chapters_var") else True,
+            split_chapters=bool(self.split_chapters_var.get()) if hasattr(self, "split_chapters_var") else False,
+            rate_limit=self.rate_limit_var.get().strip() if hasattr(self, "rate_limit_var") else "",
+            proxy_url=self.proxy_url_var.get().strip() if hasattr(self, "proxy_url_var") else "",
         )
 
     def analyze_links(self):

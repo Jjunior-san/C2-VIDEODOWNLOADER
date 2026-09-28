@@ -31,6 +31,8 @@ AUDIO_FORMATS = {
     "Apenas áudio (M4A)": "m4a",
     "Apenas áudio (MP3)": "mp3",
     "Apenas áudio (Opus)": "opus",
+    "Apenas áudio (FLAC)": "flac",
+    "Apenas áudio (WAV)": "wav",
 }
 AUDIO_EXTENSIONS = {".m4a", ".mp3", ".opus", ".ogg", ".flac", ".wav"}
 MUSIC_FOLDER_STRUCTURES = ("Pasta raiz", "Artista", "Artista\\Álbum")

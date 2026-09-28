@@ -47,6 +47,10 @@ def _read_metadata_once(engine, source, options, control, environment, log):
                "--remote-components", "ejs:github", "--print", METADATA_FIELDS,
                "--yes-playlist" if options["playlist"] else "--no-playlist",
                *cookie_arguments(options), "--", source]
+    proxy = str(options.get("proxy_url") or "").strip()
+    if proxy:
+        option_boundary = command.index("--")
+        command[option_boundary:option_boundary] = ["--proxy", proxy]
     deno = Path(engine).with_name("deno.exe")
     if deno.is_file():
         option_boundary = command.index("--")
