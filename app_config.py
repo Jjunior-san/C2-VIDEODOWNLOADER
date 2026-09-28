@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 APP_NAME = "C² - Video Downloader"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 APP_PUBLISHER = "C2 Sistemas"
 APP_MUTEX = "C2VideoDownloaderMutex"
 

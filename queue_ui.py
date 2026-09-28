@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import csv
+import os
 import threading
 from pathlib import Path
-from tkinter import END, messagebox, ttk
+from tkinter import END, StringVar, filedialog, messagebox, ttk
 
 from audio_library import AUDIO_AUTO_BITRATE, bitrate_from_options, is_audio_format
 from download_control import DownloadCancelled, DownloadControl
 from download_queue import ACTIVE, LABELS, RUNNABLE, queue_summary
 from queue_service import discover, run_queue
-from ui_layout import add_tooltip
+from ui_layout import add_tooltip, configure_treeview_status_tags
 
 
 def queue_options_compatible(current: dict, saved: dict) -> bool:
@@ -39,6 +41,29 @@ class QueueUI:
         self.analyze_button.pack(side="left")
         ttk.Button(controls, text="Marcar todos", command=lambda: self._select_items(True)).pack(side="left", padx=4)
         ttk.Button(controls, text="Desmarcar", command=lambda: self._select_items(False)).pack(side="left")
+
+        # Barra de Pesquisa e Filtro da Fila
+        filter_bar = ttk.Frame(parent)
+        filter_bar.pack(fill="x", pady=(0, 6))
+        ttk.Label(filter_bar, text="🔍 Filtrar:").pack(side="left", padx=(0, 4))
+        self.queue_search_var = StringVar()
+        self.queue_search_entry = ttk.Entry(filter_bar, textvariable=self.queue_search_var, width=22)
+        self.queue_search_entry.pack(side="left", padx=(0, 8))
+        self.queue_search_entry.bind("<KeyRelease>", lambda _e: self._apply_queue_filter())
+
+        ttk.Label(filter_bar, text="Situação:").pack(side="left", padx=(0, 4))
+        self.queue_filter_status_var = StringVar(value="Todos")
+        self.queue_filter_combo = ttk.Combobox(
+            filter_bar,
+            textvariable=self.queue_filter_status_var,
+            values=("Todos", "Pendentes", "Baixando", "Falhas"),
+            state="readonly",
+            width=14,
+        )
+        self.queue_filter_combo.pack(side="left")
+        self.queue_filter_combo.bind("<<ComboboxSelected>>", lambda _e: self._apply_queue_filter())
+        ttk.Button(filter_bar, text="✖ Limpar", command=self._clear_queue_filter).pack(side="left", padx=6)
+
         self.queue_count = ttk.Label(parent, text="Liste as mídias para selecionar o que deseja baixar.")
         self.queue_count.pack(anchor="w", pady=(0, 4))
         table = ttk.Frame(parent)
@@ -56,6 +81,7 @@ class QueueUI:
         xbar = ttk.Scrollbar(table, orient="horizontal", command=self.episode_tree.xview)
         xbar.grid(row=1, column=0, sticky="ew")
         self.episode_tree.configure(yscrollcommand=ybar.set, xscrollcommand=xbar.set)
+        configure_treeview_status_tags(self.episode_tree)
         self.episode_tree.bind("<Button-1>", self._click_episode)
         self.episode_tree.bind("<space>", self._toggle_selected)
         self.episode_tree.bind("<<TreeviewSelect>>", self._show_episode_details)
@@ -67,17 +93,36 @@ class QueueUI:
         ttk.Button(management, text="Repetir falhas", command=self.retry_failed).pack(side="right", padx=6)
         self.remove_queue_button = ttk.Button(management, text="Remover da fila", command=self.remove_queue_selected)
         self.remove_queue_button.pack(side="right")
-        self.clear_queue_button = ttk.Button(management, text="Limpar fila", command=self.clear_queue)
+        self.clear_completed_queue_button = ttk.Button(
+            management, text="Limpar concluídos", command=self.clear_completed_from_queue
+        )
+        self.clear_completed_queue_button.pack(side="right", padx=6)
+        self.clear_queue_button = ttk.Button(management, text="Limpar tudo", command=self.clear_queue)
         self.clear_queue_button.pack(side="right", padx=6)
+        self.export_queue_button = ttk.Button(management, text="Exportar fila (.txt)", command=self.export_queue_links)
+        self.export_queue_button.pack(side="left")
         self.episode_actions = ttk.Frame(parent)
         self.episode_actions.pack(fill="x", pady=(0, 8))
 
     def _build_completed_list(self, parent):
-        ttk.Label(parent, text="Downloads concluídos", font=(self.text_family, 11, "bold")).pack(anchor="w")
+        top_row = ttk.Frame(parent)
+        top_row.pack(fill="x")
+        ttk.Label(top_row, text="Downloads concluídos", font=(self.text_family, 11, "bold")).pack(side="left")
+
+        # Barra de Pesquisa dos Concluídos
+        filter_bar = ttk.Frame(parent)
+        filter_bar.pack(fill="x", pady=(6, 4))
+        ttk.Label(filter_bar, text="🔍 Filtrar:").pack(side="left", padx=(0, 4))
+        self.completed_search_var = StringVar()
+        self.completed_search_entry = ttk.Entry(filter_bar, textvariable=self.completed_search_var, width=28)
+        self.completed_search_entry.pack(side="left", padx=(0, 8))
+        self.completed_search_entry.bind("<KeyRelease>", lambda _e: self._apply_completed_filter())
+        ttk.Button(filter_bar, text="✖ Limpar", command=self._clear_completed_filter).pack(side="left")
+
         self.completed_count = ttk.Label(
             parent, text="Nenhum download concluído.", foreground="#596579",
         )
-        self.completed_count.pack(anchor="w", pady=(2, 8))
+        self.completed_count.pack(anchor="w", pady=(2, 6))
         table = ttk.Frame(parent)
         table.pack(fill="both", expand=True, pady=(0, 8))
         columns = ("title", "quality", "file")
@@ -101,7 +146,9 @@ class QueueUI:
         xbar = ttk.Scrollbar(table, orient="horizontal", command=self.completed_tree.xview)
         xbar.grid(row=1, column=0, sticky="ew")
         self.completed_tree.configure(yscrollcommand=ybar.set, xscrollcommand=xbar.set)
+        configure_treeview_status_tags(self.completed_tree)
         self.completed_tree.bind("<<TreeviewSelect>>", self._show_completed_details)
+        self.completed_tree.bind("<Double-1>", lambda _e: self.open_completed_file())
         actions = ttk.Frame(parent)
         actions.pack(fill="x", pady=(0, 8))
         self.clear_completed_button = ttk.Button(
@@ -112,6 +159,10 @@ class QueueUI:
             actions, text="Remover selecionados", command=self.remove_completed_selected,
         )
         self.remove_completed_button.pack(side="right", padx=(0, 6))
+        self.export_completed_csv_button = ttk.Button(
+            actions, text="Exportar (.csv)", command=self.export_completed_csv,
+        )
+        self.export_completed_csv_button.pack(side="right", padx=(0, 6))
         self.play_completed_button = ttk.Button(
             actions, text="▶", width=3, command=self.play_completed_media, state="disabled",
         )
@@ -122,6 +173,14 @@ class QueueUI:
         self.stop_completed_button.pack(side="left", padx=(6, 0))
         add_tooltip(self.play_completed_button, "Reproduzir ou pausar")
         add_tooltip(self.stop_completed_button, "Parar a reprodução")
+        self.open_completed_file_button = ttk.Button(
+            actions, text="Abrir arquivo", command=self.open_completed_file, state="disabled",
+        )
+        self.open_completed_file_button.pack(side="left", padx=(6, 0))
+        self.copy_completed_path_button = ttk.Button(
+            actions, text="Copiar caminho", command=self.copy_completed_path, state="disabled",
+        )
+        self.copy_completed_path_button.pack(side="left", padx=(6, 0))
         self.edit_completed_button = ttk.Button(
             actions, text="Editar metadados", command=lambda: self.edit_selected_music_metadata(completed=True),
         )
@@ -230,29 +289,62 @@ class QueueUI:
         self.queue_items = self.queue_repository.snapshot()["items"]
         active_items = [item for item in self.queue_items if item["status"] != "completed"]
         completed_items = [item for item in self.queue_items if item["status"] == "completed"]
+
+        # Determinar itens visíveis com base na pesquisa e no filtro de situação
+        displayed_active = active_items
+        q_search = self.queue_search_var.get().strip().lower() if hasattr(self, "queue_search_var") else ""
+        q_status = self.queue_filter_status_var.get() if hasattr(self, "queue_filter_status_var") else "Todos"
+        if q_search or q_status != "Todos":
+            displayed_active = []
+            for item in active_items:
+                if q_search and (q_search not in item["title"].lower() and q_search not in str(item.get("source", "")).lower()):
+                    continue
+                if q_status == "Pendentes" and item["status"] != "pending":
+                    continue
+                if q_status == "Baixando" and item["status"] not in ACTIVE:
+                    continue
+                if q_status == "Falhas" and item["status"] != "failed":
+                    continue
+                displayed_active.append(item)
+
         existing = set(self.episode_tree.get_children())
-        for item in active_items:
+        for item in displayed_active:
             values = ("✓" if item["enabled"] else "", item["title"], item.get("quality", "A definir"),
                       LABELS[item["status"]], "—")
+            tag = item["status"]
             if item["id"] in existing:
-                self.episode_tree.item(item["id"], values=values)
+                self.episode_tree.item(item["id"], values=values, tags=(tag,))
                 existing.remove(item["id"])
             else:
-                self.episode_tree.insert("", END, iid=item["id"], values=values)
+                self.episode_tree.insert("", END, iid=item["id"], values=values, tags=(tag,))
         for item_id in existing:
             self.episode_tree.delete(item_id)
+
+        # Determinar itens concluídos visíveis com base na pesquisa
+        displayed_completed = completed_items
+        c_search = self.completed_search_var.get().strip().lower() if hasattr(self, "completed_search_var") else ""
+        if c_search:
+            displayed_completed = []
+            for item in completed_items:
+                title_match = c_search in item["title"].lower()
+                files = item.get("files", [])
+                file_match = any(c_search in Path(f).name.lower() for f in files)
+                if title_match or file_match:
+                    displayed_completed.append(item)
+
         existing_completed = set(self.completed_tree.get_children())
-        for item in completed_items:
+        for item in displayed_completed:
             files = item.get("files", [])
             saved_file = Path(files[0]).name if files else "Arquivo não informado"
             values = (item["title"], item.get("quality", "A definir"), saved_file)
             if item["id"] in existing_completed:
-                self.completed_tree.item(item["id"], values=values)
+                self.completed_tree.item(item["id"], values=values, tags=("completed",))
                 existing_completed.remove(item["id"])
             else:
-                self.completed_tree.insert("", END, iid=item["id"], values=values)
+                self.completed_tree.insert("", END, iid=item["id"], values=values, tags=("completed",))
         for item_id in existing_completed:
             self.completed_tree.delete(item_id)
+
         summary = queue_summary(self.queue_items)
         active_selected = sum(item["enabled"] for item in active_items)
         self.queue_count.configure(
@@ -264,15 +356,24 @@ class QueueUI:
         idle_state = "normal" if not self.busy else "disabled"
         self.clear_queue_button.configure(state=idle_state if self.queue_items else "disabled")
         self.remove_queue_button.configure(state=idle_state if active_items else "disabled")
+        if hasattr(self, "clear_completed_queue_button"):
+            has_completed_in_queue = any(item["status"] == "completed" for item in self.queue_items)
+            self.clear_completed_queue_button.configure(state=idle_state if has_completed_in_queue else "disabled")
+        if hasattr(self, "export_queue_button"):
+            self.export_queue_button.configure(state=idle_state if self.queue_items else "disabled")
+
         completed_state = idle_state if completed_items else "disabled"
         self.clear_completed_button.configure(state=completed_state)
         self.remove_completed_button.configure(state=completed_state)
+        if hasattr(self, "export_completed_csv_button"):
+            self.export_completed_csv_button.configure(state=completed_state)
+
+        selected_completed = self.completed_tree.selection()
+        selected_item = next(
+            (item for item in completed_items if selected_completed and item["id"] == selected_completed[0]),
+            None,
+        )
         if hasattr(self, "play_completed_button"):
-            selected_completed = self.completed_tree.selection()
-            selected_item = next(
-                (item for item in completed_items if selected_completed and item["id"] == selected_completed[0]),
-                None,
-            )
             music_selected = bool(selected_item and selected_item.get("kind") in {"deezer_preview", "deezer_full"})
             playable = self._is_completed_playable(selected_item)
             self.play_completed_button.configure(state=idle_state if playable else "disabled")
@@ -282,6 +383,16 @@ class QueueUI:
             self.edit_completed_button.configure(state=idle_state if music_selected else "disabled")
             self.cover_completed_button.configure(state=idle_state if music_selected else "disabled")
             self.open_folder_button.configure(state=idle_state if selected_item else "disabled")
+
+        if hasattr(self, "open_completed_file_button"):
+            has_valid_file = bool(selected_item and selected_item.get("files") and Path(selected_item["files"][0]).exists())
+            self.open_completed_file_button.configure(state=idle_state if has_valid_file else "disabled")
+        if hasattr(self, "copy_completed_path_button"):
+            self.copy_completed_path_button.configure(state=idle_state if (selected_item and selected_item.get("files")) else "disabled")
+
+        if hasattr(self, "header_status_var"):
+            self.header_status_var.set(f"Fila: {len(active_items)}  •  Concluídos: {len(completed_items)}")
+
         if self.queue_running and not self.active_queue_id:
             self.progress.configure(mode="determinate")
             self.progress_value_var.set(summary["overall"])
@@ -292,6 +403,118 @@ class QueueUI:
         self._refresh_context_queues(active_items)
         self._show_episode_details()
         self._show_completed_details()
+
+    def _apply_queue_filter(self):
+        self._refresh_queue()
+
+    def _clear_queue_filter(self):
+        if hasattr(self, "queue_search_var"):
+            self.queue_search_var.set("")
+        if hasattr(self, "queue_filter_status_var"):
+            self.queue_filter_status_var.set("Todos")
+        self._refresh_queue()
+
+    def _apply_completed_filter(self):
+        self._refresh_queue()
+
+    def _clear_completed_filter(self):
+        if hasattr(self, "completed_search_var"):
+            self.completed_search_var.set("")
+        self._refresh_queue()
+
+    def clear_completed_from_queue(self):
+        """Remove completed items from the active queue, preserving pending and failed items."""
+        if self.queue_repository is None or self.busy:
+            return
+        snapshot = self.queue_repository.snapshot()
+        items = snapshot["items"]
+        remaining = [item for item in items if item["status"] != "completed"]
+        removed = len(items) - len(remaining)
+        if removed == 0:
+            return
+        self.queue_repository.replace(remaining, snapshot.get("options", {}), snapshot.get("sources", []))
+        self._refresh_queue()
+        self.queue_log(f"{removed} item(ns) concluído(s) removido(s) da fila.")
+
+    def export_queue_links(self):
+        """Export URLs of current queue to a text file."""
+        if not self.queue_items:
+            messagebox.showinfo("C² Video Downloader", "A fila está vazia.")
+            return
+        sources = [item.get("source") for item in self.queue_items if item.get("source")]
+        if not sources:
+            messagebox.showinfo("C² Video Downloader", "Nenhum link encontrado na fila.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Exportar links da fila",
+            defaultextension=".txt",
+            filetypes=[("Arquivo de texto", "*.txt"), ("Todos os arquivos", "*.*")],
+        )
+        if path:
+            try:
+                Path(path).write_text("\n".join(sources), encoding="utf-8")
+                self.queue_log(f"{len(sources)} links exportados para {Path(path).name}.")
+            except Exception as exc:
+                messagebox.showerror("C² Video Downloader", f"Erro ao exportar: {exc}")
+
+    def open_completed_file(self):
+        selected = self.completed_tree.selection()
+        if not selected:
+            return
+        item = next((i for i in self.queue_items if i["id"] == selected[0]), None)
+        if not item or not item.get("files"):
+            return
+        target = Path(item["files"][0])
+        if target.exists():
+            try:
+                os.startfile(str(target))
+            except Exception as exc:
+                messagebox.showerror("C² Video Downloader", f"Não foi possível abrir o arquivo: {exc}")
+        else:
+            messagebox.showwarning("C² Video Downloader", "O arquivo não foi encontrado no disco.")
+
+    def copy_completed_path(self):
+        selected = self.completed_tree.selection()
+        if not selected:
+            return
+        item = next((i for i in self.queue_items if i["id"] == selected[0]), None)
+        if not item or not item.get("files"):
+            return
+        file_path = str(item["files"][0])
+        self.root.clipboard_clear()
+        self.root.clipboard_append(file_path)
+        self.queue_log(f"Caminho copiado para a área de transferência: {file_path}")
+
+    def export_completed_csv(self):
+        completed_items = [item for item in self.queue_items if item["status"] == "completed"]
+        if not completed_items:
+            messagebox.showinfo("C² Video Downloader", "Nenhum download concluído para exportar.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Exportar histórico de downloads",
+            defaultextension=".csv",
+            filetypes=[("Planilha CSV", "*.csv"), ("Texto", "*.txt"), ("Todos os arquivos", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f, delimiter=";")
+                writer.writerow(["ID", "Título", "Qualidade", "Tipo", "Arquivo Salvo", "Link de Origem"])
+                for item in completed_items:
+                    files = item.get("files", [])
+                    file_str = files[0] if files else ""
+                    writer.writerow([
+                        item["id"],
+                        item.get("title", ""),
+                        item.get("quality", ""),
+                        item.get("kind", ""),
+                        file_str,
+                        item.get("source", ""),
+                    ])
+            self.queue_log(f"Histórico exportado com sucesso ({len(completed_items)} itens) para {Path(path).name}.")
+        except Exception as exc:
+            messagebox.showerror("C² Video Downloader", f"Erro ao exportar: {exc}")
 
     def _refresh_context_queues(self, active_items):
         trees = getattr(self, "context_queue_trees", {})

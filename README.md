@@ -251,6 +251,37 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
+## Versão 2.2.0 — interface moderna, perfis rápidos, busca, filtros e automação pós-download
+
+- **Design e Tema Visual Moderno**:
+  - Estilização completa da interface com paleta moderna e limpa, abas do `Notebook` estilizadas com maior espaçamento e destaque de seleção, botões de ação com realce primário (`Accent.TButton`) e tabela com espaçamento aprimorado;
+  - Linhas da fila exibem cores de destaque para cada situação (verde para concluído, azul para baixando, amarelo para pendente e vermelho para falhas);
+  - Contador de itens na fila e concluídos no cabeçalho em tempo real;
+  - Botão rápido `📁 Pasta` no topo para abrir o diretório de downloads diretamente no Windows Explorer.
+- **Perfis de Download Rápidos (Presets)**:
+  - Seletor de predefinições na aba de vídeos com ajuste automático de formato, resolução e taxa de bits com um clique:
+    - 🌟 *Máxima Qualidade (4K/2K/HD + Melhor Áudio + Capítulos e Legendas)*;
+    - 📱 *Celular & WhatsApp (720p H.264 Leve)*;
+    - ⚡ *Econômico / Rápido (480p Leve)*;
+    - 🎧 *Áudio Hi-Fi Lossless (FLAC sem perdas)*;
+    - 🎵 *Música Universal (MP3 320 kbps)*;
+    - 🎙️ *Podcast & Audiolivro (MP3 128 kbps)*.
+- **Barra de Ferramentas de Links**:
+  - Botão `📋 Colar` direto da área de transferência;
+  - Botão `📂 Importar .txt` para carregar listas de URLs em lote a partir de arquivos de texto ou `.m3u`;
+  - Botão `💾 Exportar` para salvar a lista de links informada;
+  - Botão `🧹 Limpar` para zerar o campo com facilidade;
+  - Contador dinâmico em tempo real de links detectados no campo.
+- **Busca e Filtro em Tempo Real**:
+  - Campo de busca instantânea `🔍 Filtrar` tanto na aba **Fila geral** quanto em **Concluídos**;
+  - Filtro por situação na fila: *Todos*, *Pendentes*, *Baixando* e *Falhas*.
+- **Automação Pós-Download**:
+  - Configuração de ação automática ao terminar todos os downloads da fila: *Nenhuma ação*, *Tocar som de alerta*, *Abrir pasta de downloads*, *Suspender computador (Sleep)* ou *Desligar o computador* (com temporizador de 30s cancelável).
+- **Gerenciamento e Exportação de Mídias**:
+  - Botão `Limpar concluídos` na fila ativa para remover apenas os itens finalizados, preservando pendências e falhas;
+  - Botão `Exportar fila (.txt)` para backup de links;
+  - Ações na aba **Concluídos**: `Abrir arquivo` no player padrão do Windows (ou duplo clique), `Copiar caminho` e `Exportar (.csv)` de histórico.
+
 ## Versão 2.1.0 — 4K, legendas, SponsorBlock, capítulos e automação
 
 - **Resoluções Ultra-HD e Áudio Hi-Res**: adiciona as opções **2160p (4K)** e **1440p (2K)** com priorização de codecs compatíveis, além dos formatos **Apenas áudio (FLAC)** e **Apenas áudio (WAV)** para extração em qualidade máxima de qualquer mídia;

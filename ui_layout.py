@@ -21,11 +21,58 @@ def configure_fonts(root):
     for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont", "TkCaptionFont", "TkSmallCaptionFont", "TkIconFont", "TkTooltipFont"):
         font.nametofont(name, root=root).configure(family=text_family)
     root.option_add("*Font", (text_family, 10))
+    configure_modern_styles(root, text_family, display_family)
+    return text_family, display_family
+
+
+def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.Style:
     style = ttk.Style(root)
     style.configure(".", font=(text_family, 10))
-    style.configure("Treeview", font=(text_family, 10), rowheight=max(24, font.Font(root=root, family=text_family, size=10).metrics("linespace") + 8))
+    row_height = max(26, font.Font(root=root, family=text_family, size=10).metrics("linespace") + 10)
+    style.configure("Treeview", font=(text_family, 10), rowheight=row_height)
     style.configure("Treeview.Heading", font=(text_family, 10, "bold"))
-    return text_family, display_family
+    
+    # Modern Accent Button (Primary action)
+    style.configure(
+        "Accent.TButton",
+        font=(text_family, 10, "bold"),
+        foreground="#ffffff",
+        background="#2563eb",
+        padding=(10, 4),
+    )
+    style.map(
+        "Accent.TButton",
+        background=[("pressed", "#1e40af"), ("active", "#1d4ed8"), ("disabled", "#94a3b8")],
+        foreground=[("disabled", "#f1f5f9")],
+    )
+
+    # Standard Button
+    style.configure("TButton", padding=(6, 3))
+    
+    # Modern Notebook Tabs
+    style.configure("TNotebook.Tab", font=(text_family, 10, "bold"), padding=[12, 6])
+    style.map(
+        "TNotebook.Tab",
+        foreground=[("selected", "#2563eb"), ("!selected", "#475569")],
+    )
+
+    # Progressbar
+    style.configure("Horizontal.TProgressbar", thickness=12)
+    return style
+
+
+def configure_treeview_status_tags(tree) -> None:
+    try:
+        tree.tag_configure("completed", foreground="#15803d")
+        tree.tag_configure("downloading", foreground="#1d4ed8")
+        tree.tag_configure("pending", foreground="#b45309")
+        tree.tag_configure("failed", foreground="#b91c1c")
+        tree.tag_configure("cancelled", foreground="#64748b")
+        tree.tag_configure("interrupted", foreground="#7c3aed")
+        tree.tag_configure("finalizing", foreground="#0891b2")
+        tree.tag_configure("skipped", foreground="#94a3b8")
+    except Exception:
+        pass
 
 
 def desktop_work_area(root) -> tuple[int, int, int, int]:

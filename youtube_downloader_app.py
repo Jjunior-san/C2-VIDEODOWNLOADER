@@ -246,6 +246,43 @@ MUSIC_DOWNLOAD_FORMATS = [
 DOWNLOAD_FORMATS = VIDEO_DOWNLOAD_FORMATS
 BROWSERS = ["Nenhum", "Chrome", "Edge", "Firefox", "Brave", "Opera", "Vivaldi"]
 RATE_LIMIT_CHOICES = ["Ilimitado", "500 KB/s", "1 MB/s", "2 MB/s", "5 MB/s", "10 MB/s", "20 MB/s"]
+PRESETS = {
+    "Personalizado": {},
+    "🌟 Máxima Qualidade (4K / 2K / HD)": {
+        "format": "Melhor qualidade",
+        "audio_bitrate": "Original / automática",
+        "chapters": True,
+        "subs": True,
+    },
+    "📱 Celular & WhatsApp (720p H.264 Leve)": {
+        "format": "720p",
+        "audio_bitrate": "128 kbps (econômica)",
+    },
+    "⚡ Econômico / Rápido (480p Leve)": {
+        "format": "480p",
+        "audio_bitrate": "128 kbps (econômica)",
+    },
+    "🎧 Áudio Hi-Fi Lossless (FLAC)": {
+        "format": "Apenas áudio (FLAC)",
+        "audio_bitrate": "Original / automática",
+    },
+    "🎵 Música Universal (MP3 320 kbps)": {
+        "format": "Apenas áudio (MP3)",
+        "audio_bitrate": "320 kbps (alta qualidade)",
+    },
+    "🎙️ Podcast & Audiolivro (MP3 128 kbps)": {
+        "format": "Apenas áudio (MP3)",
+        "audio_bitrate": "128 kbps (econômica)",
+    },
+}
+PRESET_CHOICES = list(PRESETS.keys())
+POST_DOWNLOAD_ACTIONS = [
+    "Nenhuma ação",
+    "Tocar som de alerta",
+    "Abrir pasta de downloads",
+    "Suspender computador",
+    "Desligar o computador (30s)",
+]
 DOWNLOAD_START_INACTIVITY_SECONDS = 90
 
 def _progress_number(value: str) -> float | None:
@@ -510,6 +547,19 @@ class DownloadApp(QueueUI):
         self._last_clipboard_url: str | None = None
         self._clipboard_after_id = None
 
+        # Perfis rápidos e Ações de conclusão
+        saved_preset = str(self.user_settings.get("preset") or "Personalizado")
+        if saved_preset not in PRESET_CHOICES:
+            saved_preset = "Personalizado"
+        self.preset_var = StringVar(value=saved_preset)
+
+        saved_post_action = str(self.user_settings.get("post_download_action") or "Nenhuma ação")
+        if saved_post_action not in POST_DOWNLOAD_ACTIONS:
+            saved_post_action = "Nenhuma ação"
+        self.post_download_action_var = StringVar(value=saved_post_action)
+        self.header_status_var = StringVar(value="Fila: 0  •  Concluídos: 0")
+        self.detected_links_var = StringVar(value="Nenhum link inserido")
+
         self.music_filename_var = StringVar(value=saved_music_filename)
         self.music_search_var = StringVar()
         self.music_search_type_var = StringVar(
@@ -635,6 +685,22 @@ class DownloadApp(QueueUI):
         )
         self.settings_button.pack(side="right")
         add_tooltip(self.settings_button, "Configurações")
+
+        self.open_folder_header_btn = ttk.Button(
+            header,
+            text="📁 Pasta",
+            command=self.open_current_download_folder,
+        )
+        self.open_folder_header_btn.pack(side="right", padx=(0, 6))
+        add_tooltip(self.open_folder_header_btn, "Abrir pasta de downloads atual no Windows Explorer")
+
+        self.header_status_label = ttk.Label(
+            header,
+            textvariable=self.header_status_var,
+            font=(self.text_family, 9, "bold"),
+            foreground="#2563eb",
+        )
+        self.header_status_label.pack(side="right", padx=(0, 10))
 
         self.tabs = ttk.Notebook(shell)
         self.tabs.pack(fill="both", expand=True)
@@ -807,6 +873,7 @@ class DownloadApp(QueueUI):
             text="Baixar",
             command=self._download_selected_catalog_result,
             state="disabled",
+            style="Accent.TButton",
         )
         self.catalog_download_button.pack(side="left", padx=(6, 0))
         self.catalog_play_button = ttk.Button(
@@ -877,6 +944,21 @@ class DownloadApp(QueueUI):
         # Vídeo: entrada e opções em uma tela própria.
         video_input = ttk.LabelFrame(video, text="Links de vídeo / playlists", padding=10)
         video_input.pack(fill="x", pady=(0, 8))
+
+        url_toolbar = ttk.Frame(video_input)
+        url_toolbar.pack(fill="x", pady=(0, 6))
+        ttk.Button(url_toolbar, text="📋 Colar", command=self._paste_clipboard_to_url_text).pack(side="left")
+        ttk.Button(url_toolbar, text="📂 Importar .txt", command=self._import_urls_from_file).pack(side="left", padx=4)
+        ttk.Button(url_toolbar, text="💾 Exportar", command=self._export_urls_to_file).pack(side="left")
+        ttk.Button(url_toolbar, text="🧹 Limpar", command=self._clear_url_text).pack(side="left", padx=4)
+        self.detected_links_label = ttk.Label(
+            url_toolbar,
+            textvariable=self.detected_links_var,
+            font=(self.text_family, 9),
+            foreground="#2563eb",
+        )
+        self.detected_links_label.pack(side="right")
+
         self.video_url_text = self._make_text(video_input, height=3)
         self.video_url_text.pack(fill="both", expand=True)
         wrapping_label(
@@ -884,8 +966,8 @@ class DownloadApp(QueueUI):
             text="Cole um link por linha. YouTube, Kanal D, JW.ORG e outras fontes compatíveis com yt-dlp.",
             foreground="#596579",
         )
-        self.video_url_text.bind("<KeyRelease>", self._schedule_video_preview_check)
-        self.video_url_text.bind("<<Paste>>", lambda e: self.root.after(100, self._schedule_video_preview_check))
+        self.video_url_text.bind("<KeyRelease>", lambda e: (self._update_detected_links_count(), self._schedule_video_preview_check()))
+        self.video_url_text.bind("<<Paste>>", lambda e: self.root.after(100, lambda: (self._update_detected_links_count(), self._schedule_video_preview_check())))
 
         # Card de prévia automática de vídeo
         self.video_preview_frame = ttk.LabelFrame(video, text="Prévia do vídeo", padding=8)
@@ -1009,14 +1091,30 @@ class DownloadApp(QueueUI):
             video_actions,
             text="Baixar",
             command=self.start_download,
+            style="Accent.TButton",
         ).pack(side="left", padx=(6, 0))
+
+        preset_row = ttk.Frame(video_options)
+        preset_row.grid(row=2, column=0, columnspan=5, sticky="ew", pady=(4, 0))
+        ttk.Label(preset_row, text="⚡ Perfil Rápido:", font=(self.text_family, 9, "bold")).pack(side="left", padx=(0, 6))
+        self.preset_combo = ttk.Combobox(
+            preset_row,
+            textvariable=self.preset_var,
+            values=PRESET_CHOICES,
+            state="readonly",
+            width=36,
+        )
+        self.preset_combo.pack(side="left")
+        self.preset_combo.bind("<<ComboboxSelected>>", self._on_preset_selected)
+        add_tooltip(self.preset_combo, "Aplica formatos e opções recomendadas para o seu objetivo")
+
         self._build_context_queue(video, "video")
 
         # Fila em aba própria: elimina a maior parte do scroll da tela de trabalho.
         self._build_episode_list(self.queue_page)
         actions = self.episode_actions
         actions.pack(fill="x", pady=(0, 8))
-        self.download_button = ttk.Button(actions, text="Baixar", command=self.start_download)
+        self.download_button = ttk.Button(actions, text="Baixar", command=self.start_download, style="Accent.TButton")
         self.download_button.pack(side="left")
         self.pause_button = ttk.Button(actions, text="Pausar", command=self.toggle_pause, state="disabled")
         self.pause_button.pack(side="left", padx=(8, 0))
@@ -1080,6 +1178,24 @@ class DownloadApp(QueueUI):
         wrapping_label(
             speed_frame,
             text="Dica: use 4 fragmentos; limite a velocidade para não sobrecarregar sua conexão.",
+            foreground="#596579",
+        )
+
+        automation_frame = ttk.LabelFrame(settings, text="Automação & Ação ao Concluir Fila", padding=10)
+        automation_frame.pack(fill="x", pady=(0, 12))
+        post_row = ttk.Frame(automation_frame)
+        post_row.pack(fill="x", pady=(0, 6))
+        ttk.Label(post_row, text="Ao concluir todos os downloads:").pack(side="left", padx=(0, 8))
+        ttk.Combobox(
+            post_row,
+            textvariable=self.post_download_action_var,
+            values=POST_DOWNLOAD_ACTIONS,
+            state="readonly",
+            width=28,
+        ).pack(side="left")
+        wrapping_label(
+            automation_frame,
+            text="Permite tocar aviso sonoro, abrir a pasta ou suspender/desligar o PC após concluir a fila.",
             foreground="#596579",
         )
 
@@ -1355,6 +1471,7 @@ class DownloadApp(QueueUI):
             "subtitles_enabled_var", "subtitles_embed_var", "subtitles_auto_var", "subtitles_langs_var",
             "sponsorblock_var", "embed_chapters_var", "split_chapters_var",
             "rate_limit_var", "proxy_url_var", "clipboard_monitor_var",
+            "preset_var", "post_download_action_var",
         )
         return {name: getattr(self, name).get() for name in names if hasattr(self, name)}
 
@@ -2429,6 +2546,137 @@ class DownloadApp(QueueUI):
     def choose_video_folder(self) -> None:
         self.choose_folder(target="video")
 
+    def open_current_download_folder(self) -> None:
+        folder = self.music_folder_var.get() if self.work_mode == "music" else self.video_folder_var.get()
+        target = Path(folder.strip() or str(Path.home() / "Downloads"))
+        target.mkdir(parents=True, exist_ok=True)
+        try:
+            os.startfile(str(target))
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Não foi possível abrir a pasta: {exc}")
+
+    def _on_preset_selected(self, _event=None) -> None:
+        choice = self.preset_var.get()
+        config = PRESETS.get(choice)
+        if not config:
+            return
+        if "format" in config:
+            fmt = config["format"]
+            self.video_format_var.set(fmt)
+            if self.work_mode == "video":
+                self.resolution_var.set(fmt)
+            self._on_video_format_selected()
+        if "audio_bitrate" in config:
+            self.audio_bitrate_mode_var.set(config["audio_bitrate"])
+            self._update_audio_controls()
+        if "chapters" in config and hasattr(self, "embed_chapters_var"):
+            self.embed_chapters_var.set(config["chapters"])
+        if "subs" in config and hasattr(self, "subtitles_embed_var"):
+            self.subtitles_embed_var.set(config["subs"])
+        self._save_preferences()
+        self.queue_log(f"Perfil de download aplicado: {choice}")
+
+    def _trigger_post_download_action(self) -> None:
+        action = getattr(self, "post_download_action_var", None)
+        if action is None:
+            return
+        choice = action.get()
+        if choice == "Tocar som de alerta":
+            try:
+                import winsound
+                winsound.MessageBeep(winsound.MB_ICONASTERISK)
+            except Exception:
+                try:
+                    self.root.bell()
+                except Exception:
+                    pass
+        elif choice == "Abrir pasta de downloads":
+            try:
+                self.open_current_download_folder()
+            except Exception:
+                pass
+        elif choice == "Suspender computador" and os.name == "nt":
+            try:
+                self.queue_log("Executando suspensão do sistema após downloads...")
+                subprocess.run(["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"], check=False)
+            except Exception as exc:
+                self.queue_log(f"Falha ao suspender: {exc}")
+        elif choice == "Desligar o computador (30s)" and os.name == "nt":
+            try:
+                self.queue_log("Agendando desligamento do sistema em 30 segundos (cancele via 'shutdown /a')...")
+                subprocess.run(["shutdown", "/s", "/t", "30", "/c", "C² Video Downloader finalizou os downloads."], check=False)
+            except Exception as exc:
+                self.queue_log(f"Falha ao agendar desligamento: {exc}")
+
+    def _update_detected_links_count(self) -> None:
+        if not hasattr(self, "video_url_text") or not hasattr(self, "detected_links_var"):
+            return
+        content = self.video_url_text.get("1.0", "end-1c")
+        lines = [line.strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("#")]
+        count = len(lines)
+        if count == 0:
+            self.detected_links_var.set("Nenhum link inserido")
+        elif count == 1:
+            self.detected_links_var.set("1 link detectado")
+        else:
+            self.detected_links_var.set(f"{count} links detectados")
+
+    def _paste_clipboard_to_url_text(self) -> None:
+        try:
+            text = self.root.clipboard_get()
+            if text.strip():
+                current = self.video_url_text.get("1.0", "end-1c").strip()
+                combined = f"{current}\n{text}".strip() if current else text.strip()
+                self.video_url_text.delete("1.0", END)
+                self.video_url_text.insert("1.0", combined)
+                self._update_detected_links_count()
+                self._schedule_video_preview_check()
+        except Exception:
+            pass
+
+    def _import_urls_from_file(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Importar lista de links",
+            filetypes=[("Arquivos de texto", "*.txt;*.m3u;*.list"), ("Todos os arquivos", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            content = Path(path).read_text(encoding="utf-8", errors="replace")
+            urls = [line.strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("#")]
+            if urls:
+                current = self.video_url_text.get("1.0", "end-1c").strip()
+                combined = f"{current}\n" + "\n".join(urls) if current else "\n".join(urls)
+                self.video_url_text.delete("1.0", END)
+                self.video_url_text.insert("1.0", combined.strip())
+                self._update_detected_links_count()
+                self._schedule_video_preview_check()
+                self.queue_log(f"{len(urls)} link(s) importado(s) de {Path(path).name}.")
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Erro ao importar arquivo: {exc}")
+
+    def _export_urls_to_file(self) -> None:
+        content = self.video_url_text.get("1.0", "end-1c").strip()
+        if not content:
+            messagebox.showinfo(APP_NAME, "Não há links para exportar.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Salvar lista de links",
+            defaultextension=".txt",
+            filetypes=[("Arquivo de texto", "*.txt"), ("Todos os arquivos", "*.*")],
+        )
+        if path:
+            try:
+                Path(path).write_text(content, encoding="utf-8")
+                self.queue_log(f"Links exportados para {Path(path).name}.")
+            except Exception as exc:
+                messagebox.showerror(APP_NAME, f"Erro ao salvar arquivo: {exc}")
+
+    def _clear_url_text(self) -> None:
+        self.video_url_text.delete("1.0", END)
+        self._update_detected_links_count()
+        self._schedule_video_preview_check()
+
     def _save_preferences(self) -> None:
         settings: dict[str, object] = {
             "download_folder": self.video_folder_var.get().strip() or str(Path.home() / "Downloads"),
@@ -2459,6 +2707,8 @@ class DownloadApp(QueueUI):
             "rate_limit": self.rate_limit_var.get().strip() or "Ilimitado",
             "proxy_url": self.proxy_url_var.get().strip(),
             "clipboard_monitor": bool(self.clipboard_monitor_var.get()),
+            "preset": self.preset_var.get() if hasattr(self, "preset_var") else "Personalizado",
+            "post_download_action": self.post_download_action_var.get() if hasattr(self, "post_download_action_var") else "Nenhuma ação",
         }
         try:
             save_user_settings(settings)
@@ -3461,6 +3711,8 @@ class DownloadApp(QueueUI):
             self.download_options = None
             self._set_queue_busy(False)
             self._refresh_queue()
+        if completed and completed > 0 and not failures and not stopped:
+            self._trigger_post_download_action()
 
 
 def _acquire_single_instance_mutex():
