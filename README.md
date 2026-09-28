@@ -171,7 +171,7 @@ A pasta selecionada é salva imediatamente ao usar **Escolher**, novamente ao in
 
 ## Versão 1.2.0
 
-- adiciona download em lote de categorias de vídeos do JW.ORG em português;
+- adiciona download em lote de categorias de vídeos em português;
 - percorre subcategorias quando a opção de playlist/álbum está ativa;
 - seleciona automaticamente a versão correspondente à qualidade escolhida;
 - mantém o fluxo atual para YouTube, Instagram, Facebook, TikTok e demais sites;
