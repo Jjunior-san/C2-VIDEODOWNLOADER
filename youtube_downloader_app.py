@@ -13,7 +13,7 @@ import uuid
 import webbrowser
 from datetime import datetime
 from pathlib import Path
-from tkinter import BooleanVar, DoubleVar, END, Frame, Menu, StringVar, Tk, Toplevel, filedialog, messagebox
+from tkinter import BooleanVar, Canvas, DoubleVar, END, Frame, Menu, StringVar, Tk, Toplevel, filedialog, messagebox
 from tkinter import ttk
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
@@ -741,29 +741,22 @@ class DownloadApp(QueueUI):
         self.settings_button.pack(side="right")
         add_tooltip(self.settings_button, "Configurações")
 
+        # Mantidos como atributos em memória para compatibilidade sem poluir o cabeçalho superior
         self.open_folder_header_btn = ttk.Button(
             header,
             text="📁 Pasta",
             command=self.open_current_download_folder,
         )
-        self.open_folder_header_btn.pack(side="right", padx=(0, 6))
-        add_tooltip(self.open_folder_header_btn, "Abrir pasta de downloads atual no Windows Explorer")
-
         self.lyrics_header_btn = ttk.Button(
             header,
             text="💬 Letras",
             command=self._open_lyrics_window,
         )
-        self.lyrics_header_btn.pack(side="right", padx=(0, 6))
-        add_tooltip(self.lyrics_header_btn, "Letras sincronizadas em tempo real (Karaokê)")
-
         self.mini_player_header_btn = ttk.Button(
             header,
             text="🔲 Mini",
             command=self._open_mini_player,
         )
-        self.mini_player_header_btn.pack(side="right", padx=(0, 6))
-        add_tooltip(self.mini_player_header_btn, "MiniPlayer flutuante sempre no topo")
 
         self.header_status_label = ttk.Label(
             header,
@@ -1621,58 +1614,122 @@ class DownloadApp(QueueUI):
             self.sidebar_visible = True
 
     def _build_apple_sidebar(self, parent) -> None:
-        self.sidebar_frame = ttk.Frame(parent, width=175, padding=(2, 4))
+        self.sidebar_frame = ttk.Frame(parent, width=200, padding=(2, 4))
         self.sidebar_frame.pack_propagate(False)
         self.sidebar_frame.pack(side="left", fill="y", padx=(0, 6), before=self.content_container)
 
+        # Cabeçalho da Sidebar
         brand_lbl = ttk.Label(
             self.sidebar_frame,
             text="⚡ C² Downloader",
             font=(self.display_family, 11, "bold"),
             foreground=PROGRAM_BLUE,
-            padding=(10, 4, 4, 8),
+            padding=(10, 4, 4, 6),
         )
         brand_lbl.pack(fill="x")
 
+        # Container interno com rolagem suave
+        canvas = Canvas(self.sidebar_frame, borderwidth=0, highlightthickness=0)
+        inner = ttk.Frame(canvas)
+        canvas_win = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_win, width=e.width))
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind("<MouseWheel>", _on_mousewheel)
+        inner.bind("<MouseWheel>", _on_mousewheel)
+        canvas.pack(fill="both", expand=True)
+
         def _sec(title: str):
             ttk.Label(
-                self.sidebar_frame,
+                inner,
                 text=title,
                 font=(self.text_family, 8, "bold"),
                 foreground="#8e8e93",
-                padding=(10, 6, 2, 2),
+                padding=(10, 8, 2, 2),
             ).pack(fill="x")
 
-        def _item(text: str, page_obj, key: str):
+        def _item(text: str, page_obj, key: str, tooltip: str = ""):
             btn = ttk.Button(
-                self.sidebar_frame,
+                inner,
                 text=text,
                 style="Sidebar.TButton",
                 command=lambda p=page_obj: self.tabs.select(p),
             )
-            btn.pack(fill="x", padx=2, pady=1)
+            btn.pack(fill="x", padx=4, pady=1)
+            if tooltip:
+                add_tooltip(btn, tooltip)
             self._sidebar_buttons[key] = (btn, page_obj)
             return btn
 
-        _sec("OUVIR AGORA")
-        _item("🎵 Música & Catálogo", self.music_page, "music")
-        _item("🎬 Vídeos & Links", self.video_page, "video")
+        def _action(text: str, command, tooltip: str = ""):
+            btn = ttk.Button(
+                inner,
+                text=text,
+                style="Sidebar.TButton",
+                command=command,
+            )
+            btn.pack(fill="x", padx=4, pady=1)
+            if tooltip:
+                add_tooltip(btn, tooltip)
+            return btn
+
+        _sec("NAVEGAÇÃO")
+        _item("🎵 Música & Catálogo", self.music_page, "music", "Buscar e ouvir faixas, álbuns e discografias")
+        _item("🎬 Vídeos & Links", self.video_page, "video", "Baixar vídeos do YouTube e links diretos")
 
         _sec("BIBLIOTECA")
-        _item("⏳ Fila Geral", self.queue_page, "queue")
-        _item("✅ Concluídos", self.completed_page, "completed")
+        _item("⏳ Fila Geral", self.queue_page, "queue", "Ver downloads ativos e em fila")
+        _item("✅ Concluídos", self.completed_page, "completed", "Histórico de downloads finalizados")
+        self.sidebar_folder_btn = _action(
+            "📁 Pasta de Downloads",
+            self.open_current_download_folder,
+            "Abrir pasta de downloads no Windows Explorer",
+        )
+
+        _sec("EXPLORAR")
+        self.sidebar_favs_btn = _action(
+            "⭐ Meus Favoritos",
+            lambda: (self.tabs.select(self.music_page), self._load_user_favorites()),
+            "Carregar faixas favoritas da conta Deezer",
+        )
+        self.sidebar_top_br_btn = _action(
+            "🔥 Top 50 Brasil",
+            lambda: (self.tabs.select(self.music_page), self._load_top_brasil()),
+            "Carregar Top 50 mais ouvidas no Brasil",
+        )
+        self.sidebar_top_gl_btn = _action(
+            "🌐 Top 50 Global",
+            lambda: (self.tabs.select(self.music_page), self._load_top_global()),
+            "Carregar Top 50 mais ouvidas no Mundo",
+        )
+
+        _sec("FERRAMENTAS")
+        self.sidebar_lyrics_btn = _action(
+            "💬 Letras Karaokê",
+            self._open_lyrics_window,
+            "Abrir letras sincronizadas em tempo real",
+        )
+        self.sidebar_mini_btn = _action(
+            "🔲 MiniPlayer",
+            self._open_mini_player,
+            "Abrir MiniPlayer flutuante Always-on-Top",
+        )
+        self.sidebar_analyzer_btn = _action(
+            "🔍 Raio-X Metadados",
+            lambda: (self.tabs.select(self.music_page), self._open_link_analyzer_dialog()),
+            "Inspecionar metadados ISRC, BPM e gravadora",
+        )
 
         _sec("SISTEMA")
-        _item("📜 Atividade", self.activity_page, "activity")
-        _item("ℹ️ Sobre", self.about_page, "about")
-
-        cfg_btn = ttk.Button(
-            self.sidebar_frame,
-            text="⚙ Configurações",
-            style="Sidebar.TButton",
-            command=self._open_settings,
+        _item("📜 Atividade / Logs", self.activity_page, "activity", "Registro detalhado de atividade e diagnósticos")
+        _item("ℹ️ Sobre", self.about_page, "about", "Informações e créditos do aplicativo")
+        self.sidebar_settings_btn = _action(
+            "⚙ Configurações",
+            self._open_settings,
+            "Painel de preferências, qualidade e contas",
         )
-        cfg_btn.pack(side="bottom", fill="x", padx=2, pady=4)
 
     def _sync_sidebar_selection(self) -> None:
         if not hasattr(self, "_sidebar_buttons"):
