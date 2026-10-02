@@ -84,13 +84,20 @@ def test_catalog_album_buttons_and_navigation(tk_root, tmp_path, monkeypatch):
     top.withdraw()
     instance = app.DownloadApp(top)
 
-    # Check button existence
+    # Check button existence and active states
     assert hasattr(instance, "catalog_album_download_button")
     assert hasattr(instance, "catalog_drill_button")
     assert hasattr(instance, "catalog_tracklist_button")
     assert hasattr(instance, "catalog_play_button")
     assert hasattr(instance, "catalog_download_button")
     assert hasattr(instance, "catalog_load_button")
+
+    assert str(instance.catalog_download_button.cget("state")) == "normal"
+    assert str(instance.catalog_album_download_button.cget("state")) == "normal"
+    assert str(instance.catalog_load_button.cget("state")) == "normal"
+    assert str(instance.catalog_drill_button.cget("state")) == "normal"
+    assert str(instance.catalog_tracklist_button.cget("state")) == "normal"
+    assert str(instance.catalog_play_button.cget("state")) == "normal"
 
     # Verify no "C² Music" text is present in branding
     assert "C² Music" not in instance.bottom_artist_var.get()
@@ -150,4 +157,19 @@ def test_catalog_album_buttons_and_navigation(tk_root, tmp_path, monkeypatch):
     instance._download_album_for_selected()
     assert downloaded_sources == [(["https://www.deezer.com/album/505"], True)]
 
+    # Test clearing search results keeps buttons normal and interactive
+    instance._clear_music_search_results()
+    assert str(instance.catalog_download_button.cget("state")) == "normal"
+    assert str(instance.catalog_load_button.cget("state")) == "normal"
+    assert str(instance.catalog_play_button.cget("state")) == "normal"
+
     top.destroy()
+
+
+def test_button_style_renders_with_real_background(tk_root):
+    import ui_layout
+    style = ui_layout.configure_modern_styles(tk_root, "Segoe UI", "Segoe UI")
+    assert style.lookup("Accent.TButton", "background") == ui_layout.PROGRAM_BLUE
+    assert style.lookup("Accent.TButton", "foreground") == "#ffffff"
+    assert style.lookup("ApplePlay.TButton", "background") == ui_layout.PROGRAM_BLUE
+    assert style.lookup("Success.TButton", "background") == "#10b981"

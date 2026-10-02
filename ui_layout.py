@@ -56,6 +56,50 @@ def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.
     style.configure("Treeview", font=(text_family, 10), rowheight=row_height)
     style.configure("Treeview.Heading", font=(text_family, 10, "bold"))
     
+    # Elementos com suporte real a cores de fundo personalizadas (evita botões apagados no Windows)
+    for elem_name, style_name in (
+        ("Accent.button", "Accent.TButton"),
+        ("ApplePlay.button", "ApplePlay.TButton"),
+        ("Success.button", "Success.TButton"),
+    ):
+        try:
+            style.element_create(elem_name, "from", "clam")
+        except Exception:
+            pass
+        try:
+            style.layout(
+                style_name,
+                [
+                    (
+                        elem_name,
+                        {
+                            "sticky": "nswe",
+                            "children": [
+                                (
+                                    "Button.focus",
+                                    {
+                                        "sticky": "nswe",
+                                        "children": [
+                                            (
+                                                "Button.padding",
+                                                {
+                                                    "sticky": "nswe",
+                                                    "children": [
+                                                        ("Button.label", {"sticky": "nswe"})
+                                                    ],
+                                                },
+                                            )
+                                        ],
+                                    },
+                                )
+                            ],
+                        },
+                    )
+                ],
+            )
+        except Exception:
+            pass
+
     # Signature Blue Accent Button (Primary action - #2563eb)
     style.configure(
         "Accent.TButton",
@@ -63,11 +107,19 @@ def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.
         foreground="#ffffff",
         background=PROGRAM_BLUE,
         padding=(10, 4),
+        borderwidth=0,
+        focusthickness=0,
     )
     style.map(
         "Accent.TButton",
-        background=[("pressed", PROGRAM_BLUE_ACTIVE), ("active", PROGRAM_BLUE_HOVER), ("disabled", "#94a3b8")],
-        foreground=[("disabled", "#f1f5f9")],
+        background=[
+            ("pressed", PROGRAM_BLUE_ACTIVE),
+            ("active", PROGRAM_BLUE_HOVER),
+            ("disabled", "#64748b"),
+        ],
+        foreground=[
+            ("disabled", "#ffffff"),
+        ],
     )
 
     # Standard Button
@@ -80,10 +132,19 @@ def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.
         foreground="#ffffff",
         background=PROGRAM_BLUE,
         padding=(8, 4),
+        borderwidth=0,
+        focusthickness=0,
     )
     style.map(
         "ApplePlay.TButton",
-        background=[("pressed", PROGRAM_BLUE_ACTIVE), ("active", PROGRAM_BLUE_HOVER)],
+        background=[
+            ("pressed", PROGRAM_BLUE_ACTIVE),
+            ("active", PROGRAM_BLUE_HOVER),
+            ("disabled", "#64748b"),
+        ],
+        foreground=[
+            ("disabled", "#ffffff"),
+        ],
     )
 
     # Sidebar Navigation Buttons
@@ -118,10 +179,19 @@ def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.
         foreground="#ffffff",
         background="#10b981",
         padding=(8, 3),
+        borderwidth=0,
+        focusthickness=0,
     )
     style.map(
         "Success.TButton",
-        background=[("pressed", "#047857"), ("active", "#059669")],
+        background=[
+            ("pressed", "#047857"),
+            ("active", "#059669"),
+            ("disabled", "#64748b"),
+        ],
+        foreground=[
+            ("disabled", "#ffffff"),
+        ],
     )
     return style
 

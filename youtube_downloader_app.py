@@ -1007,7 +1007,7 @@ class DownloadApp(QueueUI):
             text="▶",
             width=3,
             command=self._toggle_catalog_playback,
-            state="disabled",
+            state="normal",
             style="ApplePlay.TButton",
         )
         self.catalog_play_button.pack(side="left")
@@ -1018,7 +1018,7 @@ class DownloadApp(QueueUI):
             text="■",
             width=3,
             command=self.stop_music,
-            state="disabled",
+            state="normal",
         )
         self.catalog_stop_button.pack(side="left", padx=(4, 0))
         add_tooltip(self.catalog_stop_button, "Parar a reprodução")
@@ -1027,7 +1027,7 @@ class DownloadApp(QueueUI):
             r1,
             text="⬇️ Baixar",
             command=self._download_selected_catalog_result,
-            state="disabled",
+            state="normal",
             style="Accent.TButton",
         )
         self.catalog_download_button.pack(side="left", padx=(6, 0))
@@ -1037,7 +1037,7 @@ class DownloadApp(QueueUI):
             r1,
             text="➕ Fila",
             command=self._load_selected_catalog_result,
-            state="disabled",
+            state="normal",
         )
         self.catalog_load_button.pack(side="left", padx=(4, 0))
         add_tooltip(self.catalog_load_button, "Adicionar à fila geral de downloads")
@@ -1046,7 +1046,7 @@ class DownloadApp(QueueUI):
             r1,
             text="💿 Ver Álbum",
             command=self._view_album_for_selected,
-            state="disabled",
+            state="normal",
         )
         self.catalog_drill_button.pack(side="left", padx=(6, 0))
         add_tooltip(self.catalog_drill_button, "Ver todas as faixas do álbum correspondente")
@@ -1055,7 +1055,7 @@ class DownloadApp(QueueUI):
             r1,
             text="⚡ Baixar Álbum Completo",
             command=self._download_album_for_selected,
-            state="disabled",
+            state="normal",
             style="Accent.TButton",
         )
         self.catalog_album_download_button.pack(side="left", padx=(4, 0))
@@ -1069,7 +1069,7 @@ class DownloadApp(QueueUI):
             r2,
             text="☑️ Escolher Faixas do Álbum...",
             command=self._tracklist_for_selected,
-            state="disabled",
+            state="normal",
         )
         self.catalog_tracklist_button.pack(side="left")
         add_tooltip(self.catalog_tracklist_button, "Abrir lista interativa [✓] para escolher faixas específicas do álbum")
@@ -1078,7 +1078,7 @@ class DownloadApp(QueueUI):
             r2,
             text="💿 Discografia",
             command=self._drill_artist_albums,
-            state="disabled",
+            state="normal",
         )
         self.catalog_artist_albums_button.pack(side="left", padx=(6, 0))
         add_tooltip(self.catalog_artist_albums_button, "Ver todos os álbuns deste artista")
@@ -1087,7 +1087,7 @@ class DownloadApp(QueueUI):
             r2,
             text="🔍 Raio-X",
             command=lambda: self._open_link_analyzer_dialog(),
-            state="disabled",
+            state="normal",
         )
         self.catalog_analyzer_button.pack(side="left", padx=(6, 0))
         add_tooltip(self.catalog_analyzer_button, "Inspecionar metadados detalhados (ISRC, BPM, gravadora)")
@@ -1096,7 +1096,7 @@ class DownloadApp(QueueUI):
             r2,
             text="🌐 Deezer",
             command=self._open_selected_catalog_result,
-            state="disabled",
+            state="normal",
         )
         self.catalog_open_button.pack(side="left", padx=(6, 0))
         add_tooltip(self.catalog_open_button, "Abrir página oficial no Deezer")
@@ -1943,7 +1943,7 @@ class DownloadApp(QueueUI):
 
         actions = ttk.Frame(frame)
         actions.pack(fill="x")
-        download = ttk.Button(actions, text="Baixar / Continuar", command=self.start_download)
+        download = ttk.Button(actions, text="Baixar / Continuar", command=self.start_download, style="Accent.TButton")
         download.pack(side="left")
         pause = ttk.Button(actions, text="⏸", width=3, command=self.toggle_pause, state="disabled")
         pause.pack(side="left", padx=(6, 0))
@@ -2655,13 +2655,13 @@ class DownloadApp(QueueUI):
         self.catalog_title_var.set("Selecione um resultado")
         self.catalog_subtitle_var.set("")
         self.catalog_type_var.set("")
-        self.catalog_load_button.configure(state="disabled")
+        self.catalog_load_button.configure(state="normal")
         if hasattr(self, "catalog_download_button"):
-            self.catalog_download_button.configure(state="disabled")
-        self.catalog_play_button.configure(state="disabled", text="▶")
+            self.catalog_download_button.configure(state="normal")
+        self.catalog_play_button.configure(state="normal", text="▶")
         if hasattr(self, "catalog_stop_button"):
-            self.catalog_stop_button.configure(state="disabled")
-        self.catalog_open_button.configure(state="disabled")
+            self.catalog_stop_button.configure(state="normal" if self.music_player.is_active() else "disabled")
+        self.catalog_open_button.configure(state="normal")
         self.catalog_cover_label.configure(image="", text="Sem capa")
         self._catalog_cover_image = None
         self._catalog_cover_key = None
@@ -2818,22 +2818,23 @@ class DownloadApp(QueueUI):
     def _show_selected_catalog_result(self, _event=None) -> None:
         result = self._selected_catalog_result()
         if result is None:
-            self.catalog_load_button.configure(state="disabled")
-            self.catalog_download_button.configure(state="disabled")
+            self.catalog_load_button.configure(state="normal")
+            if hasattr(self, "catalog_download_button"):
+                self.catalog_download_button.configure(state="normal")
             if hasattr(self, "catalog_drill_button"):
-                self.catalog_drill_button.configure(state="disabled", text="Ver faixas")
+                self.catalog_drill_button.configure(state="normal", text="💿 Ver Álbum")
             if hasattr(self, "catalog_album_download_button"):
-                self.catalog_album_download_button.configure(state="disabled")
+                self.catalog_album_download_button.configure(state="normal")
             if hasattr(self, "catalog_tracklist_button"):
-                self.catalog_tracklist_button.configure(state="disabled")
+                self.catalog_tracklist_button.configure(state="normal", text="☑️ Escolher Faixas...")
             if hasattr(self, "catalog_artist_albums_button"):
-                self.catalog_artist_albums_button.configure(state="disabled")
+                self.catalog_artist_albums_button.configure(state="normal")
             if hasattr(self, "catalog_analyzer_button"):
-                self.catalog_analyzer_button.configure(state="disabled")
-            self.catalog_play_button.configure(state="disabled", text="▶")
+                self.catalog_analyzer_button.configure(state="normal")
+            self.catalog_play_button.configure(state="normal", text="▶")
             if hasattr(self, "catalog_stop_button"):
-                self.catalog_stop_button.configure(state="disabled")
-            self.catalog_open_button.configure(state="disabled")
+                self.catalog_stop_button.configure(state="normal" if self.music_player.is_active() else "disabled")
+            self.catalog_open_button.configure(state="normal")
             return
 
         self.catalog_title_var.set(result.title)
@@ -2851,13 +2852,10 @@ class DownloadApp(QueueUI):
             elif result.kind == "track":
                 self.catalog_drill_button.configure(state="normal", text="💿 Ver Álbum")
             else:
-                self.catalog_drill_button.configure(state="disabled", text="Ver faixas")
+                self.catalog_drill_button.configure(state="normal", text="💿 Ver Álbum")
 
         if hasattr(self, "catalog_album_download_button"):
-            if result.kind in {"album", "track"}:
-                self.catalog_album_download_button.configure(state="normal")
-            else:
-                self.catalog_album_download_button.configure(state="disabled")
+            self.catalog_album_download_button.configure(state="normal")
 
         if hasattr(self, "catalog_tracklist_button"):
             if result.kind == "album":
@@ -2865,22 +2863,19 @@ class DownloadApp(QueueUI):
             elif result.kind == "track":
                 self.catalog_tracklist_button.configure(state="normal", text="☑️ Escolher Faixas do Álbum...")
             else:
-                self.catalog_tracklist_button.configure(state="disabled")
+                self.catalog_tracklist_button.configure(state="normal", text="☑️ Escolher Faixas...")
 
         if hasattr(self, "catalog_analyzer_button"):
-            self.catalog_analyzer_button.configure(state="normal" if result.kind in {"track", "album"} else "disabled")
+            self.catalog_analyzer_button.configure(state="normal")
 
         if hasattr(self, "catalog_artist_albums_button"):
-            if result.kind == "artist":
-                self.catalog_artist_albums_button.configure(state="normal")
-            else:
-                self.catalog_artist_albums_button.configure(state="disabled")
+            self.catalog_artist_albums_button.configure(state="normal")
 
         catalog_id = f"catalog_{result.item_id}"
         is_current = getattr(self, "_playing_item_id", None) == catalog_id
         is_playing = is_current and self.music_player.is_playing()
         self.catalog_play_button.configure(
-            state="normal" if result.kind == "track" else "disabled",
+            state="normal",
             text="⏸" if is_playing else "▶",
         )
         if hasattr(self, "catalog_stop_button"):
@@ -2927,7 +2922,12 @@ class DownloadApp(QueueUI):
             if query and (is_deezer_url(query) or is_spotify_url(query)):
                 self._apply_work_mode("music", initial=True)
                 self._prepare_sources([query], False)
-            return
+                return
+            if self._music_search_results:
+                result = self._music_search_results[0]
+            else:
+                self.music_search_status_var.set("Selecione um item da lista ou digite um link para adicionar à fila.")
+                return
         self._apply_work_mode("music", initial=True)
         self._prepare_sources([result.page_url], False)
 
@@ -2938,7 +2938,12 @@ class DownloadApp(QueueUI):
             if query and (is_deezer_url(query) or is_spotify_url(query)):
                 self._apply_work_mode("music", initial=True)
                 self._prepare_sources([query], True)
-            return
+                return
+            if self._music_search_results:
+                result = self._music_search_results[0]
+            else:
+                self.music_search_status_var.set("Selecione uma faixa da lista ou digite um link para baixar.")
+                return
         self._apply_work_mode("music", initial=True)
         self._prepare_sources([result.page_url], True)
 
@@ -2992,7 +2997,11 @@ class DownloadApp(QueueUI):
     def _view_album_for_selected(self) -> None:
         result = self._selected_catalog_result()
         if not result:
-            return
+            if self._music_search_results:
+                result = self._music_search_results[0]
+            else:
+                self.music_search_status_var.set("Selecione uma faixa ou álbum para ver suas músicas.")
+                return
         if result.kind == "album":
             self._drill_down_album(result.item_id, result.title)
         elif result.kind == "artist":
@@ -3017,7 +3026,11 @@ class DownloadApp(QueueUI):
     def _download_album_for_selected(self) -> None:
         result = self._selected_catalog_result()
         if not result:
-            return
+            if self._music_search_results:
+                result = self._music_search_results[0]
+            else:
+                self.music_search_status_var.set("Selecione uma faixa ou álbum para baixar o álbum completo.")
+                return
         if result.kind == "album":
             self._apply_work_mode("music", initial=True)
             self._prepare_sources([result.page_url], True)
@@ -3044,7 +3057,11 @@ class DownloadApp(QueueUI):
     def _tracklist_for_selected(self) -> None:
         result = self._selected_catalog_result()
         if not result:
-            return
+            if self._music_search_results:
+                result = self._music_search_results[0]
+            else:
+                self.music_search_status_var.set("Selecione um álbum ou faixa para escolher suas faixas.")
+                return
         if result.kind == "album":
             self._open_album_tracklist_dialog_for_id(result.item_id, result.title)
         elif result.kind == "track":
@@ -3114,8 +3131,33 @@ class DownloadApp(QueueUI):
 
     def _drill_artist_albums(self) -> None:
         result = self._selected_catalog_result()
-        if not result or result.kind != "artist":
+        if not result:
+            if self._music_search_results:
+                result = self._music_search_results[0]
+            else:
+                self.music_search_status_var.set("Selecione um artista ou faixa para ver a discografia.")
+                return
+        if result.kind != "artist":
+            artist_name = result.subtitle.split(" • ")[0].strip() if " • " in result.subtitle else result.subtitle.strip()
+            if not artist_name:
+                self.music_search_status_var.set("Artista não identificado para esta faixa.")
+                return
+            self._save_search_state_before_drill()
+            self.music_search_status_var.set(f"Buscando discografia de '{artist_name}'...")
+            def worker():
+                try:
+                    res = search_deezer_catalog(artist_name, kind="artist", limit=5)
+                    if res:
+                        first_art = res[0]
+                        albums = get_artist_albums(first_art.item_id, limit=50)
+                        self.event_queue.put(("music_drill_results", (f"Álbuns: {first_art.title}", albums, "")))
+                    else:
+                        self.event_queue.put(("music_drill_results", (artist_name, (), "Artista não encontrado.")))
+                except Exception as exc:
+                    self.event_queue.put(("music_drill_results", (artist_name, (), str(exc))))
+            threading.Thread(target=worker, daemon=True).start()
             return
+
         self._save_search_state_before_drill()
         artist_id = result.item_id
         artist_name = result.title
@@ -3167,6 +3209,10 @@ class DownloadApp(QueueUI):
         result = self._selected_catalog_result()
         if result is not None:
             webbrowser.open(result.page_url)
+        elif self._music_search_results:
+            webbrowser.open(self._music_search_results[0].page_url)
+        else:
+            webbrowser.open("https://www.deezer.com")
 
     def _load_top_brasil(self) -> None:
         self._save_search_state_before_drill()
@@ -3695,7 +3741,13 @@ class DownloadApp(QueueUI):
     def _toggle_catalog_playback(self) -> None:
         result = self._selected_catalog_result()
         if result is None or result.kind != "track":
-            return
+            if self._music_search_results:
+                first_track = next((r for r in self._music_search_results if r.kind == "track"), None)
+                if first_track:
+                    result = first_track
+            if result is None or result.kind != "track":
+                self.music_search_status_var.set("Selecione uma faixa da lista para reproduzir.")
+                return
 
         catalog_id = f"catalog_{result.item_id}"
 
