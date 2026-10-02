@@ -6,7 +6,7 @@ from pathlib import Path
 from tkinter import Canvas, Frame, Label, StringVar, Toplevel, messagebox, ttk
 
 from lyrics_service import fetch_lyrics, get_active_lyric_index, save_lrc_file
-from ui_layout import APPLE_DARK_BG, APPLE_RED, APPLE_TEXT_MUTED, APPLE_TEXT_PRIMARY, APPLE_TEXT_SECONDARY
+from ui_layout import APPLE_DARK_BG, APPLE_TEXT_MUTED, APPLE_TEXT_PRIMARY, APPLE_TEXT_SECONDARY, PROGRAM_BLUE
 
 
 class LyricsDialog(Toplevel):
@@ -22,7 +22,7 @@ class LyricsDialog(Toplevel):
         self.text_family = text_family
         self.display_family = display_family
 
-        self.title("Letras — C² Music")
+        self.title("Letras — C² Downloader")
         self.geometry("540x650")
         self.minsize(400, 500)
         self.configure(bg=APPLE_DARK_BG)
@@ -60,7 +60,7 @@ class LyricsDialog(Toplevel):
             header,
             textvariable=self.artist_var,
             font=(self.text_family, 11),
-            fg=APPLE_RED,
+            fg=PROGRAM_BLUE,
             bg=APPLE_DARK_BG,
             anchor="w",
         ).pack(fill="x", pady=(2, 4))

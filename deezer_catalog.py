@@ -60,6 +60,7 @@ class DeezerTrack:
     disc_number: int | None = None
     release_year: str | None = None
     duration: int | None = None
+    album_id: str | None = None
 
     @property
     def page_url(self) -> str:
@@ -78,6 +79,8 @@ class DeezerSearchResult:
     subtitle: str
     cover_url: str | None
     page_url: str
+    album_id: str | None = None
+    album_title: str | None = None
 
     @property
     def kind_label(self) -> str:
@@ -197,6 +200,8 @@ def _track_from_payload(payload: dict, *, album_fallback: dict | None = None) ->
         if not (preview.startswith("https://") and preview_host.endswith("dzcdn.net")):
             preview = None
     cover = str(album.get("cover_big") or fallback.get("cover_big") or "").strip() or None
+    raw_album_id = str(album.get("id") or fallback.get("id") or "").strip()
+    album_id = raw_album_id if raw_album_id.isdigit() else None
     return DeezerTrack(
         track_id=track_id,
         title=title,
@@ -208,6 +213,7 @@ def _track_from_payload(payload: dict, *, album_fallback: dict | None = None) ->
         disc_number=_positive_int(payload.get("disk_number")),
         release_year=release_date[:4] if re.fullmatch(r"\d{4}", release_date[:4]) else None,
         duration=_positive_int(payload.get("duration")),
+        album_id=album_id,
     )
 
 
@@ -282,12 +288,18 @@ def search_deezer_catalog(
             continue
         seen.add(item_id)
 
+        album_id: str | None = None
+        album_title: str | None = None
+
         if kind == "track":
             title = str(entry.get("title") or entry.get("title_short") or "").strip()
             artist = entry.get("artist") if isinstance(entry.get("artist"), dict) else {}
             album = entry.get("album") if isinstance(entry.get("album"), dict) else {}
             artist_name = str(artist.get("name") or "").strip()
             album_name = str(album.get("title") or "").strip()
+            raw_alb_id = str(album.get("id") or "").strip()
+            album_id = raw_alb_id if raw_alb_id.isdigit() else None
+            album_title = album_name or None
             subtitle = " • ".join(value for value in (artist_name, album_name) if value)
             cover = _catalog_cover(album, "cover_medium", "cover_big", "cover")
         elif kind == "artist":
@@ -299,6 +311,8 @@ def search_deezer_catalog(
             artist = entry.get("artist") if isinstance(entry.get("artist"), dict) else {}
             subtitle = str(artist.get("name") or "").strip() or "Álbum"
             cover = _catalog_cover(entry, "cover_medium", "cover_big", "cover")
+            album_id = item_id
+            album_title = title
         else:
             title = str(entry.get("title") or "").strip()
             user = entry.get("user") if isinstance(entry.get("user"), dict) else {}
@@ -315,6 +329,8 @@ def search_deezer_catalog(
             subtitle=subtitle,
             cover_url=cover,
             page_url=f"https://www.deezer.com/{kind}/{item_id}",
+            album_id=album_id,
+            album_title=album_title,
         ))
         if len(results) >= requested:
             break
@@ -435,6 +451,8 @@ def get_artist_albums(artist_id: str, limit: int = 50) -> tuple[DeezerSearchResu
             subtitle=subtitle,
             cover_url=cover,
             page_url=f"https://www.deezer.com/album/{item_id}",
+            album_id=item_id,
+            album_title=title,
         ))
     return tuple(results)
 
@@ -448,6 +466,17 @@ def get_album_tracks(album_id: str) -> tuple[DeezerTrack, ...]:
     if not isinstance(tracks_page, dict):
         raise DeezerCatalogError("A Deezer não informou as faixas deste álbum.")
     return _paged_tracks(tracks_page, album_fallback=payload)
+
+
+def get_track_album_info(track_id: str) -> tuple[str, str] | None:
+    """Resolve a track and return (album_id, album_title), or None if unavailable."""
+    try:
+        track = resolve_deezer_track(str(track_id).strip())
+        if track.album_id:
+            return track.album_id, track.album
+    except Exception:
+        pass
+    return None
 
 
 def get_deezer_top_brasil(limit: int = 50) -> tuple[DeezerTrack, ...]:

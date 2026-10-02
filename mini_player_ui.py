@@ -6,10 +6,10 @@ from tkinter import DoubleVar, Frame, Label, StringVar, Toplevel, ttk
 from ui_layout import (
     APPLE_CARD_BG,
     APPLE_DARK_BG,
-    APPLE_RED,
     APPLE_TEXT_MUTED,
     APPLE_TEXT_PRIMARY,
     APPLE_TEXT_SECONDARY,
+    PROGRAM_BLUE,
 )
 
 
@@ -34,7 +34,7 @@ class MiniPlayer(Toplevel):
         self.display_family = display_family
         self.on_restore = on_restore
 
-        self.title("MiniPlayer — C² Music")
+        self.title("MiniPlayer — C² Downloader")
         self.geometry("380x160")
         self.resizable(False, False)
         self.attributes("-topmost", True)
@@ -68,7 +68,7 @@ class MiniPlayer(Toplevel):
             text="🎵",
             font=(self.display_family, 16),
             bg=APPLE_CARD_BG,
-            fg=APPLE_RED,
+            fg=PROGRAM_BLUE,
         ).pack(expand=True)
 
         info_box = Frame(top_row, bg=APPLE_DARK_BG)

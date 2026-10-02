@@ -98,6 +98,59 @@ class MusicPlayer:
         self._current_source = str(url)
         return path
 
+    def play_deezer_full(
+        self,
+        track_id: str | int,
+        arl: str,
+        *,
+        title: str = "",
+        artist: str = "",
+        album: str = "",
+        duration: float = 0.0,
+        quality_preference: str = "MP3_320",
+    ) -> Path:
+        """Play a complete Deezer track by downloading and decrypting it with user's ARL session."""
+        from deezer_auth import download_and_decrypt_track
+
+        clean_arl = str(arl or "").strip()
+        if not clean_arl:
+            raise MusicPlayerError("Nenhum cookie ARL fornecido para reprodução completa.")
+
+        track_str = str(track_id).strip()
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+        for ext in (".mp3", ".flac"):
+            cached = self.cache_dir / f"full_{track_str}{ext}"
+            if cached.is_file() and cached.stat().st_size > 10000:
+                self.play_file(
+                    cached,
+                    allow_external=False,
+                    title=title or "Faixa Completa Deezer",
+                    artist=artist,
+                    album=album,
+                    duration=duration,
+                )
+                self._current_source = f"deezer_full_{track_str}"
+                return cached
+
+        target_path = self.cache_dir / f"full_{track_str}.audio"
+        downloaded = download_and_decrypt_track(
+            track_id=track_str,
+            output_path=target_path,
+            arl=clean_arl,
+            quality_preference=quality_preference,
+        )
+        self.play_file(
+            downloaded,
+            allow_external=False,
+            title=title or "Faixa Completa Deezer",
+            artist=artist,
+            album=album,
+            duration=duration,
+        )
+        self._current_source = f"deezer_full_{track_str}"
+        return downloaded
+
     def play_file(
         self,
         path: Path,

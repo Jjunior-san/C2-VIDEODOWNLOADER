@@ -25,11 +25,18 @@ def configure_fonts(root):
     return text_family, display_family
 
 
-# Apple Music Design System & Color Palette
-APPLE_RED = "#fa233b"
-APPLE_RED_HOVER = "#e01a31"
-APPLE_RED_ACTIVE = "#c21327"
-APPLE_RED_SUBTLE = "#3b171e"
+# C2 Signature Blue & Apple-inspired Design System
+PROGRAM_BLUE = "#2563eb"
+PROGRAM_BLUE_HOVER = "#1d4ed8"
+PROGRAM_BLUE_ACTIVE = "#1e40af"
+PROGRAM_BLUE_SUBTLE = "#1e293b"
+
+# Color aliases for backward compatibility
+APPLE_RED = PROGRAM_BLUE
+APPLE_RED_HOVER = PROGRAM_BLUE_HOVER
+APPLE_RED_ACTIVE = PROGRAM_BLUE_ACTIVE
+APPLE_RED_SUBTLE = PROGRAM_BLUE_SUBTLE
+
 APPLE_DARK_BG = "#161618"
 APPLE_SIDEBAR_BG = "#1c1c1e"
 APPLE_CARD_BG = "#242426"
@@ -39,7 +46,7 @@ APPLE_TEXT_SECONDARY = "#8e8e93"
 APPLE_TEXT_MUTED = "#636366"
 APPLE_GREEN = "#30d158"
 APPLE_ORANGE = "#ff9f0a"
-APPLE_BLUE = "#0a84ff"
+APPLE_BLUE = "#2563eb"
 
 
 def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.Style:
@@ -49,37 +56,37 @@ def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.
     style.configure("Treeview", font=(text_family, 10), rowheight=row_height)
     style.configure("Treeview.Heading", font=(text_family, 10, "bold"))
     
-    # Apple Music Signature Accent Button (Primary action - #fa233b)
+    # Signature Blue Accent Button (Primary action - #2563eb)
     style.configure(
         "Accent.TButton",
         font=(text_family, 10, "bold"),
         foreground="#ffffff",
-        background=APPLE_RED,
+        background=PROGRAM_BLUE,
         padding=(10, 4),
     )
     style.map(
         "Accent.TButton",
-        background=[("pressed", APPLE_RED_ACTIVE), ("active", APPLE_RED_HOVER), ("disabled", "#94a3b8")],
+        background=[("pressed", PROGRAM_BLUE_ACTIVE), ("active", PROGRAM_BLUE_HOVER), ("disabled", "#94a3b8")],
         foreground=[("disabled", "#f1f5f9")],
     )
 
     # Standard Button
     style.configure("TButton", padding=(6, 3))
     
-    # Apple Music Circular Play/Pause Button
+    # Modern Circular Play/Pause Button (Signature Blue)
     style.configure(
         "ApplePlay.TButton",
         font=(text_family, 11, "bold"),
         foreground="#ffffff",
-        background=APPLE_RED,
+        background=PROGRAM_BLUE,
         padding=(8, 4),
     )
     style.map(
         "ApplePlay.TButton",
-        background=[("pressed", APPLE_RED_ACTIVE), ("active", APPLE_RED_HOVER)],
+        background=[("pressed", PROGRAM_BLUE_ACTIVE), ("active", PROGRAM_BLUE_HOVER)],
     )
 
-    # Apple Music Sidebar Navigation Buttons
+    # Sidebar Navigation Buttons
     style.configure(
         "Sidebar.TButton",
         font=(text_family, 10),
@@ -89,16 +96,16 @@ def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.
     style.configure(
         "ActiveSidebar.TButton",
         font=(text_family, 10, "bold"),
-        foreground=APPLE_RED,
+        foreground=PROGRAM_BLUE,
         anchor="w",
         padding=(10, 6),
     )
 
-    # Modern Notebook Tabs with Apple Music Accent
+    # Modern Notebook Tabs with Blue Accent
     style.configure("TNotebook.Tab", font=(text_family, 10, "bold"), padding=[12, 6])
     style.map(
         "TNotebook.Tab",
-        foreground=[("selected", APPLE_RED), ("!selected", "#475569")],
+        foreground=[("selected", PROGRAM_BLUE), ("!selected", "#475569")],
     )
 
     # Progressbar with Apple Accent
@@ -156,7 +163,7 @@ def format_quality_badge(quality: str) -> str:
 def configure_treeview_status_tags(tree) -> None:
     try:
         tree.tag_configure("completed", foreground="#10b981")     # Apple Green
-        tree.tag_configure("downloading", foreground=APPLE_RED)   # Apple Music Red
+        tree.tag_configure("downloading", foreground=PROGRAM_BLUE)   # Signature Blue
         tree.tag_configure("pending", foreground="#6366f1")       # Indigo
         tree.tag_configure("failed", foreground="#ef4444")        # Crimson Red
         tree.tag_configure("cancelled", foreground="#64748b")     # Slate Gray

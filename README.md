@@ -251,12 +251,27 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
-## Versão 2.4.0 — Experiência visual Apple Music, barra lateral, letras sincronizadas e MiniPlayer
+## Versão 2.4.1 — Identidade Azul do Programa, Reprodução Completa via ARL e Gestão de Álbuns
 
-- **Interface Visual no Estilo Apple Music (macOS / Windows 11)**:
-  - **Barra Lateral de Navegação (Sidebar)**: Substituição da navegação tradicional por um menu lateral sofisticado estilo Apple Music dividido em *Ouvir Agora* (Catálogo & Músicas, Vídeos & Links), *Biblioteca* (Fila Geral, Concluídos) e *Sistema* (Atividade, Sobre, Configurações);
+- **Identidade Visual e Paleta Azul Assinatura (`#2563eb`)**:
+  - Remoção de qualquer texto "C² Music", unificando o aplicativo sob a marca consolidada **C² Downloader**;
+  - Substituição da cor vermelha pelo **Azul Assinatura do Programa** (`#2563eb`, hover `#1d4ed8`), presente nos botões de destaque, destaques de reprodução, abas e barras de controle;
+  - Reorganização profissional da interface: remoção de controles duplicados na aba de músicas, priorizando a barra global Now Playing no rodapé e estruturando os botões de ação em linhas limpas e objetivas.
+- **Reprodução de Faixa Completa via Deezer ARL**:
+  - Quando um token ARL Deezer está configurado, o reprodutor agora baixa e descriptografa a faixa inteira sob demanda (MP3 320kbps ou FLAC), permitindo ouvir a música completa e não apenas os 30 segundos de prévia;
+  - Cache local temporário inteligente para resposta instantânea ao pausar, avançar ou retroceder;
+  - Fallback automático para a prévia oficial de 30 segundos caso não haja ARL configurada.
+- **Visualização e Download de Álbuns Completos**:
+  - Botão dedicado **💿 Ver Álbum**: visualiza todas as faixas do álbum correspondente à música ou ao álbum selecionado diretamente na tabela;
+  - Botão **⚡ Baixar Álbum Completo**: enfileira automaticamente todas as faixas do álbum com um único clique;
+  - Menu de contexto na busca do catálogo com atalhos para reprodução completa, sincronização de letras, visualização do álbum e download completo.
+
+## Versão 2.4.0 — Experiência visual moderna, barra lateral, letras sincronizadas e MiniPlayer
+
+- **Interface Visual no Estilo Apple Music / macOS**:
+  - **Barra Lateral de Navegação (Sidebar)**: Substituição da navegação tradicional por um menu lateral sofisticado estilo moderno dividido em *Ouvir Agora* (Catálogo & Músicas, Vídeos & Links), *Biblioteca* (Fila Geral, Concluídos) e *Sistema* (Atividade, Sobre, Configurações);
   - **Botão Alternador de Barra Lateral (`☰`)**: Permite recolher ou expandir a barra lateral para maximizar a área de trabalho em monitores menores;
-  - **Paleta de Cores e Identidade Oficial**: Fundo elegante em grafite escuro (`#161618` e `#1c1c1e`), acento primário no vermelho vibrante característico da Apple Music (`#fa233b`), botões em pílula e destaques sutis;
+  - **Paleta de Cores e Identidade Oficial**: Fundo elegante em grafite escuro (`#161618` e `#1c1c1e`), acento primário no azul vibrante característico do programa (`#2563eb`), botões em pílula e destaques sutis;
   - **Badges de Qualidade de Estúdio**: Badges temáticos para `💎 LOSSLESS (FLAC)`, `⚡ 320k`, `🌟 4K UHD`, `🎬 1080p` e `🎵 AAC`.
 - **Barra Fixa de Reprodução (Now Playing Bar)**:
   - Fixada no rodapé do aplicativo com capa/ícone em miniatura, título e artista em destaque;
