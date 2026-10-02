@@ -251,6 +251,27 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
+## Versão 2.4.0 — Experiência visual Apple Music, barra lateral, letras sincronizadas e MiniPlayer
+
+- **Interface Visual no Estilo Apple Music (macOS / Windows 11)**:
+  - **Barra Lateral de Navegação (Sidebar)**: Substituição da navegação tradicional por um menu lateral sofisticado estilo Apple Music dividido em *Ouvir Agora* (Catálogo & Músicas, Vídeos & Links), *Biblioteca* (Fila Geral, Concluídos) e *Sistema* (Atividade, Sobre, Configurações);
+  - **Botão Alternador de Barra Lateral (`☰`)**: Permite recolher ou expandir a barra lateral para maximizar a área de trabalho em monitores menores;
+  - **Paleta de Cores e Identidade Oficial**: Fundo elegante em grafite escuro (`#161618` e `#1c1c1e`), acento primário no vermelho vibrante característico da Apple Music (`#fa233b`), botões em pílula e destaques sutis;
+  - **Badges de Qualidade de Estúdio**: Badges temáticos para `💎 LOSSLESS (FLAC)`, `⚡ 320k`, `🌟 4K UHD`, `🎬 1080p` e `🎵 AAC`.
+- **Barra Fixa de Reprodução (Now Playing Bar)**:
+  - Fixada no rodapé do aplicativo com capa/ícone em miniatura, título e artista em destaque;
+  - Controles centrais completos: voltar 10s (`⏮`), Play/Pause circular em destaque (`▶` / `⏸`), Parar (`⏹`) e avançar 10s (`⏭`);
+  - Barra de tempo deslizante com tempo decorrido e contagem regressiva negativa (`-02:15`);
+  - Controle de volume integrado e botões rápidos para letras e MiniPlayer.
+- **Letras Sincronizadas em Tempo Real (Synced Lyrics / Karaokê)**:
+  - Integração com a API pública [LRCLIB](https://lrclib.net) (sem necessidade de chaves);
+  - Janela dedicada de letras em estilo Apple Music Karaokê: a linha atual brilha em branco/vermelho em tamanho grande enquanto as anteriores e posteriores ficam suavizadas;
+  - Rolagem automática sincronizada com o milissegundo exato do áudio;
+  - Opção para salvar o arquivo `.lrc` diretamente na pasta da mídia baixada.
+- **MiniPlayer Flutuante (Picture-in-Picture)**:
+  - Janela compacta *Always-on-Top* com controles essenciais, capa da faixa, barra de progresso e volume;
+  - Botão de restauração rápida para retornar à janela principal.
+
 ## Versão 2.2.0 — interface moderna, perfis rápidos, busca, filtros e automação pós-download
 
 - **Design e Tema Visual Moderno**:

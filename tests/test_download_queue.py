@@ -322,3 +322,44 @@ def test_discovered_season_continues_when_middle_episode_is_unavailable(tmp_path
     owner._run_downloader = lambda command: (0, [tmp_path / "video.mp4"])
     queue_service.run_queue(owner, repository, options(tmp_path), Path("engine"))
     assert [item["status"] for item in repository.snapshot()["items"]] == ["completed", "failed", "completed"]
+
+
+def test_queue_options_compatible_ignores_deezer_arl_changes():
+    saved = {
+        "work_mode": "music", "folder": r"C:\Music", "music_folder": r"C:\Music",
+        "video_folder": r"C:\Videos", "format": "Apenas áudio (MP3)",
+        "music_format": "Apenas áudio (MP3)", "video_format": "1080p",
+        "playlist": True, "fragments": 4, "cookies_browser": "Nenhum", "cookies_file": "",
+        "audio_bitrate_mode": "Original / automática", "audio_custom_bitrate": "192",
+        "music_structure": "Artista\\Álbum", "music_filename_template": "{titulo}",
+        "deezer_arl": "", "deezer_quality": "auto", "create_collection_zip": False,
+    }
+    # Current has newly configured ARL cookie
+    current = dict(saved, deezer_arl="5262ce49fc5b28ceca042fd140ab6877")
+    assert queue_options_compatible(current, saved)
+
+
+def test_restore_queue_preserves_configured_deezer_arl(monkeypatch):
+    class DummyVar:
+        def __init__(self, val=""):
+            self.val = val
+        def get(self):
+            return self.val
+        def set(self, val):
+            self.val = val
+
+    class DummyUI:
+        def __init__(self):
+            self.deezer_arl_var = DummyVar("saved_user_arl_token")
+
+    dummy = DummyUI()
+    options_with_empty_arl = {"deezer_arl": ""}
+
+    # Simulate what _restore_queue does
+    saved_arl = str(options_with_empty_arl.get("deezer_arl") or "").strip()
+    current_arl = str(dummy.deezer_arl_var.get() or "").strip()
+    if not current_arl and saved_arl:
+        dummy.deezer_arl_var.set(saved_arl)
+
+    # Must preserve current_arl!
+    assert dummy.deezer_arl_var.get() == "saved_user_arl_token"

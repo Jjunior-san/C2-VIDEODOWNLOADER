@@ -13,7 +13,7 @@ import uuid
 import webbrowser
 from datetime import datetime
 from pathlib import Path
-from tkinter import BooleanVar, DoubleVar, END, Frame, StringVar, Tk, Toplevel, filedialog, messagebox
+from tkinter import BooleanVar, DoubleVar, END, Frame, Menu, StringVar, Tk, Toplevel, filedialog, messagebox
 from tkinter import ttk
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
@@ -39,24 +39,39 @@ from deezer_catalog import (
     get_artist_top_tracks,
     get_artist_albums,
     get_album_tracks,
+    get_deezer_top_brasil,
+    get_deezer_top_global,
+    get_deezer_user_favorites,
+    analyze_deezer_metadata,
+    fetch_track_lyrics,
     is_deezer_url,
 )
 from spotify_catalog import is_spotify_url
 from download_control import DownloadCancelled, DownloadControl
 from ui_layout import (
+    APPLE_CARD_BG,
+    APPLE_DARK_BG,
+    APPLE_RED,
+    APPLE_SIDEBAR_BG,
+    APPLE_TEXT_MUTED,
+    APPLE_TEXT_PRIMARY,
+    APPLE_TEXT_SECONDARY,
     ScrollablePage,
     add_tooltip,
     build_brand,
     configure_fonts,
     fit_window,
+    format_quality_badge,
     wrapping_label,
 )
 from download_queue import QueueRepository, queue_summary
 from queue_ui import QueueUI
 from queue_service import cookie_arguments
 from media_conversion import codec_arguments, duration_from_probe, run_conversion, stream_compatibility
-from music_player import MusicPlayer, MusicPlayerError
+from music_player import MusicPlayer, MusicPlayerError, is_public_deezer_preview
 from video_player import EmbeddedVideoPlayer, VideoPlayerError
+from lyrics_ui import LyricsDialog
+from mini_player_ui import MiniPlayer
 from process_monitor import ProcessInactivityError, close_process, monitored_lines
 from kanald_downloader import is_kanald_url, resolve_kanald_video
 from c2_update import (
@@ -646,9 +661,20 @@ class DownloadApp(QueueUI):
         self.music_volume_label_var = StringVar(value="80%")
         self._music_seek_dragging = False
         self._music_is_muted = False
-        self._music_prev_volume = 80.0
         self.current_music_item_id = None
         self._music_cover_image = None
+
+        # Apple Music Bottom Bar & Sidebar Variables
+        self.bottom_track_var = StringVar(value="Nenhuma faixa em reprodução")
+        self.bottom_artist_var = StringVar(value="C² Music")
+        self.bottom_time_var = StringVar(value="00:00 / 00:00")
+        self.bottom_badge_var = StringVar(value="")
+        self.bottom_seek_var = DoubleVar(value=0.0)
+        self.bottom_volume_var = DoubleVar(value=80.0)
+        self._bottom_seek_dragging = False
+        self._lyrics_dialog = None
+        self._mini_player = None
+        self._sidebar_buttons = {}
 
         self.dependencies = DependencyManager()
         self.app_updater = ApplicationUpdater(self.dependencies)
@@ -680,21 +706,31 @@ class DownloadApp(QueueUI):
         self.root.after(1500, self._schedule_clipboard_tick)
 
     def _build_ui(self) -> None:
-        shell = ttk.Frame(self.root, padding=10)
+        shell = ttk.Frame(self.root, padding=6)
         shell.pack(fill="both", expand=True)
 
         header = ttk.Frame(shell)
-        header.pack(fill="x", pady=(0, 8))
+        header.pack(fill="x", pady=(0, 6))
         try:
-            self._build_site_logo(header).pack(side="left", padx=(0, 12))
+            self._build_site_logo(header).pack(side="left", padx=(0, 10))
         except Exception as exc:
             self.queue_log(f"Aviso: não foi possível carregar a logo ({exc}).")
             ttk.Label(
                 header,
                 text="C² - Downloader",
                 font=(self.display_family, 15, "bold"),
-                foreground="#1876d2",
+                foreground=APPLE_RED,
             ).pack(side="left")
+
+        self.sidebar_toggle_btn = ttk.Button(
+            header,
+            text="☰",
+            width=3,
+            command=self._toggle_sidebar,
+        )
+        self.sidebar_toggle_btn.pack(side="left", padx=(2, 8))
+        add_tooltip(self.sidebar_toggle_btn, "Mostrar/Ocultar barra lateral (Apple Music)")
+
         self.settings_button = ttk.Button(
             header,
             text="⚙",
@@ -712,15 +748,41 @@ class DownloadApp(QueueUI):
         self.open_folder_header_btn.pack(side="right", padx=(0, 6))
         add_tooltip(self.open_folder_header_btn, "Abrir pasta de downloads atual no Windows Explorer")
 
+        self.lyrics_header_btn = ttk.Button(
+            header,
+            text="💬 Letras",
+            command=self._open_lyrics_window,
+        )
+        self.lyrics_header_btn.pack(side="right", padx=(0, 6))
+        add_tooltip(self.lyrics_header_btn, "Letras sincronizadas em tempo real (Karaokê estilo Apple Music)")
+
+        self.mini_player_header_btn = ttk.Button(
+            header,
+            text="🔲 Mini",
+            command=self._open_mini_player,
+        )
+        self.mini_player_header_btn.pack(side="right", padx=(0, 6))
+        add_tooltip(self.mini_player_header_btn, "MiniPlayer flutuante sempre no topo")
+
         self.header_status_label = ttk.Label(
             header,
             textvariable=self.header_status_var,
             font=(self.text_family, 9, "bold"),
-            foreground="#2563eb",
+            foreground=APPLE_RED,
         )
         self.header_status_label.pack(side="right", padx=(0, 10))
 
-        self.tabs = ttk.Notebook(shell)
+        # Barra de reprodução estilo Apple Music fixada no rodapé
+        self._build_apple_now_playing_bar(shell)
+
+        # Divisão central com Sidebar e Área de Conteúdo
+        self.main_split = ttk.Frame(shell)
+        self.main_split.pack(fill="both", expand=True)
+
+        self.content_container = ttk.Frame(self.main_split)
+        self.content_container.pack(side="right", fill="both", expand=True)
+
+        self.tabs = ttk.Notebook(self.content_container)
         self.tabs.pack(fill="both", expand=True)
 
         self.music_page = ScrollablePage(self.tabs)
@@ -734,7 +796,7 @@ class DownloadApp(QueueUI):
         self.settings_dialog.withdraw()
         self.settings_dialog.title("Configurações")
         self.settings_dialog.transient(self.root)
-        self.settings_dialog.protocol("WM_DELETE_WINDOW", lambda: self._close_settings(False))
+        self.settings_dialog.protocol("WM_DELETE_WINDOW", lambda: self._close_settings(True))
         fit_window(self.settings_dialog, max_width=820, max_height=720)
         self.settings_page = ScrollablePage(self.settings_dialog)
         self.settings_page.pack(fill="both", expand=True)
@@ -745,6 +807,9 @@ class DownloadApp(QueueUI):
         self.tabs.add(self.completed_page, text="  Concluídos  ")
         self.tabs.add(self.activity_page, text="  Atividade  ")
         self.tabs.add(self.about_page, text="  Sobre  ")
+
+        self.sidebar_visible = True
+        self._build_apple_sidebar(self.main_split)
 
         about_brand = ttk.Frame(self.about_page)
         about_brand.pack(anchor="center", pady=(24, 12))
@@ -814,6 +879,48 @@ class DownloadApp(QueueUI):
             font=(self.text_family, 11),
         )
         self.music_search_entry.pack(side="left", fill="x", expand=True)
+
+        discovery_row = ttk.Frame(search_frame)
+        discovery_row.pack(fill="x", pady=(6, 2))
+        ttk.Label(
+            discovery_row,
+            text="🔥 Descoberta:",
+            font=(self.text_family, 9, "bold"),
+            foreground="#2563eb",
+        ).pack(side="left", padx=(0, 6))
+
+        self.btn_top_brasil = ttk.Button(
+            discovery_row,
+            text="🇧🇷 Top Brasil",
+            command=self._load_top_brasil,
+        )
+        self.btn_top_brasil.pack(side="left", padx=(0, 4))
+        add_tooltip(self.btn_top_brasil, "Carregar as 50 músicas mais tocadas no Brasil na Deezer")
+
+        self.btn_top_global = ttk.Button(
+            discovery_row,
+            text="🌍 Top Global",
+            command=self._load_top_global,
+        )
+        self.btn_top_global.pack(side="left", padx=(0, 4))
+        add_tooltip(self.btn_top_global, "Carregar a parada mundial Top 50 da Deezer")
+
+        self.btn_user_favs = ttk.Button(
+            discovery_row,
+            text="⭐ Meus Favoritos",
+            command=self._load_user_favorites,
+        )
+        self.btn_user_favs.pack(side="left", padx=(0, 4))
+        add_tooltip(self.btn_user_favs, "Carregar as músicas curtidas da sua conta Deezer conectada")
+
+        self.btn_link_analyzer = ttk.Button(
+            discovery_row,
+            text="🔍 Raio-X Metadados",
+            command=self._open_link_analyzer_dialog,
+        )
+        self.btn_link_analyzer.pack(side="left", padx=(0, 4))
+        add_tooltip(self.btn_link_analyzer, "Inspecionar metadados de qualquer link Deezer (ISRC, BPM, gravadora)")
+
         ttk.Label(
             search_frame,
             textvariable=self.music_search_status_var,
@@ -824,7 +931,7 @@ class DownloadApp(QueueUI):
         result_area.pack(fill="both", expand=True, pady=(0, 8))
 
         result_list = ttk.Frame(result_area)
-        result_detail = ttk.LabelFrame(result_area, text="Detalhes", padding=10)
+        result_detail = ttk.LabelFrame(result_detail_parent := result_area, text="Detalhes", padding=10)
         result_area.add(result_list, weight=3)
         result_area.add(result_detail, weight=2)
 
@@ -851,6 +958,7 @@ class DownloadApp(QueueUI):
                 anchor="w",
             )
         self.music_results_tree.grid(row=0, column=0, sticky="nsew")
+        self.music_results_tree.bind("<Button-3>", self._on_music_tree_context_menu)
         result_table.rowconfigure(0, weight=1)
         result_table.columnconfigure(0, weight=1)
         result_scroll = ttk.Scrollbar(
@@ -910,6 +1018,14 @@ class DownloadApp(QueueUI):
             state="disabled",
         )
         self.catalog_drill_button.pack(side="left", padx=(6, 0))
+        self.catalog_tracklist_button = ttk.Button(
+            result_buttons,
+            text="☑️ Selecionar faixas",
+            command=self._open_album_tracklist_dialog,
+            state="disabled",
+        )
+        self.catalog_tracklist_button.pack(side="left", padx=(6, 0))
+        add_tooltip(self.catalog_tracklist_button, "Abrir lista interativa com caixas de seleção [✓] para escolher faixas do álbum")
         self.catalog_artist_albums_button = ttk.Button(
             result_buttons,
             text="Ver álbuns",
@@ -917,6 +1033,14 @@ class DownloadApp(QueueUI):
             state="disabled",
         )
         self.catalog_artist_albums_button.pack(side="left", padx=(6, 0))
+        self.catalog_analyzer_button = ttk.Button(
+            result_buttons,
+            text="🔍 Raio-X",
+            command=lambda: self._open_link_analyzer_dialog(),
+            state="disabled",
+        )
+        self.catalog_analyzer_button.pack(side="left", padx=(6, 0))
+        add_tooltip(self.catalog_analyzer_button, "Inspecionar metadados detalhados (ISRC, BPM, gravadora)")
         self.catalog_play_button = ttk.Button(
             result_buttons,
             text="▶",
@@ -1521,6 +1645,281 @@ class DownloadApp(QueueUI):
         self._update_audio_controls()
         if self.deezer_arl_var.get().strip():
             self.root.after(400, lambda: self._check_deezer_arl(show_dialog=False))
+
+    def _toggle_sidebar(self) -> None:
+        if getattr(self, "sidebar_visible", True):
+            self.sidebar_frame.pack_forget()
+            self.sidebar_visible = False
+        else:
+            self.sidebar_frame.pack(side="left", fill="y", padx=(0, 6), before=self.content_container)
+            self.sidebar_visible = True
+
+    def _build_apple_sidebar(self, parent) -> None:
+        self.sidebar_frame = ttk.Frame(parent, width=175, padding=(2, 4))
+        self.sidebar_frame.pack_propagate(False)
+        self.sidebar_frame.pack(side="left", fill="y", padx=(0, 6), before=self.content_container)
+
+        brand_lbl = ttk.Label(
+            self.sidebar_frame,
+            text="🎵 C² Music",
+            font=(self.display_family, 11, "bold"),
+            foreground=APPLE_RED,
+            padding=(10, 4, 4, 8),
+        )
+        brand_lbl.pack(fill="x")
+
+        def _sec(title: str):
+            ttk.Label(
+                self.sidebar_frame,
+                text=title,
+                font=(self.text_family, 8, "bold"),
+                foreground="#8e8e93",
+                padding=(10, 6, 2, 2),
+            ).pack(fill="x")
+
+        def _item(text: str, page_obj, key: str):
+            btn = ttk.Button(
+                self.sidebar_frame,
+                text=text,
+                style="Sidebar.TButton",
+                command=lambda p=page_obj: self.tabs.select(p),
+            )
+            btn.pack(fill="x", padx=2, pady=1)
+            self._sidebar_buttons[key] = (btn, page_obj)
+            return btn
+
+        _sec("OUVIR AGORA")
+        _item("🎵 Música & Catálogo", self.music_page, "music")
+        _item("🎬 Vídeos & Links", self.video_page, "video")
+
+        _sec("BIBLIOTECA")
+        _item("⏳ Fila Geral", self.queue_page, "queue")
+        _item("✅ Concluídos", self.completed_page, "completed")
+
+        _sec("SISTEMA")
+        _item("📜 Atividade", self.activity_page, "activity")
+        _item("ℹ️ Sobre", self.about_page, "about")
+
+        cfg_btn = ttk.Button(
+            self.sidebar_frame,
+            text="⚙ Configurações",
+            style="Sidebar.TButton",
+            command=self._open_settings,
+        )
+        cfg_btn.pack(side="bottom", fill="x", padx=2, pady=4)
+
+    def _sync_sidebar_selection(self) -> None:
+        if not hasattr(self, "_sidebar_buttons"):
+            return
+        selected = self.tabs.select()
+        for key, (btn, page) in self._sidebar_buttons.items():
+            if str(page) == selected:
+                btn.configure(style="ActiveSidebar.TButton")
+            else:
+                btn.configure(style="Sidebar.TButton")
+
+    def _build_apple_now_playing_bar(self, parent) -> None:
+        self.bottom_player_bar = ttk.Frame(parent, padding=(10, 6))
+        self.bottom_player_bar.pack(side="bottom", fill="x", pady=(4, 0))
+
+        div = ttk.Separator(parent, orient="horizontal")
+        div.pack(side="bottom", fill="x", before=self.bottom_player_bar)
+
+        left_col = ttk.Frame(self.bottom_player_bar)
+        left_col.pack(side="left", padx=(0, 12))
+
+        art_box = ttk.Frame(left_col, width=40, height=40)
+        art_box.pack(side="left", padx=(0, 8))
+        art_box.pack_propagate(False)
+        self.bottom_art_label = ttk.Label(
+            art_box,
+            text="🎵",
+            font=(self.display_family, 14),
+            foreground=APPLE_RED,
+            anchor="center",
+        )
+        self.bottom_art_label.pack(expand=True)
+
+        meta_box = ttk.Frame(left_col)
+        meta_box.pack(side="left")
+
+        title_row = ttk.Frame(meta_box)
+        title_row.pack(fill="x", anchor="w")
+
+        ttk.Label(
+            title_row,
+            textvariable=self.bottom_track_var,
+            font=(self.display_family, 9, "bold"),
+            width=22,
+            anchor="w",
+        ).pack(side="left")
+
+        self.bottom_badge_label = ttk.Label(
+            title_row,
+            textvariable=self.bottom_badge_var,
+            font=(self.text_family, 8, "bold"),
+            foreground=APPLE_RED,
+        )
+        self.bottom_badge_label.pack(side="left", padx=(4, 0))
+
+        ttk.Label(
+            meta_box,
+            textvariable=self.bottom_artist_var,
+            font=(self.text_family, 8),
+            foreground="#8e8e93",
+            width=26,
+            anchor="w",
+        ).pack(fill="x", anchor="w")
+
+        center_col = ttk.Frame(self.bottom_player_bar)
+        center_col.pack(side="left", fill="x", expand=True, padx=8)
+
+        ctrls_row = ttk.Frame(center_col)
+        ctrls_row.pack(anchor="center")
+
+        ttk.Button(
+            ctrls_row,
+            text="⏮",
+            width=3,
+            command=self._bottom_seek_backward,
+        ).pack(side="left", padx=2)
+
+        self.bottom_play_button = ttk.Button(
+            ctrls_row,
+            text="▶",
+            width=4,
+            style="ApplePlay.TButton",
+            command=self._toggle_audio_player_playback,
+        )
+        self.bottom_play_button.pack(side="left", padx=4)
+
+        self.bottom_stop_button = ttk.Button(
+            ctrls_row,
+            text="⏹",
+            width=3,
+            command=self.stop_music,
+        )
+        self.bottom_stop_button.pack(side="left", padx=2)
+
+        ttk.Button(
+            ctrls_row,
+            text="⏭",
+            width=3,
+            command=self._bottom_seek_forward,
+        ).pack(side="left", padx=2)
+
+        time_row = ttk.Frame(center_col)
+        time_row.pack(fill="x", expand=True, pady=(2, 0))
+
+        self.bottom_seek_scale = ttk.Scale(
+            time_row,
+            from_=0.0,
+            to=100.0,
+            variable=self.bottom_seek_var,
+            command=lambda _v: None,
+        )
+        self.bottom_seek_scale.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.bottom_seek_scale.bind("<ButtonPress-1>", lambda _e: setattr(self, "_bottom_seek_dragging", True))
+        self.bottom_seek_scale.bind("<ButtonRelease-1>", self._on_bottom_seek_release)
+
+        ttk.Label(
+            time_row,
+            textvariable=self.bottom_time_var,
+            font=(self.text_family, 8),
+            foreground="#8e8e93",
+        ).pack(side="right")
+
+        right_col = ttk.Frame(self.bottom_player_bar)
+        right_col.pack(side="right")
+
+        ttk.Label(
+            right_col,
+            text="🔊",
+            font=(self.text_family, 9),
+        ).pack(side="left", padx=(0, 3))
+
+        vol_scale = ttk.Scale(
+            right_col,
+            from_=0,
+            to=100,
+            variable=self.bottom_volume_var,
+            command=self._on_bottom_volume_change,
+            length=75,
+        )
+        vol_scale.pack(side="left", padx=(0, 8))
+
+        lyrics_btn = ttk.Button(
+            right_col,
+            text="💬",
+            width=3,
+            command=self._open_lyrics_window,
+        )
+        lyrics_btn.pack(side="left", padx=2)
+        add_tooltip(lyrics_btn, "Letras sincronizadas (Karaokê)")
+
+        mini_btn = ttk.Button(
+            right_col,
+            text="🔲",
+            width=3,
+            command=self._open_mini_player,
+        )
+        mini_btn.pack(side="left", padx=2)
+        add_tooltip(mini_btn, "MiniPlayer flutuante")
+
+    def _bottom_seek_backward(self) -> None:
+        cur = self.music_player.get_position()
+        self.music_player.set_position(max(0.0, cur - 10.0))
+        self._update_music_player()
+
+    def _bottom_seek_forward(self) -> None:
+        cur = self.music_player.get_position()
+        dur = self.music_player.get_duration()
+        self.music_player.set_position(min(dur, cur + 10.0))
+        self._update_music_player()
+
+    def _on_bottom_seek_release(self, _event) -> None:
+        self._bottom_seek_dragging = False
+        if self.music_player.is_active():
+            dur_sec = self.music_player.get_duration()
+            percent = self.bottom_seek_var.get() / 100.0
+            target_sec = max(0.0, dur_sec * percent)
+            self.music_player.set_position(target_sec)
+        self._update_music_player()
+
+    def _on_bottom_volume_change(self, val) -> None:
+        try:
+            vol = float(val)
+            self.music_player.set_volume(vol / 100.0)
+            self.music_volume_var.set(vol)
+            self.music_volume_label_var.set(f"{int(vol)}%")
+        except Exception:
+            pass
+
+    def _open_lyrics_window(self) -> None:
+        if self._lyrics_dialog is not None and self._lyrics_dialog.winfo_exists():
+            self._lyrics_dialog.lift()
+            self._lyrics_dialog.focus_force()
+            self._lyrics_dialog.load_lyrics()
+            return
+        self._lyrics_dialog = LyricsDialog(
+            self.root,
+            self.music_player,
+            self.text_family,
+            self.display_family,
+        )
+
+    def _open_mini_player(self) -> None:
+        if self._mini_player is not None and self._mini_player.winfo_exists():
+            self._mini_player.lift()
+            self._mini_player.focus_force()
+            return
+        self._mini_player = MiniPlayer(
+            self.root,
+            self.music_player,
+            self.text_family,
+            self.display_family,
+            on_restore=lambda: self.root.deiconify(),
+        )
 
     def _build_context_queue(self, parent, mode: str) -> None:
         title = "Fila de músicas" if mode == "music" else "Fila de vídeos"
@@ -2163,6 +2562,13 @@ class DownloadApp(QueueUI):
         if hasattr(self, "audio_seek_scale"):
             self.audio_seek_scale.configure(state="normal" if active else "disabled")
 
+        if hasattr(self, "bottom_play_button"):
+            self.bottom_play_button.configure(text="⏸" if playing else "▶")
+        if hasattr(self, "bottom_stop_button"):
+            self.bottom_stop_button.configure(state="normal" if active else "disabled")
+        if hasattr(self, "bottom_seek_scale"):
+            self.bottom_seek_scale.configure(state="normal" if active else "disabled")
+
         if active:
             pos_ms = self.music_player.get_position_ms()
             dur_ms = self.music_player.get_duration_ms()
@@ -2172,11 +2578,24 @@ class DownloadApp(QueueUI):
                     self.music_player_seek_var.set(min(100.0, max(0.0, pct)))
                 else:
                     self.music_player_seek_var.set(0.0)
+            if not getattr(self, "_bottom_seek_dragging", False):
+                if dur_ms > 0:
+                    pct = (pos_ms / dur_ms) * 100.0
+                    self.bottom_seek_var.set(min(100.0, max(0.0, pct)))
+                else:
+                    self.bottom_seek_var.set(0.0)
+
             self.music_player_time_var.set(
                 f"{format_player_time(pos_ms)} / {format_player_time(dur_ms)}"
             )
+            rem_ms = max(0, dur_ms - pos_ms)
+            self.bottom_time_var.set(
+                f"{format_player_time(pos_ms)} / -{format_player_time(rem_ms)}"
+            )
+
             title = self.music_player.track_title
             artist = self.music_player.track_artist
+            album = self.music_player.track_album
             if title and artist:
                 display_track = f"{title} • {artist}"
             elif title:
@@ -2184,6 +2603,27 @@ class DownloadApp(QueueUI):
             else:
                 display_track = "Reproduzindo áudio"
             self.music_player_track_var.set(f"🎵 {display_track}")
+
+            self.bottom_track_var.set(title or "Reproduzindo áudio")
+            self.bottom_artist_var.set(f"{artist} — {album}" if album and artist else (artist or album or "C² Music"))
+
+            # Apple Music Format Badge
+            current_path = getattr(self.music_player, "_current_path", None)
+            if current_path:
+                ext = Path(current_path).suffix.lower()
+                if ext == ".flac":
+                    self.bottom_badge_var.set("💎 LOSSLESS")
+                elif ext == ".mp3":
+                    self.bottom_badge_var.set("⚡ 320k")
+                elif ext in {".m4a", ".aac"}:
+                    self.bottom_badge_var.set("🎵 AAC")
+                else:
+                    self.bottom_badge_var.set(ext.upper().replace(".", ""))
+            elif is_public_deezer_preview(str(self.music_player.current_source or "")):
+                self.bottom_badge_var.set("Prévia Deezer")
+            else:
+                self.bottom_badge_var.set("")
+
             if paused:
                 self.music_player_status_var.set("Pausado")
             elif playing:
@@ -2191,10 +2631,16 @@ class DownloadApp(QueueUI):
         else:
             if not self._music_seek_dragging:
                 self.music_player_seek_var.set(0.0)
+            if not getattr(self, "_bottom_seek_dragging", False):
+                self.bottom_seek_var.set(0.0)
             self.music_player_time_var.set("00:00 / 00:00")
+            self.bottom_time_var.set("00:00 / 00:00")
             if not self.music_player.current_source:
                 self.music_player_track_var.set("Nenhuma faixa em reprodução.")
                 self.music_player_status_var.set("Pronto para reproduzir.")
+                self.bottom_track_var.set("Nenhuma faixa em reprodução")
+                self.bottom_artist_var.set("C² Music")
+                self.bottom_badge_var.set("")
 
     def _on_main_tab_changed(self, _event=None) -> None:
         selected = self.tabs.select()
@@ -2204,6 +2650,7 @@ class DownloadApp(QueueUI):
         elif selected == str(self.video_page):
             if self.work_mode != "video":
                 self._apply_work_mode("video")
+        self._sync_sidebar_selection()
         self._save_preferences()
 
     def _set_source_text(self, sources: list[str]) -> None:
@@ -2402,8 +2849,12 @@ class DownloadApp(QueueUI):
             self.catalog_download_button.configure(state="disabled")
             if hasattr(self, "catalog_drill_button"):
                 self.catalog_drill_button.configure(state="disabled", text="Ver faixas")
+            if hasattr(self, "catalog_tracklist_button"):
+                self.catalog_tracklist_button.configure(state="disabled")
             if hasattr(self, "catalog_artist_albums_button"):
                 self.catalog_artist_albums_button.configure(state="disabled")
+            if hasattr(self, "catalog_analyzer_button"):
+                self.catalog_analyzer_button.configure(state="disabled")
             self.catalog_play_button.configure(state="disabled", text="▶")
             if hasattr(self, "catalog_stop_button"):
                 self.catalog_stop_button.configure(state="disabled")
@@ -2424,6 +2875,12 @@ class DownloadApp(QueueUI):
                 self.catalog_drill_button.configure(state="normal", text="Top músicas")
             else:
                 self.catalog_drill_button.configure(state="disabled", text="Ver faixas")
+
+        if hasattr(self, "catalog_tracklist_button"):
+            self.catalog_tracklist_button.configure(state="normal" if result.kind == "album" else "disabled")
+
+        if hasattr(self, "catalog_analyzer_button"):
+            self.catalog_analyzer_button.configure(state="normal" if result.kind in {"track", "album"} else "disabled")
 
         if hasattr(self, "catalog_artist_albums_button"):
             if result.kind == "artist":
@@ -2651,6 +3108,364 @@ class DownloadApp(QueueUI):
         result = self._selected_catalog_result()
         if result is not None:
             webbrowser.open(result.page_url)
+
+    def _load_top_brasil(self) -> None:
+        self._save_search_state_before_drill()
+        self.music_search_status_var.set("Carregando Top 50 Brasil da Deezer...")
+
+        def worker():
+            try:
+                tracks = get_deezer_top_brasil(50)
+                results = tuple(
+                    DeezerSearchResult(
+                        kind="track",
+                        item_id=t.track_id,
+                        title=t.title,
+                        subtitle=f"{t.artist} • {t.album}",
+                        cover_url=t.cover_url,
+                        page_url=t.page_url,
+                    ) for t in tracks
+                )
+                self.event_queue.put(("music_drill_results", ("🔥 Top Brasil", results, "")))
+            except Exception as exc:
+                self.event_queue.put(("music_drill_results", ("Top Brasil", (), str(exc))))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _load_top_global(self) -> None:
+        self._save_search_state_before_drill()
+        self.music_search_status_var.set("Carregando Top 50 Global da Deezer...")
+
+        def worker():
+            try:
+                tracks = get_deezer_top_global(50)
+                results = tuple(
+                    DeezerSearchResult(
+                        kind="track",
+                        item_id=t.track_id,
+                        title=t.title,
+                        subtitle=f"{t.artist} • {t.album}",
+                        cover_url=t.cover_url,
+                        page_url=t.page_url,
+                    ) for t in tracks
+                )
+                self.event_queue.put(("music_drill_results", ("🌍 Top Global", results, "")))
+            except Exception as exc:
+                self.event_queue.put(("music_drill_results", ("Top Global", (), str(exc))))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _load_user_favorites(self) -> None:
+        arl = str(self.deezer_arl_var.get() if hasattr(self, "deezer_arl_var") else "").strip()
+        if not arl:
+            messagebox.showwarning(
+                "Meus Favoritos Deezer",
+                "Nenhum cookie ARL configurado.\n\nPara acessar seus favoritos, informe seu cookie ARL da Deezer em Configurações (ícone ⚙️).",
+            )
+            return
+        self._save_search_state_before_drill()
+        self.music_search_status_var.set("Carregando músicas favoritas da sua conta Deezer...")
+
+        def worker():
+            try:
+                tracks = get_deezer_user_favorites(arl, 100)
+                results = tuple(
+                    DeezerSearchResult(
+                        kind="track",
+                        item_id=t.track_id,
+                        title=t.title,
+                        subtitle=f"{t.artist} • {t.album}",
+                        cover_url=t.cover_url,
+                        page_url=t.page_url,
+                    ) for t in tracks
+                )
+                self.event_queue.put(("music_drill_results", ("⭐ Meus Favoritos", results, "")))
+            except Exception as exc:
+                self.event_queue.put(("music_drill_results", ("Meus Favoritos", (), str(exc))))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_music_tree_context_menu(self, event):
+        item_id = self.music_results_tree.identify_row(event.y)
+        if not item_id:
+            return
+        self.music_results_tree.selection_set(item_id)
+        self.music_results_tree.focus(item_id)
+        self._show_selected_catalog_result()
+        result = self._selected_catalog_result()
+        if not result:
+            return
+
+        menu = Menu(self.music_results_tree, tearoff=0)
+        if result.kind == "track":
+            menu.add_command(
+                label="⚡ Baixar em FLAC Lossless (Hi-Fi)",
+                command=lambda: self._download_result_with_quality(result, "flac"),
+            )
+            menu.add_command(
+                label="🎵 Baixar em MP3 320 kbps",
+                command=lambda: self._download_result_with_quality(result, "mp3_320"),
+            )
+            menu.add_command(
+                label="📱 Baixar em MP3 128 kbps",
+                command=lambda: self._download_result_with_quality(result, "mp3_128"),
+            )
+            menu.add_separator()
+            menu.add_command(label="▶ Reproduzir Prévia", command=self._play_selected_catalog_result)
+        elif result.kind == "album":
+            menu.add_command(label="☑️ Selecionar faixas do álbum...", command=self._open_album_tracklist_dialog)
+            menu.add_command(label="⚡ Baixar álbum completo", command=self._download_selected_catalog_result)
+            menu.add_separator()
+        elif result.kind == "artist":
+            menu.add_command(label="🎵 Top Músicas do Artista", command=self._drill_down_selected)
+            menu.add_command(label="💿 Ver Álbuns do Artista", command=self._drill_artist_albums)
+            menu.add_separator()
+
+        menu.add_command(label="➕ Adicionar à Fila", command=self._load_selected_catalog_result)
+        menu.add_command(
+            label="📋 Copiar Link Deezer",
+            command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(result.page_url)),
+        )
+        if result.kind in {"track", "album"}:
+            menu.add_command(
+                label="🔍 Raio-X Metadados (ISRC / BPM)",
+                command=lambda: self._open_link_analyzer_dialog(result.page_url),
+            )
+        menu.add_command(label="🌐 Abrir no Deezer", command=self._open_selected_catalog_result)
+
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _download_result_with_quality(self, result, quality: str) -> None:
+        if not result:
+            return
+        old_quality = self.deezer_quality_var.get() if hasattr(self, "deezer_quality_var") else None
+        if hasattr(self, "deezer_quality_var"):
+            self.deezer_quality_var.set(quality)
+        self._apply_work_mode("music", initial=True)
+        self._prepare_sources([result.page_url], True)
+        if old_quality and hasattr(self, "deezer_quality_var"):
+            self.root.after(1000, lambda: self.deezer_quality_var.set(old_quality))
+
+    def _open_link_analyzer_dialog(self, url_or_id=None) -> None:
+        target = url_or_id
+        if not target:
+            result = self._selected_catalog_result()
+            if result:
+                target = result.page_url
+            else:
+                query = self.music_search_var.get().strip()
+                if query and (is_deezer_url(query) or query.isdigit()):
+                    target = query
+        if not target:
+            from tkinter.simpledialog import askstring
+            target = askstring("Raio-X de Metadados", "Cole o link ou ID da faixa/álbum da Deezer:", parent=self.root)
+            if not target:
+                return
+
+        dialog = Toplevel(self.root)
+        dialog.title("🔍 Raio-X de Metadados Deezer (Link Analyzer)")
+        dialog.transient(self.root)
+        fit_window(dialog, max_width=680, max_height=600)
+
+        loading_lbl = ttk.Label(dialog, text="Consultando metadados na Deezer...", font=(self.text_family, 11), padding=20)
+        loading_lbl.pack(expand=True)
+
+        def worker():
+            try:
+                data = analyze_deezer_metadata(target)
+                def update_ui():
+                    loading_lbl.destroy()
+                    container = ttk.Frame(dialog, padding=16)
+                    container.pack(fill="both", expand=True)
+
+                    header = ttk.Frame(container)
+                    header.pack(fill="x", pady=(0, 12))
+                    title_txt = f"{data['title']}"
+                    sub_txt = f"{data['artist']} • {data['album']}" if data['album'] else data['artist']
+                    ttk.Label(header, text=title_txt, font=(self.display_family, 13, "bold"), foreground="#2563eb").pack(anchor="w")
+                    ttk.Label(header, text=sub_txt, font=(self.text_family, 10), foreground="#475569").pack(anchor="w", pady=(2, 0))
+
+                    tbl = ttk.Frame(container)
+                    tbl.pack(fill="both", expand=True, pady=(0, 12))
+
+                    info_fields = [
+                        ("Tipo de Mídia", data["kind"].upper()),
+                        ("Identificador (ID)", str(data["id"])),
+                        ("Código ISRC", str(data["isrc"] or "Não disponível")),
+                        ("Código UPC / Barcode", str(data["upc"] or "Não disponível")),
+                        ("Duração", data["duration_formatted"]),
+                        ("BPM (Batidas por Minuto)", str(data["bpm"] or "Não informado")),
+                        ("Data de Lançamento", str(data["release_date"] or "Não informado")),
+                        ("Gravadora / Selo", str(data["label"] or "Não informado")),
+                        ("Gênero(s)", str(data["genres"] or "Não informado")),
+                        ("Faixa / Posição", str(data["track_position"] or "—")),
+                        ("Número do Disco", str(data["disk_number"] or "—")),
+                        ("Letras Explícitas", "Sim (Explicit 🔞)" if data["explicit"] else "Não"),
+                        ("Disponibilidade", "Liberada para streaming" if data["readable"] is not False else "Restrita"),
+                    ]
+                    if data.get("available_countries_count"):
+                        info_fields.append(("Países Disponíveis", f"{data['available_countries_count']} países"))
+
+                    for r, (lbl, val) in enumerate(info_fields):
+                        bg_color = "#f8fafc" if r % 2 == 0 else "#ffffff"
+                        row_frame = Frame(tbl, bg=bg_color, padx=6, pady=3)
+                        row_frame.pack(fill="x")
+                        ttk.Label(row_frame, text=lbl, font=(self.text_family, 9, "bold"), width=24).pack(side="left")
+                        ttk.Label(row_frame, text=val, font=(self.text_family, 9)).pack(side="left", fill="x", expand=True)
+
+                    actions = ttk.Frame(container)
+                    actions.pack(fill="x", pady=(10, 0))
+                    ttk.Button(
+                        actions,
+                        text="⚡ Baixar esta mídia",
+                        style="Accent.TButton",
+                        command=lambda: (dialog.destroy(), self._prepare_sources([data["page_url"]], True)),
+                    ).pack(side="left")
+                    if data.get("isrc"):
+                        isrc_val = data["isrc"]
+                        ttk.Button(
+                            actions,
+                            text="📋 Copiar ISRC",
+                            command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(isrc_val), messagebox.showinfo("ISRC", f"Código ISRC copiado:\n{isrc_val}", parent=dialog)),
+                        ).pack(side="left", padx=6)
+                    ttk.Button(
+                        actions,
+                        text="📋 Copiar Link",
+                        command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(data["page_url"])),
+                    ).pack(side="left")
+                    ttk.Button(actions, text="Fechar", command=dialog.destroy).pack(side="right")
+
+                dialog.after_idle(update_ui)
+            except Exception as exc:
+                def show_err():
+                    loading_lbl.configure(text=f"Erro ao analisar link Deezer:\n{exc}", foreground="#ef4444")
+                dialog.after_idle(show_err)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _open_album_tracklist_dialog(self) -> None:
+        result = self._selected_catalog_result()
+        if not result or result.kind != "album":
+            messagebox.showinfo("Selecionar Faixas", "Selecione um álbum na lista para escolher suas faixas.")
+            return
+
+        album_id = result.item_id
+        album_title = result.title
+
+        dialog = Toplevel(self.root)
+        dialog.title(f"☑️ Faixas do Álbum: {album_title}")
+        dialog.transient(self.root)
+        fit_window(dialog, max_width=720, max_height=620)
+
+        loading = ttk.Label(dialog, text="Carregando faixas do álbum...", font=(self.text_family, 11), padding=20)
+        loading.pack(expand=True)
+
+        def worker():
+            try:
+                tracks = get_album_tracks(album_id)
+                def setup_ui():
+                    loading.destroy()
+                    container = ttk.Frame(dialog, padding=12)
+                    container.pack(fill="both", expand=True)
+
+                    header = ttk.Frame(container)
+                    header.pack(fill="x", pady=(0, 8))
+                    ttk.Label(header, text=f"Álbum: {album_title}", font=(self.display_family, 12, "bold"), foreground="#2563eb").pack(anchor="w")
+                    count_var = StringVar()
+                    count_lbl = ttk.Label(header, textvariable=count_var, font=(self.text_family, 9), foreground="#64748b")
+                    count_lbl.pack(anchor="w")
+
+                    table_frame = ttk.Frame(container)
+                    table_frame.pack(fill="both", expand=True, pady=(0, 8))
+                    columns = ("selected", "num", "title", "duration")
+                    tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=14, selectmode="browse")
+                    tree.heading("selected", text="✓")
+                    tree.heading("num", text="#")
+                    tree.heading("title", text="Título da Faixa")
+                    tree.heading("duration", text="Duração")
+                    tree.column("selected", width=36, anchor="center")
+                    tree.column("num", width=44, anchor="center")
+                    tree.column("title", width=420, anchor="w")
+                    tree.column("duration", width=70, anchor="center")
+                    tree.grid(row=0, column=0, sticky="nsew")
+                    table_frame.rowconfigure(0, weight=1)
+                    table_frame.columnconfigure(0, weight=1)
+
+                    sb = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+                    sb.grid(row=0, column=1, sticky="ns")
+                    tree.configure(yscrollcommand=sb.set)
+
+                    track_states = {}
+                    for idx, t in enumerate(tracks):
+                        track_states[str(idx)] = {"enabled": True, "track": t}
+                        dur_txt = f"{t.duration // 60}:{t.duration % 60:02d}" if t.duration else "—"
+                        tree.insert("", END, iid=str(idx), values=("✓", str(t.track_number or idx + 1), t.title, dur_txt))
+
+                    def update_count():
+                        sel = sum(1 for it in track_states.values() if it["enabled"])
+                        count_var.set(f"{sel} de {len(tracks)} faixa(s) selecionada(s)")
+
+                    update_count()
+
+                    def toggle_item(item_id):
+                        if item_id in track_states:
+                            curr = track_states[item_id]["enabled"]
+                            track_states[item_id]["enabled"] = not curr
+                            t = track_states[item_id]["track"]
+                            dur_txt = f"{t.duration // 60}:{t.duration % 60:02d}" if t.duration else "—"
+                            tree.item(item_id, values=("✓" if not curr else "", str(t.track_number or int(item_id) + 1), t.title, dur_txt))
+                            update_count()
+
+                    def on_click(event):
+                        row = tree.identify_row(event.y)
+                        if row:
+                            toggle_item(row)
+
+                    def on_space(_event):
+                        sel = tree.selection()
+                        if sel:
+                            toggle_item(sel[0])
+
+                    tree.bind("<Button-1>", on_click)
+                    tree.bind("<space>", on_space)
+
+                    toolbar = ttk.Frame(container)
+                    toolbar.pack(fill="x", pady=(0, 8))
+
+                    def set_all(state):
+                        for iid, data in track_states.items():
+                            data["enabled"] = state
+                            t = data["track"]
+                            dur_txt = f"{t.duration // 60}:{t.duration % 60:02d}" if t.duration else "—"
+                            tree.item(iid, values=("✓" if state else "", str(t.track_number or int(iid) + 1), t.title, dur_txt))
+                        update_count()
+
+                    ttk.Button(toolbar, text="Marcar Todas", command=lambda: set_all(True)).pack(side="left", padx=(0, 4))
+                    ttk.Button(toolbar, text="Desmarcar Todas", command=lambda: set_all(False)).pack(side="left", padx=(0, 8))
+
+                    def download_selected():
+                        selected_urls = [data["track"].page_url for data in track_states.values() if data["enabled"]]
+                        if not selected_urls:
+                            messagebox.showwarning("Seleção", "Marque pelo menos uma faixa para baixar.", parent=dialog)
+                            return
+                        dialog.destroy()
+                        self._apply_work_mode("music", initial=True)
+                        self._prepare_sources(selected_urls, True)
+
+                    ttk.Button(toolbar, text="⚡ Baixar Selecionadas", style="Accent.TButton", command=download_selected).pack(side="right")
+                    ttk.Button(toolbar, text="Fechar", command=dialog.destroy).pack(side="right", padx=(0, 6))
+
+                dialog.after_idle(setup_ui)
+            except Exception as exc:
+                def show_err():
+                    loading.configure(text=f"Erro ao carregar faixas do álbum:\n{exc}", foreground="#ef4444")
+                dialog.after_idle(show_err)
+
+        threading.Thread(target=worker, daemon=True).start()
+
 
     def _build_music_details(self, parent) -> None:
         self.music_detail_frame = ttk.LabelFrame(parent, text="Detalhes da música", padding=10)
@@ -3279,6 +4094,9 @@ class DownloadApp(QueueUI):
             text = self.root.clipboard_get().strip()
             if text:
                 self.deezer_arl_var.set(text)
+                self._save_preferences()
+                if hasattr(self, "_settings_snapshot"):
+                    self._settings_snapshot["deezer_arl_var"] = text
                 self._check_deezer_arl(show_dialog=False)
         except Exception:
             pass
@@ -3295,6 +4113,8 @@ class DownloadApp(QueueUI):
         self.deezer_arl_var.set("")
         self.deezer_status_var.set("● Não autenticado (baixando prévias de 30s)")
         self._save_preferences()
+        if hasattr(self, "_settings_snapshot"):
+            self._settings_snapshot["deezer_arl_var"] = ""
 
     def _selected_deezer_quality(self) -> str:
         choice = self.deezer_quality_var.get().strip().lower()
@@ -3311,6 +4131,8 @@ class DownloadApp(QueueUI):
         if not arl:
             self.deezer_status_var.set("● Não autenticado (baixando prévias de 30s)")
             self._save_preferences()
+            if hasattr(self, "_settings_snapshot"):
+                self._settings_snapshot["deezer_arl_var"] = ""
             if show_dialog:
                 messagebox.showinfo(
                     APP_NAME,
@@ -3318,6 +4140,10 @@ class DownloadApp(QueueUI):
                     "O aplicativo continuará funcionando normalmente com as prévias oficiais de 30s.",
                 )
             return
+
+        self._save_preferences()
+        if hasattr(self, "_settings_snapshot"):
+            self._settings_snapshot["deezer_arl_var"] = arl
 
         self.deezer_status_var.set("● Verificando credenciais na Deezer...")
 
@@ -3339,6 +4165,8 @@ class DownloadApp(QueueUI):
                 if info.get("valid"):
                     self.deezer_status_var.set(f"● Conectado: {info['user_name']} ({info['plan']})")
                     self._save_preferences()
+                    if hasattr(self, "_settings_snapshot"):
+                        self._settings_snapshot["deezer_arl_var"] = arl
                     if show_dialog:
                         messagebox.showinfo(
                             APP_NAME,

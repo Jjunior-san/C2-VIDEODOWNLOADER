@@ -176,8 +176,32 @@ def _write_mp3_metadata(path: Path, frames: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def save_track_lyrics(path: Path, item: dict, logger=None) -> Path | None:
+    """Fetch and save synchronized lyrics (.lrc) alongside the audio file."""
+    try:
+        from deezer_catalog import fetch_track_lyrics
+        media_id = item.get("media_id") or ""
+        artist = str(item.get("artist") or "")
+        title = str(item.get("track_title") or item.get("title") or "")
+        album = str(item.get("album") or item.get("collection_title") or "")
+
+        lyrics_data = fetch_track_lyrics(media_id, artist=artist, title=title, album=album)
+        synced = lyrics_data.get("synced")
+        if synced:
+            lrc_path = path.with_suffix(".lrc")
+            lrc_path.write_text(synced, encoding="utf-8")
+            if logger:
+                source_label = "Deezer" if lyrics_data.get("source") == "deezer" else "LRCLIB"
+                logger(f"Letras sincronizadas ({source_label}) salvas: {lrc_path.name}")
+            return lrc_path
+    except Exception as exc:
+        if logger:
+            logger(f"Aviso: não foi possível obter letras sincronizadas ({exc}).")
+    return None
+
+
 def apply_deezer_metadata(path: Path, item: dict, logger=None) -> None:
-    """Attach metadata and cover to an audio file (MP3 or FLAC)."""
+    """Attach metadata and cover to an audio file (MP3 or FLAC) and save lyrics."""
     if not path.is_file():
         return
     suffix = path.suffix.lower()
@@ -190,17 +214,18 @@ def apply_deezer_metadata(path: Path, item: dict, logger=None) -> None:
             write_audio_metadata(path, item)
             if logger:
                 logger(f"Metadados FLAC e capa aplicados: {path.name}")
-            return
         except Exception as exc:
             if logger:
                 logger(f"Aviso: falha ao gravar tags FLAC ({exc}).")
-            return
+        save_track_lyrics(path, item, logger)
+        return
 
     # For MP3: attempt EasyMutagen / ID3 first
     try:
         write_audio_metadata(path, item)
         if logger:
             logger(f"Metadados e capa aplicados: {path.name}")
+        save_track_lyrics(path, item, logger)
         return
     except Exception:
         pass
@@ -223,6 +248,8 @@ def apply_deezer_metadata(path: Path, item: dict, logger=None) -> None:
     _write_mp3_metadata(path, frames)
     if logger:
         logger(f"Metadados e capa aplicados: {path.name}")
+    save_track_lyrics(path, item, logger)
+
 
 
 def cover_bytes_for_item(item: dict) -> bytes | None:

@@ -16,6 +16,9 @@ hiddenimports = [
     'Crypto.Hash.MD5',
     'vlc',
     'spotify_catalog',
+    'lyrics_service',
+    'lyrics_ui',
+    'mini_player_ui',
 ]
 
 a = Analysis(

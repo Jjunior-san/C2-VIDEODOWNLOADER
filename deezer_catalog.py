@@ -448,3 +448,234 @@ def get_album_tracks(album_id: str) -> tuple[DeezerTrack, ...]:
     if not isinstance(tracks_page, dict):
         raise DeezerCatalogError("A Deezer não informou as faixas deste álbum.")
     return _paged_tracks(tracks_page, album_fallback=payload)
+
+
+def get_deezer_top_brasil(limit: int = 50) -> tuple[DeezerTrack, ...]:
+    """Fetch the official Deezer Top Brasil tracks."""
+    limit = min(100, max(1, int(limit)))
+    try:
+        payload = _api_json(f"{API_ROOT}/playlist/1111141961/tracks?limit={limit}")
+        tracks = _paged_tracks(payload)
+        if tracks:
+            return tracks[:limit]
+    except Exception:
+        pass
+    # Fallback to general charts if playlist is temporarily unavailable
+    payload = _api_json(f"{API_ROOT}/chart/0/tracks?limit={limit}")
+    return _paged_tracks(payload)[:limit]
+
+
+def get_deezer_top_global(limit: int = 50) -> tuple[DeezerTrack, ...]:
+    """Fetch the official Deezer Global Top tracks."""
+    limit = min(100, max(1, int(limit)))
+    payload = _api_json(f"{API_ROOT}/chart/0/tracks?limit={limit}")
+    return _paged_tracks(payload)[:limit]
+
+
+def get_deezer_user_favorites(arl: str, limit: int = 100) -> tuple[DeezerTrack, ...]:
+    """Fetch user's loved tracks using their authenticated ARL session."""
+    clean_arl = str(arl or "").strip()
+    if not clean_arl:
+        raise DeezerCatalogError("Nenhum cookie ARL configurado para carregar favoritos.")
+    try:
+        from deezer_auth import validate_deezer_arl
+        account = validate_deezer_arl(clean_arl)
+        if not account.get("valid") or not account.get("user_id"):
+            raise DeezerCatalogError(account.get("error") or "ARL inválido ou não autenticado.")
+        user_id = account["user_id"]
+    except Exception as exc:
+        raise DeezerCatalogError(f"Falha ao validar conta Deezer: {exc}") from exc
+
+    limit = min(300, max(1, int(limit)))
+    payload = _api_json(f"{API_ROOT}/user/{user_id}/tracks?limit={limit}")
+    tracks = _paged_tracks(payload)
+    if not tracks:
+        raise DeezerCatalogError("Nenhuma música favorita encontrada nesta conta.")
+    return tracks[:limit]
+
+
+def analyze_deezer_metadata(url_or_id: str) -> dict:
+    """Analyze Deezer URL or ID and return complete metadata (like deemix Link Analyzer)."""
+    raw = str(url_or_id or "").strip()
+    parsed = parse_deezer_url(raw)
+    if parsed:
+        kind, item_id = parsed
+    elif raw.isdigit():
+        kind, item_id = "track", raw
+    else:
+        raise DeezerCatalogError("Endereço ou identificador Deezer não reconhecido.")
+
+    result: dict = {
+        "kind": kind,
+        "id": item_id,
+        "title": "",
+        "artist": "",
+        "album": "",
+        "cover_url": None,
+        "isrc": None,
+        "upc": None,
+        "duration": None,
+        "duration_formatted": "—",
+        "bpm": None,
+        "release_date": None,
+        "label": None,
+        "genres": None,
+        "track_position": None,
+        "disk_number": None,
+        "explicit": False,
+        "readable": None,
+        "available_countries_count": None,
+        "page_url": f"https://www.deezer.com/{kind}/{item_id}",
+    }
+
+    if kind == "track":
+        track_data = _api_json(f"{API_ROOT}/track/{item_id}")
+        result["title"] = str(track_data.get("title") or track_data.get("title_short") or "")
+        artist_obj = track_data.get("artist") if isinstance(track_data.get("artist"), dict) else {}
+        album_obj = track_data.get("album") if isinstance(track_data.get("album"), dict) else {}
+        result["artist"] = str(artist_obj.get("name") or "")
+        result["album"] = str(album_obj.get("title") or "")
+        result["cover_url"] = _catalog_cover(album_obj, "cover_xl", "cover_big", "cover_medium")
+        result["isrc"] = track_data.get("isrc")
+        dur = _positive_int(track_data.get("duration"))
+        if dur:
+            result["duration"] = dur
+            result["duration_formatted"] = f"{dur // 60}:{dur % 60:02d}"
+        result["bpm"] = track_data.get("bpm")
+        result["release_date"] = track_data.get("release_date")
+        result["track_position"] = track_data.get("track_position")
+        result["disk_number"] = track_data.get("disk_number")
+        result["explicit"] = bool(track_data.get("explicit_lyrics"))
+        result["readable"] = track_data.get("readable")
+        countries = track_data.get("available_countries")
+        if isinstance(countries, list):
+            result["available_countries_count"] = len(countries)
+
+        # Retrieve UPC and label from album if album_id is available
+        alb_id = album_obj.get("id")
+        if alb_id and str(alb_id).isdigit():
+            try:
+                alb_data = _api_json(f"{API_ROOT}/album/{alb_id}")
+                result["upc"] = alb_data.get("upc")
+                result["label"] = alb_data.get("label")
+                genres_obj = alb_data.get("genres", {}).get("data", [])
+                if isinstance(genres_obj, list) and genres_obj:
+                    result["genres"] = ", ".join(g.get("name") for g in genres_obj if g.get("name"))
+            except Exception:
+                pass
+    elif kind == "album":
+        alb_data = _api_json(f"{API_ROOT}/album/{item_id}")
+        result["title"] = str(alb_data.get("title") or "")
+        artist_obj = alb_data.get("artist") if isinstance(alb_data.get("artist"), dict) else {}
+        result["artist"] = str(artist_obj.get("name") or "")
+        result["album"] = result["title"]
+        result["cover_url"] = _catalog_cover(alb_data, "cover_xl", "cover_big", "cover_medium")
+        result["upc"] = alb_data.get("upc")
+        result["label"] = alb_data.get("label")
+        result["release_date"] = alb_data.get("release_date")
+        result["explicit"] = bool(alb_data.get("explicit_lyrics"))
+        dur = _positive_int(alb_data.get("duration"))
+        if dur:
+            result["duration"] = dur
+            result["duration_formatted"] = f"{dur // 60}:{dur % 60:02d}"
+        genres_obj = alb_data.get("genres", {}).get("data", [])
+        if isinstance(genres_obj, list) and genres_obj:
+            result["genres"] = ", ".join(g.get("name") for g in genres_obj if g.get("name"))
+        result["track_position"] = alb_data.get("nb_tracks")
+        countries = alb_data.get("available_countries")
+        if isinstance(countries, list):
+            result["available_countries_count"] = len(countries)
+    elif kind == "artist":
+        art_data = _api_json(f"{API_ROOT}/artist/{item_id}")
+        result["title"] = str(art_data.get("name") or "")
+        result["artist"] = result["title"]
+        result["cover_url"] = _catalog_cover(art_data, "picture_xl", "picture_big", "picture_medium")
+        result["track_position"] = art_data.get("nb_album")
+    elif kind == "playlist":
+        play_data = _api_json(f"{API_ROOT}/playlist/{item_id}")
+        result["title"] = str(play_data.get("title") or "")
+        user_obj = play_data.get("creator") if isinstance(play_data.get("creator"), dict) else {}
+        result["artist"] = str(user_obj.get("name") or "")
+        result["cover_url"] = _catalog_cover(play_data, "picture_xl", "picture_big", "picture_medium")
+        result["track_position"] = play_data.get("nb_tracks")
+
+    return result
+
+
+def fetch_track_lyrics(
+    track_id: str | int = "",
+    artist: str = "",
+    title: str = "",
+    album: str = "",
+    session: requests.Session | None = None,
+) -> dict:
+    """Fetch synchronized and plain lyrics using Deezer gw-light API and LRCLIB fallback."""
+    lyrics_res = {"synced": None, "unsynced": None, "source": None}
+    sess = session or _http_session()
+
+    # 1. Attempt Deezer internal gw-light API if track_id is available
+    tid = str(track_id or "").strip()
+    if tid.isdigit():
+        try:
+            ud_resp = sess.get(
+                "https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&input=3&api_version=1.0&api_token=",
+                timeout=6,
+            )
+            if ud_resp.status_code == 200:
+                ud_data = ud_resp.json()
+                token = ud_data.get("results", {}).get("checkForm")
+                if token:
+                    lyr_resp = sess.post(
+                        f"https://www.deezer.com/ajax/gw-light.php?method=song.getLyrics&api_version=1.0&api_token={token}&input=3",
+                        json={"SNG_ID": tid},
+                        timeout=8,
+                    )
+                    if lyr_resp.status_code == 200:
+                        results = lyr_resp.json().get("results") or {}
+                        if isinstance(results, dict) and results:
+                            unsync = results.get("LYRICS_TEXT")
+                            sync_json = results.get("LYRICS_SYNC_JSON")
+                            if sync_json and isinstance(sync_json, list):
+                                lrc_lines = []
+                                for item in sync_json:
+                                    ts = item.get("lrc_timestamp") or ""
+                                    line = str(item.get("line") or "").strip()
+                                    if ts:
+                                        lrc_lines.append(f"{ts} {line}" if line else ts)
+                                if lrc_lines:
+                                    lyrics_res["synced"] = "\n".join(lrc_lines) + "\n"
+                            if unsync:
+                                lyrics_res["unsynced"] = str(unsync)
+                            if lyrics_res["synced"] or lyrics_res["unsynced"]:
+                                lyrics_res["source"] = "deezer"
+                                return lyrics_res
+        except Exception:
+            pass
+
+    # 2. Fallback to LRCLIB (open-source synchronized lyrics database)
+    clean_artist = str(artist or "").strip()
+    clean_title = str(title or "").strip()
+    if clean_artist and clean_title:
+        try:
+            params = {"artist_name": clean_artist, "track_name": clean_title}
+            if album:
+                params["album_name"] = str(album).strip()
+            resp = sess.get("https://lrclib.net/api/get", params=params, timeout=7)
+            if resp.status_code == 200:
+                data = resp.json()
+                synced = data.get("syncedLyrics")
+                plain = data.get("plainLyrics")
+                if synced:
+                    lyrics_res["synced"] = synced
+                    lyrics_res["source"] = "lrclib"
+                if plain:
+                    lyrics_res["unsynced"] = plain
+                    if not lyrics_res["source"]:
+                        lyrics_res["source"] = "lrclib"
+                if lyrics_res["synced"] or lyrics_res["unsynced"]:
+                    return lyrics_res
+        except Exception:
+            pass
+
+    return lyrics_res
+

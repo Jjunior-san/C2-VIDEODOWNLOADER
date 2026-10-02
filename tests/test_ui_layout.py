@@ -373,3 +373,17 @@ def test_prepared_queue_stays_on_current_work_tab(window):
     instance._queue_prepared(False)
 
     assert instance.tabs.select() == str(instance.music_page)
+
+
+def test_format_quality_badge():
+    from ui_layout import format_quality_badge
+
+    assert "FLAC" in format_quality_badge("FLAC (Sem perdas)")
+    assert "320k" in format_quality_badge("320 kbps (Alta fidelidade)")
+    assert "128k" in format_quality_badge("128 kbps")
+    assert "4K" in format_quality_badge("2160p (4K UHD)")
+    assert "1080p" in format_quality_badge("1080p (Full HD)")
+    assert "720p" in format_quality_badge("720p (HD)")
+    assert format_quality_badge("") == "—"
+    assert format_quality_badge(None) == "—"
+

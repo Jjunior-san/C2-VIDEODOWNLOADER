@@ -4,13 +4,14 @@ import csv
 import os
 import threading
 from pathlib import Path
-from tkinter import END, StringVar, filedialog, messagebox, ttk
+from tkinter import END, Menu, StringVar, filedialog, messagebox, ttk
 
 from audio_library import AUDIO_AUTO_BITRATE, bitrate_from_options, is_audio_format
 from download_control import DownloadCancelled, DownloadControl
 from download_queue import ACTIVE, LABELS, RUNNABLE, queue_summary
 from queue_service import discover, run_queue
-from ui_layout import add_tooltip, configure_treeview_status_tags
+from ui_layout import add_tooltip, configure_treeview_status_tags, format_quality_badge
+
 
 
 def queue_options_compatible(current: dict, saved: dict) -> bool:
@@ -24,7 +25,7 @@ def queue_options_compatible(current: dict, saved: dict) -> bool:
         keys.update({
             "music_folder", "music_format", "audio_bitrate_mode",
             "audio_custom_bitrate", "music_structure", "music_filename_template",
-            "deezer_arl", "deezer_quality", "create_collection_zip",
+            "deezer_quality", "create_collection_zip",
         })
     else:
         keys.update({"video_folder", "video_format"})
@@ -83,6 +84,7 @@ class QueueUI:
         self.episode_tree.configure(yscrollcommand=ybar.set, xscrollcommand=xbar.set)
         configure_treeview_status_tags(self.episode_tree)
         self.episode_tree.bind("<Button-1>", self._click_episode)
+        self.episode_tree.bind("<Button-3>", self._context_menu_queue)
         self.episode_tree.bind("<space>", self._toggle_selected)
         self.episode_tree.bind("<<TreeviewSelect>>", self._show_episode_details)
         self.episode_details = ttk.Label(parent, text="", width=1, wraplength=600, foreground="#596579")
@@ -149,6 +151,7 @@ class QueueUI:
         configure_treeview_status_tags(self.completed_tree)
         self.completed_tree.bind("<<TreeviewSelect>>", self._show_completed_details)
         self.completed_tree.bind("<Double-1>", lambda _e: self.open_completed_file())
+        self.completed_tree.bind("<Button-3>", self._context_menu_completed)
         actions = ttk.Frame(parent)
         actions.pack(fill="x", pady=(0, 8))
         self.clear_completed_button = ttk.Button(
@@ -269,8 +272,11 @@ class QueueUI:
                     self.music_structure_var.set(options.get("music_structure", "Artista\\Álbum"))
                 if hasattr(self, "music_filename_var"):
                     self.music_filename_var.set(options.get("music_filename_template", "{faixa:02} - {titulo}"))
-                if hasattr(self, "deezer_arl_var") and "deezer_arl" in options:
-                    self.deezer_arl_var.set(options.get("deezer_arl", ""))
+                if hasattr(self, "deezer_arl_var"):
+                    saved_arl = str(options.get("deezer_arl") or "").strip()
+                    current_arl = str(self.deezer_arl_var.get() or "").strip()
+                    if not current_arl and saved_arl:
+                        self.deezer_arl_var.set(saved_arl)
                 if hasattr(self, "deezer_quality_var") and "deezer_quality" in options:
                     self.deezer_quality_var.set(options.get("deezer_quality", "Automática (melhor da conta)"))
                 if hasattr(self, "create_zip_var") and "create_collection_zip" in options:
@@ -309,7 +315,8 @@ class QueueUI:
 
         existing = set(self.episode_tree.get_children())
         for item in displayed_active:
-            values = ("✓" if item["enabled"] else "", item["title"], item.get("quality", "A definir"),
+            q_badge = format_quality_badge(item.get("quality", "A definir"))
+            values = ("✓" if item["enabled"] else "", item["title"], q_badge,
                       LABELS[item["status"]], "—")
             tag = item["status"]
             if item["id"] in existing:
@@ -336,7 +343,8 @@ class QueueUI:
         for item in displayed_completed:
             files = item.get("files", [])
             saved_file = Path(files[0]).name if files else "Arquivo não informado"
-            values = (item["title"], item.get("quality", "A definir"), saved_file)
+            q_badge = format_quality_badge(item.get("quality", "A definir"))
+            values = (item["title"], q_badge, saved_file)
             if item["id"] in existing_completed:
                 self.completed_tree.item(item["id"], values=values, tags=("completed",))
                 existing_completed.remove(item["id"])
@@ -877,7 +885,11 @@ class QueueUI:
         if not any(item["enabled"] and item["status"] in RUNNABLE for item in job["items"]):
             messagebox.showinfo("Fila de downloads", "Marque vídeos pendentes ou use Repetir falhas. Os concluídos não serão baixados novamente.")
             return
-        options = job["options"]
+        options = dict(job["options"])
+        if hasattr(self, "deezer_arl_var"):
+            current_arl = str(self.deezer_arl_var.get() or "").strip()
+            if current_arl:
+                options["deezer_arl"] = current_arl
         try:
             if is_audio_format(options["format"]):
                 bitrate_from_options(options)
@@ -913,3 +925,51 @@ class QueueUI:
                 self.queue_log(f"Não foi possível iniciar a fila: {exc}")
                 self.event_queue.put(("download_finished", {"failures": 1, "completed": 0, "stopped": True}))
         threading.Thread(target=worker, daemon=True).start()
+
+    def _context_menu_queue(self, event):
+        item_id = self.episode_tree.identify_row(event.y)
+        if not item_id:
+            return
+        if item_id not in self.episode_tree.selection():
+            self.episode_tree.selection_set(item_id)
+        self._show_episode_details()
+
+        menu = Menu(self.episode_tree, tearoff=0)
+        menu.add_command(label="🔁 Repetir falhas / selecionados", command=self.retry_failed)
+        menu.add_command(label="❌ Remover da fila", command=self.remove_queue_selected)
+        menu.add_command(label="🚫 Cancelar selecionados", command=self.cancel_selected)
+        menu.add_separator()
+        item = next((it for it in self.queue_items if it.get("id") == item_id), None)
+        if item and item.get("source"):
+            src = str(item["source"])
+            menu.add_command(
+                label="📋 Copiar link da mídia",
+                command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(src)),
+            )
+        menu.add_command(label="📁 Abrir pasta de downloads", command=self.open_download_folder)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _context_menu_completed(self, event):
+        item_id = self.completed_tree.identify_row(event.y)
+        if not item_id:
+            return
+        if item_id not in self.completed_tree.selection():
+            self.completed_tree.selection_set(item_id)
+        self._show_completed_details()
+
+        menu = Menu(self.completed_tree, tearoff=0)
+        menu.add_command(label="▶ Reproduzir mídia", command=self.play_completed_media)
+        menu.add_command(label="📁 Abrir arquivo", command=self.open_completed_file)
+        menu.add_command(label="📋 Copiar caminho", command=self.copy_completed_path)
+        menu.add_separator()
+        menu.add_command(label="✏️ Editar metadados", command=lambda: self.edit_selected_music_metadata(completed=True))
+        menu.add_command(label="🖼️ Alterar capa", command=lambda: self.change_selected_music_cover(completed=True))
+        menu.add_command(label="📂 Abrir pasta no Explorer", command=self.open_download_folder)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+

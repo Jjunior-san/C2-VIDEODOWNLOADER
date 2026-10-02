@@ -25,6 +25,23 @@ def configure_fonts(root):
     return text_family, display_family
 
 
+# Apple Music Design System & Color Palette
+APPLE_RED = "#fa233b"
+APPLE_RED_HOVER = "#e01a31"
+APPLE_RED_ACTIVE = "#c21327"
+APPLE_RED_SUBTLE = "#3b171e"
+APPLE_DARK_BG = "#161618"
+APPLE_SIDEBAR_BG = "#1c1c1e"
+APPLE_CARD_BG = "#242426"
+APPLE_CARD_BORDER = "#38383a"
+APPLE_TEXT_PRIMARY = "#f5f5f7"
+APPLE_TEXT_SECONDARY = "#8e8e93"
+APPLE_TEXT_MUTED = "#636366"
+APPLE_GREEN = "#30d158"
+APPLE_ORANGE = "#ff9f0a"
+APPLE_BLUE = "#0a84ff"
+
+
 def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.Style:
     style = ttk.Style(root)
     style.configure(".", font=(text_family, 10))
@@ -32,47 +49,126 @@ def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.
     style.configure("Treeview", font=(text_family, 10), rowheight=row_height)
     style.configure("Treeview.Heading", font=(text_family, 10, "bold"))
     
-    # Modern Accent Button (Primary action)
+    # Apple Music Signature Accent Button (Primary action - #fa233b)
     style.configure(
         "Accent.TButton",
         font=(text_family, 10, "bold"),
         foreground="#ffffff",
-        background="#2563eb",
+        background=APPLE_RED,
         padding=(10, 4),
     )
     style.map(
         "Accent.TButton",
-        background=[("pressed", "#1e40af"), ("active", "#1d4ed8"), ("disabled", "#94a3b8")],
+        background=[("pressed", APPLE_RED_ACTIVE), ("active", APPLE_RED_HOVER), ("disabled", "#94a3b8")],
         foreground=[("disabled", "#f1f5f9")],
     )
 
     # Standard Button
     style.configure("TButton", padding=(6, 3))
     
-    # Modern Notebook Tabs
+    # Apple Music Circular Play/Pause Button
+    style.configure(
+        "ApplePlay.TButton",
+        font=(text_family, 11, "bold"),
+        foreground="#ffffff",
+        background=APPLE_RED,
+        padding=(8, 4),
+    )
+    style.map(
+        "ApplePlay.TButton",
+        background=[("pressed", APPLE_RED_ACTIVE), ("active", APPLE_RED_HOVER)],
+    )
+
+    # Apple Music Sidebar Navigation Buttons
+    style.configure(
+        "Sidebar.TButton",
+        font=(text_family, 10),
+        anchor="w",
+        padding=(10, 6),
+    )
+    style.configure(
+        "ActiveSidebar.TButton",
+        font=(text_family, 10, "bold"),
+        foreground=APPLE_RED,
+        anchor="w",
+        padding=(10, 6),
+    )
+
+    # Modern Notebook Tabs with Apple Music Accent
     style.configure("TNotebook.Tab", font=(text_family, 10, "bold"), padding=[12, 6])
     style.map(
         "TNotebook.Tab",
-        foreground=[("selected", "#2563eb"), ("!selected", "#475569")],
+        foreground=[("selected", APPLE_RED), ("!selected", "#475569")],
     )
 
-    # Progressbar
-    style.configure("Horizontal.TProgressbar", thickness=12)
+    # Progressbar with Apple Accent
+    style.configure("Horizontal.TProgressbar", thickness=10)
+
+    # Success Button (Green action)
+    style.configure(
+        "Success.TButton",
+        font=(text_family, 10, "bold"),
+        foreground="#ffffff",
+        background="#10b981",
+        padding=(8, 3),
+    )
+    style.map(
+        "Success.TButton",
+        background=[("pressed", "#047857"), ("active", "#059669")],
+    )
     return style
+
+
+def format_quality_badge(quality: str) -> str:
+    """Format quality and resolution strings with Apple Music-inspired badges."""
+    raw = str(quality or "").strip()
+    if not raw or raw in {"—", "-", "A definir"}:
+        return "—"
+    low = raw.lower()
+
+    if "flac" in low or "lossless" in low:
+        return "💎 LOSSLESS (FLAC)"
+    if "320" in low:
+        return "⚡ 320k"
+    if "128" in low:
+        return "📱 128k"
+    if "2160" in low or "4k" in low:
+        return "🌟 4K UHD"
+    if "1440" in low or "2k" in low:
+        return "🎬 2K"
+    if "1080" in low:
+        return "🎬 1080p"
+    if "720" in low:
+        return "📱 720p"
+    if "480" in low:
+        return "⚡ 480p"
+    if "360" in low:
+        return "⚡ 360p"
+    if "m4a" in low or "aac" in low:
+        return "🎵 AAC/M4A"
+    if "mp3" in low:
+        return "🎵 MP3"
+    if "wav" in low:
+        return "🎙️ WAV"
+    return raw
 
 
 def configure_treeview_status_tags(tree) -> None:
     try:
-        tree.tag_configure("completed", foreground="#15803d")
-        tree.tag_configure("downloading", foreground="#1d4ed8")
-        tree.tag_configure("pending", foreground="#b45309")
-        tree.tag_configure("failed", foreground="#b91c1c")
-        tree.tag_configure("cancelled", foreground="#64748b")
-        tree.tag_configure("interrupted", foreground="#7c3aed")
-        tree.tag_configure("finalizing", foreground="#0891b2")
-        tree.tag_configure("skipped", foreground="#94a3b8")
+        tree.tag_configure("completed", foreground="#10b981")     # Apple Green
+        tree.tag_configure("downloading", foreground=APPLE_RED)   # Apple Music Red
+        tree.tag_configure("pending", foreground="#6366f1")       # Indigo
+        tree.tag_configure("failed", foreground="#ef4444")        # Crimson Red
+        tree.tag_configure("cancelled", foreground="#64748b")     # Slate Gray
+        tree.tag_configure("interrupted", foreground="#8b5cf6")   # Purple
+        tree.tag_configure("finalizing", foreground="#f59e0b")    # Amber / Gold
+        tree.tag_configure("converting", foreground="#f59e0b")    # Amber
+        tree.tag_configure("skipped", foreground="#94a3b8")       # Muted Gray
+        tree.tag_configure("partial_error", foreground="#f97316") # Orange
+        tree.tag_configure("with_errors", foreground="#f97316")   # Orange
     except Exception:
         pass
+
 
 
 def desktop_work_area(root) -> tuple[int, int, int, int]:

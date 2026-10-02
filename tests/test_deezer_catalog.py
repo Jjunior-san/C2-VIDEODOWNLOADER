@@ -376,3 +376,161 @@ def test_artist_url_resolves_top_tracks(monkeypatch):
     assert collection.title == "Daft Punk"
     assert collection.tracks[0].title == "Top Song"
 
+
+def test_get_deezer_top_brasil(monkeypatch):
+    def fake_api(url):
+        return {
+            "data": [{
+                "id": 555,
+                "title": "Hit Brasil",
+                "artist": {"name": "Artista BR"},
+                "album": {"cover_medium": "https://cdn/cover.jpg"},
+            }]
+        }
+    monkeypatch.setattr(deezer_catalog, "_api_json", fake_api)
+    results = deezer_catalog.get_deezer_top_brasil(limit=10)
+    assert len(results) == 1
+    assert results[0].track_id == "555"
+    assert results[0].title == "Hit Brasil"
+    assert results[0].artist == "Artista BR"
+
+
+def test_get_deezer_top_global(monkeypatch):
+    def fake_api(url):
+        return {
+            "data": [{
+                "id": 777,
+                "title": "Global Hit",
+                "artist": {"name": "Global Artist"},
+                "album": {"cover_medium": "https://cdn/cover.jpg"},
+            }]
+        }
+    monkeypatch.setattr(deezer_catalog, "_api_json", fake_api)
+    results = deezer_catalog.get_deezer_top_global(limit=10)
+    assert len(results) == 1
+    assert results[0].track_id == "777"
+    assert results[0].title == "Global Hit"
+
+
+def test_get_deezer_user_favorites(monkeypatch):
+    with pytest.raises(deezer_catalog.DeezerCatalogError):
+        deezer_catalog.get_deezer_user_favorites("", limit=10)
+
+    import deezer_auth
+    monkeypatch.setattr(deezer_auth, "validate_deezer_arl", lambda arl: {"valid": True, "user_id": "12345"})
+
+    def fake_api(url):
+        return {
+            "data": [{
+                "id": 999,
+                "title": "Fav Song",
+                "artist": {"name": "Fav Artist"},
+                "album": {"cover_medium": "https://cdn/cover.jpg"},
+            }]
+        }
+    monkeypatch.setattr(deezer_catalog, "_api_json", fake_api)
+    results = deezer_catalog.get_deezer_user_favorites("dummy_arl", limit=10)
+    assert len(results) == 1
+    assert results[0].track_id == "999"
+    assert results[0].title == "Fav Song"
+
+
+def test_analyze_deezer_metadata(monkeypatch):
+    def fake_api(url):
+        if "track/101" in url:
+            return {
+                "id": 101,
+                "title": "Track Title",
+                "artist": {"name": "Artist A"},
+                "album": {"title": "Album B", "cover_xl": "https://cdn/xl.jpg", "label": "Record Label"},
+                "isrc": "BR1234567890",
+                "bpm": 128,
+                "duration": 210,
+                "release_date": "2023-01-01",
+                "readable": True,
+            }
+        return {}
+
+    monkeypatch.setattr(deezer_catalog, "_api_json", fake_api)
+    analysis = deezer_catalog.analyze_deezer_metadata("https://www.deezer.com/track/101")
+    assert analysis["kind"] == "track"
+    assert analysis["isrc"] == "BR1234567890"
+    assert analysis["bpm"] == 128
+    assert analysis["duration"] == 210
+    assert analysis["duration_formatted"] == "3:30"
+    assert analysis["readable"] is True
+
+
+def test_fetch_track_lyrics(monkeypatch):
+    class DummySession:
+        def get(self, url, **kwargs):
+            class Resp:
+                status_code = 200
+                def json(self):
+                    return {"results": {"checkForm": "token123"}}
+            return Resp()
+
+        def post(self, url, **kwargs):
+            class Resp:
+                status_code = 200
+                def json(self):
+                    return {
+                        "results": {
+                            "LYRICS_SYNC_JSON": [
+                                {"lrc_timestamp": "[00:10.50]", "line": "Primeira linha"},
+                                {"lrc_timestamp": "[00:20.00]", "line": "Segunda linha"},
+                            ],
+                            "LYRICS_TEXT": "Plain lyrics",
+                        }
+                    }
+            return Resp()
+
+    monkeypatch.setattr(deezer_catalog, "_http_session", lambda: DummySession())
+    lyrics = deezer_catalog.fetch_track_lyrics("101", "Artist", "Title", "Album")
+    assert "[00:10.50] Primeira linha" in lyrics["synced"]
+    assert lyrics["source"] == "deezer"
+
+    class FallbackSession:
+        def get(self, url, **kwargs):
+            class Resp:
+                status_code = 200
+                def json(self):
+                    if "lrclib.net" in url:
+                        return {"syncedLyrics": "[00:05.00] LRCLIB line"}
+                    return {}
+            return Resp()
+
+        def post(self, url, **kwargs):
+            class Resp:
+                status_code = 404
+            return Resp()
+
+    monkeypatch.setattr(deezer_catalog, "_http_session", lambda: FallbackSession())
+    lrc = deezer_catalog.fetch_track_lyrics("102", "Artist", "Title", "Album")
+    assert "[00:05.00] LRCLIB line" in lrc["synced"]
+    assert lrc["source"] == "lrclib"
+
+
+def test_save_track_lyrics(tmp_path, monkeypatch):
+    import audio_library
+    audio_file = tmp_path / "song.mp3"
+    audio_file.write_bytes(b"dummy audio")
+    item = {
+        "media_id": "123",
+        "artist": "Test Artist",
+        "track_title": "Test Title",
+        "album": "Test Album",
+    }
+    monkeypatch.setattr(
+        deezer_catalog,
+        "fetch_track_lyrics",
+        lambda track_id, artist, title, album: {"synced": "[00:01.00] Hello World\n", "unsynced": None, "source": "lrclib"}
+    )
+    saved_path = audio_library.save_track_lyrics(audio_file, item)
+    lrc_file = tmp_path / "song.lrc"
+    assert saved_path == lrc_file
+    assert lrc_file.exists()
+    assert "[00:01.00] Hello World" in lrc_file.read_text(encoding="utf-8")
+
+
+
