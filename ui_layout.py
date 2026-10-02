@@ -196,38 +196,60 @@ def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.
     return style
 
 
-def format_quality_badge(quality: str) -> str:
+def format_explicit_badge(explicit: bool = False) -> str:
+    """Return explicit badge icon if true."""
+    return "🅴" if explicit else ""
+
+
+def format_title_with_explicit(title: str, explicit: bool = False) -> str:
+    """Format title string, appending the explicit badge if flagged."""
+    clean = str(title or "").strip()
+    if not explicit or not clean:
+        return clean
+    if clean.endswith("🅴") or clean.endswith("[E]") or clean.endswith("🔞"):
+        return clean
+    return f"{clean} 🅴"
+
+
+def format_quality_badge(quality: str, explicit: bool = False) -> str:
     """Format quality and resolution strings with Apple Music-inspired badges."""
     raw = str(quality or "").strip()
     if not raw or raw in {"—", "-", "A definir"}:
-        return "—"
-    low = raw.lower()
+        base = "—"
+    else:
+        low = raw.lower()
+        if "flac" in low or "lossless" in low:
+            base = "💎 LOSSLESS (FLAC)"
+        elif "320" in low:
+            base = "⚡ 320k"
+        elif "128" in low:
+            base = "📱 128k"
+        elif "2160" in low or "4k" in low:
+            base = "🌟 4K UHD"
+        elif "1440" in low or "2k" in low:
+            base = "🎬 2K"
+        elif "1080" in low:
+            base = "🎬 1080p"
+        elif "720" in low:
+            base = "📱 720p"
+        elif "480" in low:
+            base = "⚡ 480p"
+        elif "360" in low:
+            base = "⚡ 360p"
+        elif "m4a" in low or "aac" in low:
+            base = "🎵 AAC/M4A"
+        elif "mp3" in low:
+            base = "🎵 MP3"
+        elif "wav" in low:
+            base = "🎙️ WAV"
+        else:
+            base = raw
 
-    if "flac" in low or "lossless" in low:
-        return "💎 LOSSLESS (FLAC)"
-    if "320" in low:
-        return "⚡ 320k"
-    if "128" in low:
-        return "📱 128k"
-    if "2160" in low or "4k" in low:
-        return "🌟 4K UHD"
-    if "1440" in low or "2k" in low:
-        return "🎬 2K"
-    if "1080" in low:
-        return "🎬 1080p"
-    if "720" in low:
-        return "📱 720p"
-    if "480" in low:
-        return "⚡ 480p"
-    if "360" in low:
-        return "⚡ 360p"
-    if "m4a" in low or "aac" in low:
-        return "🎵 AAC/M4A"
-    if "mp3" in low:
-        return "🎵 MP3"
-    if "wav" in low:
-        return "🎙️ WAV"
-    return raw
+    if explicit:
+        if base == "—":
+            return "🅴"
+        return f"{base} 🅴"
+    return base
 
 
 def configure_treeview_status_tags(tree) -> None:

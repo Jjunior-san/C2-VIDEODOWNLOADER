@@ -61,6 +61,7 @@ class SpotifyTrack:
     duration: int | None = None
     cover_url: str | None = None
     page_url: str = ""
+    explicit: bool = False
 
     @property
     def display_title(self) -> str:
@@ -172,6 +173,7 @@ def _resolve_with_ytdlp(url: str, engine_path: Path | None) -> SpotifyCollection
                         duration = None
                 cover = str(entry.get("thumbnail") or "")
                 page_url = str(entry.get("url") or entry.get("webpage_url") or f"https://open.spotify.com/track/{track_id}")
+                is_explicit = bool(entry.get("explicit") or entry.get("is_explicit"))
                 if track_title:
                     tracks.append(SpotifyTrack(
                         track_id=track_id,
@@ -181,6 +183,7 @@ def _resolve_with_ytdlp(url: str, engine_path: Path | None) -> SpotifyCollection
                         duration=duration,
                         cover_url=cover or None,
                         page_url=page_url,
+                        explicit=is_explicit,
                     ))
         elif data.get("title"):
             track_id = str(data.get("id") or "")
@@ -189,6 +192,7 @@ def _resolve_with_ytdlp(url: str, engine_path: Path | None) -> SpotifyCollection
             if " - " in track_title and not artist:
                 parts = track_title.split(" - ", 1)
                 artist, track_title = parts[0].strip(), parts[1].strip()
+            is_explicit = bool(data.get("explicit") or data.get("is_explicit"))
             tracks.append(SpotifyTrack(
                 track_id=track_id,
                 title=track_title,
@@ -197,6 +201,7 @@ def _resolve_with_ytdlp(url: str, engine_path: Path | None) -> SpotifyCollection
                 duration=int(data.get("duration")) if data.get("duration") else None,
                 cover_url=str(data.get("thumbnail") or "") or None,
                 page_url=str(data.get("webpage_url") or url),
+                explicit=is_explicit,
             ))
 
         if tracks:
@@ -258,12 +263,14 @@ def _resolve_with_embed(url: str, kind: str, identifier: str) -> SpotifyCollecti
         track_id = str(item.get("id") or item.get("uri") or "").split(":")[-1]
         duration_ms = item.get("duration") or item.get("duration_ms")
         duration = int(duration_ms) // 1000 if duration_ms else None
+        is_explicit = bool(item.get("isExplicit") or item.get("explicit"))
         tracks.append(SpotifyTrack(
             track_id=track_id or identifier,
             title=track_title,
             artist=artist,
             duration=duration,
             page_url=f"https://open.spotify.com/track/{track_id}" if track_id else url,
+            explicit=is_explicit,
         ))
 
     if not tracks:

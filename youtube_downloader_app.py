@@ -62,7 +62,9 @@ from ui_layout import (
     build_brand,
     configure_fonts,
     fit_window,
+    format_explicit_badge,
     format_quality_badge,
+    format_title_with_explicit,
     wrapping_label,
 )
 from download_queue import QueueRepository, queue_summary
@@ -2619,15 +2621,17 @@ class DownloadApp(QueueUI):
             title = self.music_player.track_title
             artist = self.music_player.track_artist
             album = self.music_player.track_album
-            if title and artist:
-                display_track = f"{title} • {artist}"
-            elif title:
-                display_track = title
+            explicit = getattr(self.music_player, "track_explicit", False)
+            title_display = format_title_with_explicit(title, explicit)
+            if title_display and artist:
+                display_track = f"{title_display} • {artist}"
+            elif title_display:
+                display_track = title_display
             else:
                 display_track = "Reproduzindo áudio"
             self.music_player_track_var.set(f"🎵 {display_track}")
 
-            self.bottom_track_var.set(title or "Reproduzindo áudio")
+            self.bottom_track_var.set(title_display or "Reproduzindo áudio")
             self.bottom_artist_var.set(f"{artist} — {album}" if album and artist else (artist or album or "C² Downloader"))
 
             # Quality & Format Badge
@@ -2636,23 +2640,27 @@ class DownloadApp(QueueUI):
             if current_src.startswith("deezer_full_"):
                 ext = Path(current_path).suffix.lower() if current_path else ""
                 if ext == ".flac":
-                    self.bottom_badge_var.set("💎 LOSSLESS (FLAC)")
+                    badge = "💎 LOSSLESS (FLAC)"
                 else:
-                    self.bottom_badge_var.set("⚡ FAIXA COMPLETA (320k)")
+                    badge = "⚡ FAIXA COMPLETA (320k)"
             elif current_path:
                 ext = Path(current_path).suffix.lower()
                 if ext == ".flac":
-                    self.bottom_badge_var.set("💎 LOSSLESS")
+                    badge = "💎 LOSSLESS"
                 elif ext == ".mp3":
-                    self.bottom_badge_var.set("⚡ 320k")
+                    badge = "⚡ 320k"
                 elif ext in {".m4a", ".aac"}:
-                    self.bottom_badge_var.set("🎵 AAC")
+                    badge = "🎵 AAC"
                 else:
-                    self.bottom_badge_var.set(ext.upper().replace(".", ""))
+                    badge = ext.upper().replace(".", "")
             elif is_public_deezer_preview(current_src):
-                self.bottom_badge_var.set("📱 PRÉVIA (30s)")
+                badge = "📱 PRÉVIA (30s)"
             else:
-                self.bottom_badge_var.set("")
+                badge = ""
+
+            if explicit:
+                badge = f"{badge} • 🔞 EXPLICIT" if badge else "🔞 EXPLICIT"
+            self.bottom_badge_var.set(badge)
 
             if paused:
                 self.music_player_status_var.set("Pausado")
@@ -2840,11 +2848,12 @@ class DownloadApp(QueueUI):
         for index, result in enumerate(results):
             if not isinstance(result, DeezerSearchResult):
                 continue
+            title_display = format_title_with_explicit(result.title, result.explicit)
             self.music_results_tree.insert(
                 "",
                 END,
                 iid=str(index),
-                values=(result.kind_label, result.title, result.subtitle),
+                values=(result.kind_label, title_display, result.subtitle),
             )
         count = len(results)
         elapsed = float(payload.get("elapsed") or 0.0)
@@ -2894,9 +2903,11 @@ class DownloadApp(QueueUI):
             self.catalog_open_button.configure(state="normal")
             return
 
-        self.catalog_title_var.set(result.title)
+        title_display = format_title_with_explicit(result.title, result.explicit)
+        self.catalog_title_var.set(title_display)
         self.catalog_subtitle_var.set(result.subtitle)
-        self.catalog_type_var.set(result.kind_label)
+        type_display = f"{result.kind_label} • 🔞 Explícito" if result.explicit else result.kind_label
+        self.catalog_type_var.set(type_display)
         self.catalog_load_button.configure(state="normal")
         self.catalog_download_button.configure(state="normal")
         self.catalog_open_button.configure(state="normal")
@@ -3020,11 +3031,12 @@ class DownloadApp(QueueUI):
         self._clear_music_search_results()
         self._music_search_results = list(prev_results)
         for index, result in enumerate(prev_results):
+            title_display = format_title_with_explicit(result.title, getattr(result, "explicit", False))
             self.music_results_tree.insert(
                 "",
                 END,
                 iid=str(index),
-                values=(result.kind_label, result.title, result.subtitle),
+                values=(result.kind_label, title_display, result.subtitle),
             )
         count = len(prev_results)
         self.music_search_status_var.set(f"Retornado a: {prev_title} ({count} resultados).")
@@ -3155,6 +3167,7 @@ class DownloadApp(QueueUI):
                         page_url=t.page_url,
                         album_id=album_id,
                         album_title=album_title,
+                        explicit=t.explicit,
                     ) for t in tracks
                 )
                 self.event_queue.put(("music_drill_results", (f"Álbum: {album_title}", results, "")))
@@ -3178,6 +3191,7 @@ class DownloadApp(QueueUI):
                         subtitle=f"{artist_name} • {t.album}",
                         cover_url=t.cover_url,
                         page_url=t.page_url,
+                        explicit=t.explicit,
                     ) for t in tracks
                 )
                 self.event_queue.put(("music_drill_results", (f"Top: {artist_name}", results, "")))
@@ -3237,11 +3251,12 @@ class DownloadApp(QueueUI):
             return
         self._music_search_results = list(results)
         for index, result in enumerate(results):
+            title_display = format_title_with_explicit(result.title, result.explicit)
             self.music_results_tree.insert(
                 "",
                 END,
                 iid=str(index),
-                values=(result.kind_label, result.title, result.subtitle),
+                values=(result.kind_label, title_display, result.subtitle),
             )
         count = len(results)
         self.music_search_status_var.set(f"{title} • {count} item(ns). Duplo clique ou Baixar.")
@@ -3286,6 +3301,7 @@ class DownloadApp(QueueUI):
                         subtitle=f"{t.artist} • {t.album}",
                         cover_url=t.cover_url,
                         page_url=t.page_url,
+                        explicit=t.explicit,
                     ) for t in tracks
                 )
                 self.event_queue.put(("music_drill_results", ("🔥 Top Brasil", results, "")))
@@ -3309,6 +3325,7 @@ class DownloadApp(QueueUI):
                         subtitle=f"{t.artist} • {t.album}",
                         cover_url=t.cover_url,
                         page_url=t.page_url,
+                        explicit=t.explicit,
                     ) for t in tracks
                 )
                 self.event_queue.put(("music_drill_results", ("🌍 Top Global", results, "")))
@@ -3339,6 +3356,7 @@ class DownloadApp(QueueUI):
                         subtitle=f"{t.artist} • {t.album}",
                         cover_url=t.cover_url,
                         page_url=t.page_url,
+                        explicit=t.explicit,
                     ) for t in tracks
                 )
                 self.event_queue.put(("music_drill_results", ("⭐ Meus Favoritos", results, "")))
@@ -3689,10 +3707,14 @@ class DownloadApp(QueueUI):
         self.current_music_item_id = item.get("id")
         if not self.music_detail_frame.winfo_manager():
             self.music_detail_frame.pack(fill="x", pady=(8, 0))
-        self.music_title_var.set(str(item.get("track_title") or item.get("title") or "Música"))
+        title_base = str(item.get("track_title") or item.get("title") or "Música")
+        explicit = bool(item.get("explicit"))
+        self.music_title_var.set(format_title_with_explicit(title_base, explicit))
         self.music_artist_var.set(f"Artista: {item.get('artist') or 'Não informado'}")
         self.music_album_var.set(f"Álbum: {item.get('album') or 'Não informado'}")
         extras = []
+        if explicit:
+            extras.append("🔞 Explícito")
         if item.get("track_number"):
             extras.append(f"Faixa {item.get('track_number')}")
         if item.get("disc_number"):
@@ -3765,12 +3787,14 @@ class DownloadApp(QueueUI):
                 title = str(item_copy.get("track_title") or item_copy.get("title") or "")
                 artist = str(item_copy.get("artist") or "")
                 album = str(item_copy.get("album") or "")
+                explicit = bool(item_copy.get("explicit"))
                 if local is not None:
                     mode = self.music_player.play_file(
                         local,
                         title=title or local.stem,
                         artist=artist,
                         album=album,
+                        explicit=explicit,
                     )
                     message = "Reproduzindo arquivo local." if mode == "internal" else "Áudio aberto no player padrão do Windows."
                 else:
@@ -3783,6 +3807,7 @@ class DownloadApp(QueueUI):
                         artist=artist or track.artist,
                         album=album or track.album,
                         duration=track.duration or 30.0,
+                        explicit=track.explicit or explicit,
                     )
                     message = "Reproduzindo a prévia pública da Deezer."
                 self._playing_item_id = item_id
@@ -3829,6 +3854,7 @@ class DownloadApp(QueueUI):
             try:
                 track = resolve_deezer_track(result.item_id)
                 played_full = False
+                track_explicit = getattr(track, "explicit", False) or getattr(result, "explicit", False)
                 if arl:
                     try:
                         self.event_queue.put(("music_player_status", f"Baixando faixa completa: {result.title}..."))
@@ -3841,6 +3867,7 @@ class DownloadApp(QueueUI):
                             album=track.album,
                             duration=track.duration or 0.0,
                             quality_preference=pref_qual,
+                            explicit=track_explicit,
                         )
                         played_full = True
                     except Exception:
@@ -3855,6 +3882,7 @@ class DownloadApp(QueueUI):
                         artist=result.subtitle,
                         album=track.album,
                         duration=track.duration or 30.0,
+                        explicit=track_explicit,
                     )
 
                 self._playing_item_id = catalog_id
@@ -3948,6 +3976,12 @@ class DownloadApp(QueueUI):
             variable = StringVar(value=str(value or ""))
             variables[key] = variable
             ttk.Entry(body, textvariable=variable, width=42).grid(row=row, column=1, sticky="ew", pady=4)
+        explicit_var = BooleanVar(value=bool(item.get("explicit")))
+        ttk.Checkbutton(
+            body,
+            text="Conteúdo Explícito (Explicit 🅴)",
+            variable=explicit_var,
+        ).grid(row=len(fields), column=1, sticky="w", pady=4)
         body.columnconfigure(1, weight=1)
 
         def save():
@@ -3958,6 +3992,7 @@ class DownloadApp(QueueUI):
             title = changes["track_title"] or str(item.get("track_title") or item.get("title") or "Música")
             artist = changes["artist"]
             changes["title"] = f"{artist} - {title} (prévia Deezer)" if artist else f"{title} (prévia Deezer)"
+            changes["explicit"] = explicit_var.get()
             try:
                 self.queue_repository.update(item["id"], **changes)
                 merged = dict(item)
@@ -3973,7 +4008,7 @@ class DownloadApp(QueueUI):
                 messagebox.showerror(APP_NAME, f"Não foi possível salvar os metadados:\n{exc}", parent=dialog)
 
         buttons = ttk.Frame(body)
-        buttons.grid(row=len(fields), column=0, columnspan=2, sticky="e", pady=(10, 0))
+        buttons.grid(row=len(fields) + 1, column=0, columnspan=2, sticky="e", pady=(10, 0))
         ttk.Button(buttons, text="Cancelar", command=dialog.destroy).pack(side="right")
         ttk.Button(buttons, text="Salvar", command=save).pack(side="right", padx=(0, 6))
 

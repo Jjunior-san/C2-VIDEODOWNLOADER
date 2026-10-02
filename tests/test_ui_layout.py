@@ -376,7 +376,7 @@ def test_prepared_queue_stays_on_current_work_tab(window):
 
 
 def test_format_quality_badge():
-    from ui_layout import format_quality_badge
+    from ui_layout import format_explicit_badge, format_quality_badge, format_title_with_explicit
 
     assert "FLAC" in format_quality_badge("FLAC (Sem perdas)")
     assert "320k" in format_quality_badge("320 kbps (Alta fidelidade)")
@@ -386,4 +386,13 @@ def test_format_quality_badge():
     assert "720p" in format_quality_badge("720p (HD)")
     assert format_quality_badge("") == "—"
     assert format_quality_badge(None) == "—"
+
+    # Explicit badges
+    assert format_explicit_badge(True) == "🅴"
+    assert format_explicit_badge(False) == ""
+    assert format_title_with_explicit("Song Title", True) == "Song Title 🅴"
+    assert format_title_with_explicit("Song Title", False) == "Song Title"
+    assert format_title_with_explicit("Song Title 🅴", True) == "Song Title 🅴"
+    assert "🅴" in format_quality_badge("320 kbps", explicit=True)
+
 

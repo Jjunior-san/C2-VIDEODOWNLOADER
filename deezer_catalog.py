@@ -61,6 +61,7 @@ class DeezerTrack:
     release_year: str | None = None
     duration: int | None = None
     album_id: str | None = None
+    explicit: bool = False
 
     @property
     def page_url(self) -> str:
@@ -81,6 +82,7 @@ class DeezerSearchResult:
     page_url: str
     album_id: str | None = None
     album_title: str | None = None
+    explicit: bool = False
 
     @property
     def kind_label(self) -> str:
@@ -202,6 +204,12 @@ def _track_from_payload(payload: dict, *, album_fallback: dict | None = None) ->
     cover = str(album.get("cover_big") or fallback.get("cover_big") or "").strip() or None
     raw_album_id = str(album.get("id") or fallback.get("id") or "").strip()
     album_id = raw_album_id if raw_album_id.isdigit() else None
+    raw_explicit = (
+        payload.get("explicit_lyrics")
+        or payload.get("explicit_content_lyrics") in {1, True}
+        or fallback.get("explicit_lyrics")
+        or fallback.get("explicit_content_lyrics") in {1, True}
+    )
     return DeezerTrack(
         track_id=track_id,
         title=title,
@@ -214,6 +222,7 @@ def _track_from_payload(payload: dict, *, album_fallback: dict | None = None) ->
         release_year=release_date[:4] if re.fullmatch(r"\d{4}", release_date[:4]) else None,
         duration=_positive_int(payload.get("duration")),
         album_id=album_id,
+        explicit=bool(raw_explicit),
     )
 
 
@@ -322,6 +331,10 @@ def search_deezer_catalog(
 
         if not title:
             continue
+        explicit = bool(
+            entry.get("explicit_lyrics")
+            or entry.get("explicit_content_lyrics") in {1, True}
+        )
         results.append(DeezerSearchResult(
             kind=kind,
             item_id=item_id,
@@ -331,6 +344,7 @@ def search_deezer_catalog(
             page_url=f"https://www.deezer.com/{kind}/{item_id}",
             album_id=album_id,
             album_title=album_title,
+            explicit=explicit,
         ))
         if len(results) >= requested:
             break
@@ -444,6 +458,10 @@ def get_artist_albums(artist_id: str, limit: int = 50) -> tuple[DeezerSearchResu
         year = str(entry.get("release_date") or "")[:4]
         subtitle = f"Álbum • {year}" if year else "Álbum"
         cover = _catalog_cover(entry, "cover_medium", "cover_big", "cover")
+        explicit = bool(
+            entry.get("explicit_lyrics")
+            or entry.get("explicit_content_lyrics") in {1, True}
+        )
         results.append(DeezerSearchResult(
             kind="album",
             item_id=item_id,
@@ -453,6 +471,7 @@ def get_artist_albums(artist_id: str, limit: int = 50) -> tuple[DeezerSearchResu
             page_url=f"https://www.deezer.com/album/{item_id}",
             album_id=item_id,
             album_title=title,
+            explicit=explicit,
         ))
     return tuple(results)
 

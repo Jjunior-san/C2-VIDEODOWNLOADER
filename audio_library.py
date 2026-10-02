@@ -238,12 +238,17 @@ def apply_deezer_metadata(path: Path, item: dict, logger=None) -> None:
     year = str(item.get("release_year") or "")
     album_artist = str(item.get("album_artist") or artist)
     cover = cover_bytes_for_item(item)
+    txxx_frame = b""
+    if item.get("explicit"):
+        txxx_payload = b"\x00ITUNESADVISORY\x001"
+        txxx_frame = b"TXXX" + len(txxx_payload).to_bytes(4, "big") + b"\x00\x00" + txxx_payload
 
     frames = b"".join((
         _text_frame("TIT2", title), _text_frame("TPE1", artist),
         _text_frame("TPE2", album_artist), _text_frame("TALB", album),
         _text_frame("TRCK", track), _text_frame("TPOS", disc),
         _text_frame("TDRC", year), _picture_frame(cover),
+        txxx_frame,
     ))
     _write_mp3_metadata(path, frames)
     if logger:
@@ -264,31 +269,85 @@ def cover_bytes_for_item(item: dict) -> bytes | None:
     return _cover_bytes(item.get("cover_url"))
 
 
-def read_audio_metadata(path: Path) -> dict[str, str]:
+def read_audio_metadata(path: Path) -> dict[str, str | bool]:
     """Read editable tags from a local audio file using Mutagen."""
     from mutagen import File as MutagenFile
 
     path = Path(path)
-    audio = MutagenFile(path, easy=True)
-    if audio is None:
+    suffix = path.suffix.lower()
+    try:
+        audio = MutagenFile(path, easy=True)
+    except Exception:
+        audio = None
+
+    result: dict[str, str | bool] = {}
+    if audio is not None:
+        aliases = {
+            "track_title": ("title",),
+            "artist": ("artist",),
+            "album": ("album",),
+            "album_artist": ("albumartist",),
+            "track_number": ("tracknumber",),
+            "disc_number": ("discnumber",),
+            "release_year": ("date",),
+        }
+        for target, keys in aliases.items():
+            for key in keys:
+                value = audio.get(key)
+                if value:
+                    result[target] = str(value[0])
+                    break
+    elif suffix == ".mp3":
+        try:
+            from mutagen.id3 import ID3
+            tags = ID3(path)
+            for target, frame_key in (
+                ("track_title", "TIT2"),
+                ("artist", "TPE1"),
+                ("album", "TALB"),
+                ("album_artist", "TPE2"),
+                ("track_number", "TRCK"),
+                ("disc_number", "TPOS"),
+                ("release_year", "TDRC"),
+            ):
+                frame = tags.get(frame_key)
+                if frame and getattr(frame, "text", None):
+                    result[target] = str(frame.text[0])
+        except Exception:
+            pass
+    else:
         raise ValueError("Formato de áudio não reconhecido para leitura de metadados.")
 
-    result: dict[str, str] = {}
-    aliases = {
-        "track_title": ("title",),
-        "artist": ("artist",),
-        "album": ("album",),
-        "album_artist": ("albumartist",),
-        "track_number": ("tracknumber",),
-        "disc_number": ("discnumber",),
-        "release_year": ("date",),
-    }
-    for target, keys in aliases.items():
-        for key in keys:
-            value = audio.get(key)
-            if value:
-                result[target] = str(value[0])
-                break
+    # Read explicit advisory tag
+    if suffix == ".mp3":
+        try:
+            from mutagen.id3 import ID3
+            tags = ID3(path)
+            for key in ("TXXX:ITUNESADVISORY", "TXXX:iTunes Advisory"):
+                frame = tags.get(key)
+                if frame and getattr(frame, "text", None) and str(frame.text[0]).strip() == "1":
+                    result["explicit"] = True
+                    break
+        except Exception:
+            pass
+    elif suffix in {".m4a", ".mp4"}:
+        try:
+            from mutagen.mp4 import MP4
+            media = MP4(path)
+            if media.tags and media.tags.get("rtng") == [1]:
+                result["explicit"] = True
+        except Exception:
+            pass
+    elif suffix == ".flac":
+        try:
+            from mutagen.flac import FLAC
+            flac = FLAC(path)
+            adv = flac.get("ITUNESADVISORY")
+            if adv and str(adv[0]).strip() == "1":
+                result["explicit"] = True
+        except Exception:
+            pass
+
     return result
 
 
@@ -296,16 +355,18 @@ def write_audio_metadata(path: Path, item: dict, *, cover_bytes: bytes | None = 
     """Write common editable tags to MP3/M4A/FLAC/Ogg/Opus files."""
     from mutagen import File as MutagenFile
     from mutagen.flac import FLAC, Picture
-    from mutagen.id3 import APIC, ID3, ID3NoHeaderError, PictureType
+    from mutagen.id3 import APIC, ID3, ID3NoHeaderError, PictureType, TXXX
     from mutagen.mp4 import MP4, MP4Cover
 
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(path)
 
-    audio = MutagenFile(path, easy=True)
-    if audio is None:
-        raise ValueError("Formato de áudio não reconhecido para edição de metadados.")
+    suffix = path.suffix.lower()
+    try:
+        audio = MutagenFile(path, easy=True)
+    except Exception:
+        audio = None
 
     fields = {
         "title": str(item.get("track_title") or item.get("title") or "").strip(),
@@ -316,49 +377,87 @@ def write_audio_metadata(path: Path, item: dict, *, cover_bytes: bytes | None = 
         "discnumber": str(item.get("disc_number") or "").strip(),
         "date": str(item.get("release_year") or "").strip(),
     }
-    for key, value in fields.items():
+
+    if audio is not None:
+        for key, value in fields.items():
+            try:
+                if value:
+                    audio[key] = [value]
+                elif key in audio:
+                    del audio[key]
+            except (KeyError, TypeError):
+                # Some containers do not expose every EasyMutagen key.
+                pass
+        audio.save()
+    elif suffix == ".mp3":
         try:
-            if value:
-                audio[key] = [value]
-            elif key in audio:
-                del audio[key]
-        except (KeyError, TypeError):
-            # Some containers do not expose every EasyMutagen key.
-            pass
-    audio.save()
+            tags = ID3(path)
+        except ID3NoHeaderError:
+            tags = ID3()
+        from mutagen.id3 import TALB, TDRC, TIT2, TPE1, TPE2, TPOS, TRCK
+        if fields["title"]:
+            tags.delall("TIT2")
+            tags.add(TIT2(encoding=3, text=[fields["title"]]))
+        if fields["artist"]:
+            tags.delall("TPE1")
+            tags.add(TPE1(encoding=3, text=[fields["artist"]]))
+        if fields["album"]:
+            tags.delall("TALB")
+            tags.add(TALB(encoding=3, text=[fields["album"]]))
+        if fields["albumartist"]:
+            tags.delall("TPE2")
+            tags.add(TPE2(encoding=3, text=[fields["albumartist"]]))
+        if fields["tracknumber"]:
+            tags.delall("TRCK")
+            tags.add(TRCK(encoding=3, text=[fields["tracknumber"]]))
+        if fields["discnumber"]:
+            tags.delall("TPOS")
+            tags.add(TPOS(encoding=3, text=[fields["discnumber"]]))
+        if fields["date"]:
+            tags.delall("TDRC")
+            tags.add(TDRC(encoding=3, text=[fields["date"]]))
+        tags.save(path, v2_version=3)
+    else:
+        raise ValueError("Formato de áudio não reconhecido para edição de metadados.")
 
     picture = cover_bytes if cover_bytes is not None else cover_bytes_for_item(item)
-    if not picture:
-        return
-
     suffix = path.suffix.lower()
+    explicit = bool(item.get("explicit"))
+
     if suffix == ".mp3":
         try:
             tags = ID3(path)
         except ID3NoHeaderError:
             tags = ID3()
-        tags.delall("APIC")
-        tags.add(APIC(
-            encoding=3, mime=_image_mime(picture), type=PictureType.COVER_FRONT,
-            desc="Cover", data=picture,
-        ))
+        if picture:
+            tags.delall("APIC")
+            tags.add(APIC(
+                encoding=3, mime=_image_mime(picture), type=PictureType.COVER_FRONT,
+                desc="Cover", data=picture,
+            ))
+        tags.delall("TXXX:ITUNESADVISORY")
+        tags.add(TXXX(encoding=3, desc="ITUNESADVISORY", text=["1" if explicit else "0"]))
         tags.save(path, v2_version=3)
     elif suffix == ".m4a":
         media = MP4(path)
         if media.tags is None:
             media.add_tags()
-        image_format = MP4Cover.FORMAT_PNG if _image_mime(picture) == "image/png" else MP4Cover.FORMAT_JPEG
-        media.tags["covr"] = [MP4Cover(picture, imageformat=image_format)]
+        if picture:
+            image_format = MP4Cover.FORMAT_PNG if _image_mime(picture) == "image/png" else MP4Cover.FORMAT_JPEG
+            media.tags["covr"] = [MP4Cover(picture, imageformat=image_format)]
+        media.tags["rtng"] = [1 if explicit else 0]
         media.save()
     elif suffix == ".flac":
         media = FLAC(path)
-        media.clear_pictures()
-        pic = Picture()
-        pic.mime = _image_mime(picture)
-        pic.type = 3
-        pic.desc = "Cover"
-        pic.data = picture
-        media.add_picture(pic)
+        if picture:
+            media.clear_pictures()
+            pic = Picture()
+            pic.mime = _image_mime(picture)
+            pic.type = 3
+            pic.desc = "Cover"
+            pic.data = picture
+            media.add_picture(pic)
+        media["ITUNESADVISORY"] = ["1" if explicit else "0"]
         media.save()
 
 

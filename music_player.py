@@ -37,6 +37,7 @@ class MusicPlayer:
         self._track_title: str = ""
         self._track_artist: str = ""
         self._track_album: str = ""
+        self._track_explicit: bool = False
 
     def _ensure_mixer(self):
         if self._pygame is not None:
@@ -85,6 +86,7 @@ class MusicPlayer:
         artist: str = "",
         album: str = "",
         duration: float = 30.0,
+        explicit: bool = False,
     ) -> Path:
         path = self._preview_file(url)
         self.play_file(
@@ -94,6 +96,7 @@ class MusicPlayer:
             artist=artist,
             album=album,
             duration=duration or 30.0,
+            explicit=explicit,
         )
         self._current_source = str(url)
         return path
@@ -108,6 +111,7 @@ class MusicPlayer:
         album: str = "",
         duration: float = 0.0,
         quality_preference: str = "MP3_320",
+        explicit: bool = False,
     ) -> Path:
         """Play a complete Deezer track by downloading and decrypting it with user's ARL session."""
         from deezer_auth import download_and_decrypt_track
@@ -129,6 +133,7 @@ class MusicPlayer:
                     artist=artist,
                     album=album,
                     duration=duration,
+                    explicit=explicit,
                 )
                 self._current_source = f"deezer_full_{track_str}"
                 return cached
@@ -147,6 +152,7 @@ class MusicPlayer:
             artist=artist,
             album=album,
             duration=duration,
+            explicit=explicit,
         )
         self._current_source = f"deezer_full_{track_str}"
         return downloaded
@@ -160,6 +166,7 @@ class MusicPlayer:
         artist: str = "",
         album: str = "",
         duration: float = 0.0,
+        explicit: bool = False,
     ) -> str:
         path = Path(path)
         if not path.is_file():
@@ -187,6 +194,7 @@ class MusicPlayer:
         self._track_title = title or path.stem
         self._track_artist = artist
         self._track_album = album
+        self._track_explicit = bool(explicit)
         if duration and duration > 0:
             self._duration = float(duration)
         else:
@@ -224,6 +232,7 @@ class MusicPlayer:
         self._current_source = None
         self._current_path = None
         self._start_offset = 0.0
+        self._track_explicit = False
 
     def set_volume(self, volume: float) -> None:
         """Define volume entre 0.0 e 1.0."""
@@ -301,6 +310,10 @@ class MusicPlayer:
     @property
     def track_album(self) -> str:
         return self._track_album
+
+    @property
+    def track_explicit(self) -> bool:
+        return self._track_explicit
 
     def is_playing(self) -> bool:
         if self._pygame is None:

@@ -222,7 +222,9 @@ class MiniPlayer(Toplevel):
 
             title = self.music_player.track_title or "Faixa em reprodução"
             artist = self.music_player.track_artist or ""
-            self.track_var.set(title)
+            explicit = getattr(self.music_player, "track_explicit", False)
+            title_display = f"{title} 🅴" if explicit and not title.endswith("🅴") else title
+            self.track_var.set(title_display)
             self.artist_var.set(artist)
 
             if not self._dragging_seek:

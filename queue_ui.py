@@ -10,7 +10,7 @@ from audio_library import AUDIO_AUTO_BITRATE, bitrate_from_options, is_audio_for
 from download_control import DownloadCancelled, DownloadControl
 from download_queue import ACTIVE, LABELS, RUNNABLE, queue_summary
 from queue_service import discover, run_queue
-from ui_layout import add_tooltip, configure_treeview_status_tags, format_quality_badge
+from ui_layout import add_tooltip, configure_treeview_status_tags, format_quality_badge, format_title_with_explicit
 
 
 
@@ -315,8 +315,9 @@ class QueueUI:
 
         existing = set(self.episode_tree.get_children())
         for item in displayed_active:
-            q_badge = format_quality_badge(item.get("quality", "A definir"))
-            values = ("✓" if item["enabled"] else "", item["title"], q_badge,
+            q_badge = format_quality_badge(item.get("quality", "A definir"), explicit=bool(item.get("explicit")))
+            title_display = format_title_with_explicit(item["title"], item.get("explicit"))
+            values = ("✓" if item["enabled"] else "", title_display, q_badge,
                       LABELS[item["status"]], "—")
             tag = item["status"]
             if item["id"] in existing:
@@ -343,8 +344,9 @@ class QueueUI:
         for item in displayed_completed:
             files = item.get("files", [])
             saved_file = Path(files[0]).name if files else "Arquivo não informado"
-            q_badge = format_quality_badge(item.get("quality", "A definir"))
-            values = (item["title"], q_badge, saved_file)
+            q_badge = format_quality_badge(item.get("quality", "A definir"), explicit=bool(item.get("explicit")))
+            title_display = format_title_with_explicit(item["title"], item.get("explicit"))
+            values = (title_display, q_badge, saved_file)
             if item["id"] in existing_completed:
                 self.completed_tree.item(item["id"], values=values, tags=("completed",))
                 existing_completed.remove(item["id"])
@@ -541,7 +543,8 @@ class QueueUI:
             ]
             existing = set(tree.get_children())
             for item in relevant:
-                values = (item.get("title") or "Mídia", LABELS[item["status"]])
+                title_display = format_title_with_explicit(item.get("title") or "Mídia", item.get("explicit"))
+                values = (title_display, LABELS[item["status"]])
                 if item["id"] in existing:
                     tree.item(item["id"], values=values)
                     existing.remove(item["id"])

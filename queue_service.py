@@ -159,6 +159,7 @@ def _deezer_queue_items(tracks, collection_title: str, options) -> list[dict]:
             cover_url=track.cover_url,
             collection_title=collection_title,
             quality=quality_label,
+            explicit=bool(getattr(track, "explicit", False)),
         )
         if not has_arl and not track.preview_url:
             item.update(
@@ -221,6 +222,7 @@ def discover(sources, options, engine, control, environment, log):
                             cover_url=sp_track.cover_url,
                             collection_title=sp_collection.title,
                             quality="Áudio YouTube" if is_audio_format(options.get("format", "")) else "A definir",
+                            explicit=sp_track.explicit,
                         ))
             elif is_jw_category_url(source):
                 for media in resolve_category_items(source, options["format"], include_subcategories=options["playlist"], logger=log):
