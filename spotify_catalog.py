@@ -314,11 +314,25 @@ def match_spotify_track_to_deezer(track: SpotifyTrack) -> DeezerTrack | None:
 
         # Exact or close match comparison
         clean_track = re.sub(r"[^\w\s]", "", track.title.lower()).strip()
+        matched = None
         for cand in candidates:
             clean_cand = re.sub(r"[^\w\s]", "", cand.title.lower()).strip()
             if clean_track in clean_cand or clean_cand in clean_track:
-                return cand
+                # If Spotify track is explicit, prioritize candidate that is also explicit!
+                if track.explicit and cand.explicit:
+                    return cand
+                if matched is None:
+                    matched = cand
+        if matched is not None:
+            if track.explicit and not matched.explicit:
+                from dataclasses import replace
+                return replace(matched, explicit=True)
+            return matched
         # Fallback to the top candidate if reasonably confident
-        return candidates[0]
+        top = candidates[0]
+        if track.explicit and not top.explicit:
+            from dataclasses import replace
+            return replace(top, explicit=True)
+        return top
     except Exception:
         return None

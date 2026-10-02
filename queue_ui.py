@@ -774,6 +774,7 @@ class QueueUI:
             split_chapters=bool(self.split_chapters_var.get()) if hasattr(self, "split_chapters_var") else False,
             rate_limit=self.rate_limit_var.get().strip() if hasattr(self, "rate_limit_var") else "",
             proxy_url=self.proxy_url_var.get().strip() if hasattr(self, "proxy_url_var") else "",
+            allow_explicit=bool(self.allow_explicit_var.get()) if hasattr(self, "allow_explicit_var") else True,
         )
 
     def analyze_links(self):

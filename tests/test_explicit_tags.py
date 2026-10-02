@@ -163,3 +163,70 @@ def test_music_player_explicit_tracking(tmp_path: Path, monkeypatch):
     # Stop resets explicit
     player.stop()
     assert player.track_explicit is False
+
+
+def test_deezer_explicit_track_no_preview_fallback_to_youtube():
+    """Explicit track without Deezer preview should fallback to YouTube audio rather than skipping."""
+    track = deezer_catalog.DeezerTrack(
+        track_id="999888",
+        title="Explicit Banger",
+        artist="Hardcore Artist",
+        album="Explicit Record",
+        preview_url=None,
+        explicit=True,
+    )
+    options_no_arl = {"deezer_arl": "", "format": "Apenas áudio (MP3)", "playlist": False}
+    items = queue_service._deezer_queue_items([track], "Explicit Record", options_no_arl)
+    assert len(items) == 1
+    item = items[0]
+    assert item["enabled"] is True
+    assert item["status"] == "pending"
+    assert item["kind"] == "default"
+    assert "ytsearch1:" in item["source"]
+    assert "explicit" in item["source"]
+    assert item["explicit"] is True
+
+
+def test_spotify_explicit_match_prioritization(monkeypatch):
+    """When a Spotify track is explicit, Deezer matching should prioritize the explicit candidate."""
+    cand_clean = deezer_catalog.DeezerTrack(
+        track_id="111",
+        title="Stan (Radio Edit)",
+        artist="Eminem",
+        album="Curtain Call",
+        preview_url="https://preview/clean.mp3",
+        explicit=False,
+    )
+    cand_explicit = deezer_catalog.DeezerTrack(
+        track_id="222",
+        title="Stan (Explicit)",
+        artist="Eminem",
+        album="The Marshall Mathers LP",
+        preview_url="https://preview/explicit.mp3",
+        explicit=True,
+    )
+    # Search returns clean first, explicit second
+    monkeypatch.setattr(spotify_catalog, "search_deezer_tracks", lambda q, limit=5: (cand_clean, cand_explicit))
+
+    sp_track = spotify_catalog.SpotifyTrack(
+        track_id="sp_stan",
+        title="Stan",
+        artist="Eminem",
+        explicit=True,
+    )
+    matched = spotify_catalog.match_spotify_track_to_deezer(sp_track)
+    assert matched is not None
+    assert matched.track_id == "222"
+    assert matched.explicit is True
+
+
+def test_is_explicit_payload_variants():
+    """Verify various explicit payload structures in Deezer API."""
+    assert deezer_catalog._is_explicit_payload({"explicit_lyrics": True}) is True
+    assert deezer_catalog._is_explicit_payload({"EXPLICIT_LYRICS": 1}) is True
+    assert deezer_catalog._is_explicit_payload({"explicit_content_lyrics": 1}) is True
+    assert deezer_catalog._is_explicit_payload({"explicit_content_lyrics": 4}) is True
+    assert deezer_catalog._is_explicit_payload({"EXPLICIT_TRACK_CONTENT": {"EXPLICIT_LYRICS_STATUS": 1}}) is True
+    assert deezer_catalog._is_explicit_payload({"explicit_content_lyrics": 0}) is False
+    assert deezer_catalog._is_explicit_payload({"explicit_content_lyrics": 3}) is False
+

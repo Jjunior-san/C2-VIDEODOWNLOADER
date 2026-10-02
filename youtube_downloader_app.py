@@ -551,6 +551,7 @@ class DownloadApp(QueueUI):
             value="● Conectando..." if saved_deezer_arl else "● Não autenticado (baixando prévias de 30s)"
         )
         self.create_zip_var = BooleanVar(value=saved_create_zip)
+        self.allow_explicit_var = BooleanVar(value=bool(self.user_settings.get("allow_explicit", True)))
         self.deezer_show_arl_var = BooleanVar(value=False)
 
         # Configurações de legendas
@@ -1533,7 +1534,14 @@ class DownloadApp(QueueUI):
             text="Compactar álbum / playlist em arquivo .ZIP ao concluir",
             variable=self.create_zip_var,
         )
-        zip_check.pack(anchor="w", pady=(2, 6))
+        zip_check.pack(anchor="w", pady=(2, 4))
+
+        explicit_check = ttk.Checkbutton(
+            deezer_frame,
+            text="Permitir baixar conteúdo explícito (Explicit 🅴)",
+            variable=self.allow_explicit_var,
+        )
+        explicit_check.pack(anchor="w", pady=(2, 6))
 
         wrapping_label(
             deezer_frame,
@@ -2032,7 +2040,7 @@ class DownloadApp(QueueUI):
     def _settings_variables(self) -> dict[str, object]:
         names = (
             "fragments_var", "cookies_browser_var", "cookies_file_var",
-            "deezer_arl_var", "deezer_quality_var", "create_zip_var",
+            "deezer_arl_var", "deezer_quality_var", "create_zip_var", "allow_explicit_var",
             "audio_bitrate_mode_var", "audio_custom_bitrate_var",
             "playlist_var", "music_structure_var", "music_filename_var",
             "subtitles_enabled_var", "subtitles_embed_var", "subtitles_auto_var", "subtitles_langs_var",
@@ -2909,7 +2917,11 @@ class DownloadApp(QueueUI):
         type_display = f"{result.kind_label} • 🔞 Explícito" if result.explicit else result.kind_label
         self.catalog_type_var.set(type_display)
         self.catalog_load_button.configure(state="normal")
-        self.catalog_download_button.configure(state="normal")
+        if hasattr(self, "catalog_download_button"):
+            if result.explicit:
+                self.catalog_download_button.configure(state="normal", text="⬇️ Baixar 🅴")
+            else:
+                self.catalog_download_button.configure(state="normal", text="⬇️ Baixar")
         self.catalog_open_button.configure(state="normal")
 
         if hasattr(self, "catalog_drill_button"):
@@ -3388,6 +3400,11 @@ class DownloadApp(QueueUI):
                 command=self._open_lyrics_window,
             )
             menu.add_separator()
+            if result.explicit:
+                menu.add_command(
+                    label="🔞 Baixar Versão Explícita (Explicit 🅴)",
+                    command=self._download_selected_catalog_result,
+                )
             menu.add_command(
                 label="⚡ Baixar em FLAC Lossless (Hi-Fi)",
                 command=lambda: self._download_result_with_quality(result, "flac"),
@@ -3595,11 +3612,15 @@ class DownloadApp(QueueUI):
                     for idx, t in enumerate(tracks):
                         track_states[str(idx)] = {"enabled": True, "track": t}
                         dur_txt = f"{t.duration // 60}:{t.duration % 60:02d}" if t.duration else "—"
-                        tree.insert("", END, iid=str(idx), values=("✓", str(t.track_number or idx + 1), t.title, dur_txt))
+                        title_display = format_title_with_explicit(t.title, t.explicit)
+                        tree.insert("", END, iid=str(idx), values=("✓", str(t.track_number or idx + 1), title_display, dur_txt))
 
                     def update_count():
-                        sel = sum(1 for it in track_states.values() if it["enabled"])
-                        count_var.set(f"{sel} de {len(tracks)} faixa(s) selecionada(s)")
+                        sel = [it for it in track_states.values() if it["enabled"]]
+                        sel_count = len(sel)
+                        exp_count = sum(1 for it in sel if it["track"].explicit)
+                        exp_suffix = f" • {exp_count} Explícitas 🅴" if exp_count else ""
+                        count_var.set(f"{sel_count} de {len(tracks)} faixa(s) selecionada(s){exp_suffix}")
 
                     update_count()
 
@@ -3609,7 +3630,8 @@ class DownloadApp(QueueUI):
                             track_states[item_id]["enabled"] = not curr
                             t = track_states[item_id]["track"]
                             dur_txt = f"{t.duration // 60}:{t.duration % 60:02d}" if t.duration else "—"
-                            tree.item(item_id, values=("✓" if not curr else "", str(t.track_number or int(item_id) + 1), t.title, dur_txt))
+                            title_display = format_title_with_explicit(t.title, t.explicit)
+                            tree.item(item_id, values=("✓" if not curr else "", str(t.track_number or int(item_id) + 1), title_display, dur_txt))
                             update_count()
 
                     def on_click(event):
@@ -3633,11 +3655,26 @@ class DownloadApp(QueueUI):
                             data["enabled"] = state
                             t = data["track"]
                             dur_txt = f"{t.duration // 60}:{t.duration % 60:02d}" if t.duration else "—"
-                            tree.item(iid, values=("✓" if state else "", str(t.track_number or int(iid) + 1), t.title, dur_txt))
+                            title_display = format_title_with_explicit(t.title, t.explicit)
+                            tree.item(iid, values=("✓" if state else "", str(t.track_number or int(iid) + 1), title_display, dur_txt))
+                        update_count()
+
+                    def filter_explicit(explicit_only=True):
+                        for iid, data in track_states.items():
+                            t = data["track"]
+                            matches = bool(t.explicit) if explicit_only else not bool(t.explicit)
+                            data["enabled"] = matches
+                            dur_txt = f"{t.duration // 60}:{t.duration % 60:02d}" if t.duration else "—"
+                            title_display = format_title_with_explicit(t.title, t.explicit)
+                            tree.item(iid, values=("✓" if matches else "", str(t.track_number or int(iid) + 1), title_display, dur_txt))
                         update_count()
 
                     ttk.Button(toolbar, text="Marcar Todas", command=lambda: set_all(True)).pack(side="left", padx=(0, 4))
-                    ttk.Button(toolbar, text="Desmarcar Todas", command=lambda: set_all(False)).pack(side="left", padx=(0, 8))
+                    ttk.Button(toolbar, text="Desmarcar Todas", command=lambda: set_all(False)).pack(side="left", padx=(0, 4))
+                    has_any_explicit = any(t.explicit for t in tracks)
+                    if has_any_explicit:
+                        ttk.Button(toolbar, text="🔞 Apenas Explícitas (🅴)", command=lambda: filter_explicit(True)).pack(side="left", padx=(0, 4))
+                        ttk.Button(toolbar, text="Apenas Limpas (Clean)", command=lambda: filter_explicit(False)).pack(side="left", padx=(0, 8))
 
                     def download_selected():
                         selected_urls = [data["track"].page_url for data in track_states.values() if data["enabled"]]
@@ -4235,6 +4272,7 @@ class DownloadApp(QueueUI):
             "deezer_arl": self.deezer_arl_var.get().strip(),
             "deezer_quality": self.deezer_quality_var.get(),
             "create_collection_zip": bool(self.create_zip_var.get()),
+            "allow_explicit": bool(self.allow_explicit_var.get()) if hasattr(self, "allow_explicit_var") else True,
             "subtitles_enabled": bool(self.subtitles_enabled_var.get()),
             "subtitles_embed": bool(self.subtitles_embed_var.get()),
             "subtitles_auto": bool(self.subtitles_auto_var.get()),
@@ -4975,6 +5013,9 @@ class DownloadApp(QueueUI):
         deno = getattr(getattr(self, "dependencies", None), "deno_path", None)
         if deno and Path(deno).is_file():
             command.extend(["--js-runtimes", f"deno:{deno}"])
+
+        # Desbloqueio de restrições de idade / explícitas no YouTube
+        command.extend(["--extractor-args", "youtube:player_client=android,web"])
 
         # Capítulos
         embed_chapters = (

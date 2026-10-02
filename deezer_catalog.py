@@ -187,6 +187,22 @@ def _positive_int(value) -> int | None:
     return number if number > 0 else None
 
 
+def _is_explicit_payload(payload: dict, fallback: dict | None = None) -> bool:
+    """Return True if Deezer payload indicates explicit lyrics or advisory."""
+    fb = fallback or {}
+    for p in (payload, fb):
+        if not isinstance(p, dict):
+            continue
+        if bool(p.get("explicit_lyrics") or p.get("EXPLICIT_LYRICS")):
+            return True
+        if p.get("explicit_content_lyrics") in {1, 4, 6, 7, True}:
+            return True
+        exp_track = p.get("EXPLICIT_TRACK_CONTENT")
+        if isinstance(exp_track, dict) and exp_track.get("EXPLICIT_LYRICS_STATUS") in {1, 4, True}:
+            return True
+    return False
+
+
 def _track_from_payload(payload: dict, *, album_fallback: dict | None = None) -> DeezerTrack:
     album = payload.get("album") if isinstance(payload.get("album"), dict) else {}
     fallback = album_fallback or {}
@@ -204,12 +220,7 @@ def _track_from_payload(payload: dict, *, album_fallback: dict | None = None) ->
     cover = str(album.get("cover_big") or fallback.get("cover_big") or "").strip() or None
     raw_album_id = str(album.get("id") or fallback.get("id") or "").strip()
     album_id = raw_album_id if raw_album_id.isdigit() else None
-    raw_explicit = (
-        payload.get("explicit_lyrics")
-        or payload.get("explicit_content_lyrics") in {1, True}
-        or fallback.get("explicit_lyrics")
-        or fallback.get("explicit_content_lyrics") in {1, True}
-    )
+    explicit = _is_explicit_payload(payload, fallback)
     return DeezerTrack(
         track_id=track_id,
         title=title,
@@ -222,7 +233,7 @@ def _track_from_payload(payload: dict, *, album_fallback: dict | None = None) ->
         release_year=release_date[:4] if re.fullmatch(r"\d{4}", release_date[:4]) else None,
         duration=_positive_int(payload.get("duration")),
         album_id=album_id,
-        explicit=bool(raw_explicit),
+        explicit=explicit,
     )
 
 
@@ -331,10 +342,7 @@ def search_deezer_catalog(
 
         if not title:
             continue
-        explicit = bool(
-            entry.get("explicit_lyrics")
-            or entry.get("explicit_content_lyrics") in {1, True}
-        )
+        explicit = _is_explicit_payload(entry)
         results.append(DeezerSearchResult(
             kind=kind,
             item_id=item_id,
@@ -458,10 +466,7 @@ def get_artist_albums(artist_id: str, limit: int = 50) -> tuple[DeezerSearchResu
         year = str(entry.get("release_date") or "")[:4]
         subtitle = f"Álbum • {year}" if year else "Álbum"
         cover = _catalog_cover(entry, "cover_medium", "cover_big", "cover")
-        explicit = bool(
-            entry.get("explicit_lyrics")
-            or entry.get("explicit_content_lyrics") in {1, True}
-        )
+        explicit = _is_explicit_payload(entry)
         results.append(DeezerSearchResult(
             kind="album",
             item_id=item_id,
