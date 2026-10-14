@@ -25,7 +25,7 @@ def configure_fonts(root):
     return text_family, display_family
 
 
-# C2 Signature Blue & Apple-inspired Design System
+# C2 Signature Blue & Apple/macOS-inspired Design System
 PROGRAM_BLUE = "#2563eb"
 PROGRAM_BLUE_HOVER = "#1d4ed8"
 PROGRAM_BLUE_ACTIVE = "#1e40af"
@@ -37,161 +37,260 @@ APPLE_RED_HOVER = PROGRAM_BLUE_HOVER
 APPLE_RED_ACTIVE = PROGRAM_BLUE_ACTIVE
 APPLE_RED_SUBTLE = PROGRAM_BLUE_SUBTLE
 
-APPLE_DARK_BG = "#161618"
-APPLE_SIDEBAR_BG = "#1c1c1e"
-APPLE_CARD_BG = "#242426"
-APPLE_CARD_BORDER = "#38383a"
-APPLE_TEXT_PRIMARY = "#f5f5f7"
-APPLE_TEXT_SECONDARY = "#8e8e93"
-APPLE_TEXT_MUTED = "#636366"
-APPLE_GREEN = "#30d158"
-APPLE_ORANGE = "#ff9f0a"
+# Clean, Unified Obsidian / Dark Slate Theme Palette
+APPLE_DARK_BG = "#0d1117"
+APPLE_SIDEBAR_BG = "#161b22"
+APPLE_CARD_BG = "#161b22"
+APPLE_CARD_BORDER = "#30363d"
+APPLE_CARD_HOVER = "#21262d"
+APPLE_TEXT_PRIMARY = "#f0f6fc"
+APPLE_TEXT_SECONDARY = "#8b949e"
+APPLE_TEXT_MUTED = "#6e7681"
+APPLE_GREEN = "#10b981"
+APPLE_ORANGE = "#d29922"
 APPLE_BLUE = "#2563eb"
+APPLE_SELECTION = "#1f3a5f"
 
 
 def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.Style:
     style = ttk.Style(root)
-    style.configure(".", font=(text_family, 10))
-    row_height = max(26, font.Font(root=root, family=text_family, size=10).metrics("linespace") + 10)
-    style.configure("Treeview", font=(text_family, 10), rowheight=row_height)
-    style.configure("Treeview.Heading", font=(text_family, 10, "bold"))
-    
-    # Elementos com suporte real a cores de fundo personalizadas (evita botões apagados no Windows)
-    for elem_name, style_name in (
-        ("Accent.button", "Accent.TButton"),
-        ("ApplePlay.button", "ApplePlay.TButton"),
-        ("Success.button", "Success.TButton"),
-    ):
-        try:
-            style.element_create(elem_name, "from", "clam")
-        except Exception:
-            pass
-        try:
-            style.layout(
-                style_name,
-                [
-                    (
-                        elem_name,
-                        {
-                            "sticky": "nswe",
-                            "children": [
-                                (
-                                    "Button.focus",
-                                    {
-                                        "sticky": "nswe",
-                                        "children": [
-                                            (
-                                                "Button.padding",
-                                                {
-                                                    "sticky": "nswe",
-                                                    "children": [
-                                                        ("Button.label", {"sticky": "nswe"})
-                                                    ],
-                                                },
-                                            )
-                                        ],
-                                    },
-                                )
-                            ],
-                        },
-                    )
-                ],
-            )
-        except Exception:
-            pass
+    try:
+        style.theme_use("clam")
+    except Exception:
+        pass
 
-    # Signature Blue Accent Button (Primary action - #2563eb)
+    try:
+        root.configure(background=APPLE_DARK_BG)
+    except Exception:
+        pass
+
     style.configure(
-        "Accent.TButton",
+        ".",
+        background=APPLE_DARK_BG,
+        foreground=APPLE_TEXT_PRIMARY,
+        font=(text_family, 10),
+    )
+
+    row_height = max(28, font.Font(root=root, family=text_family, size=10).metrics("linespace") + 12)
+    style.configure(
+        "Treeview",
+        background=APPLE_DARK_BG,
+        fieldbackground=APPLE_DARK_BG,
+        foreground=APPLE_TEXT_PRIMARY,
+        font=(text_family, 10),
+        rowheight=row_height,
+        borderwidth=1,
+        relief="solid",
+        bordercolor=APPLE_CARD_BORDER,
+    )
+    style.configure(
+        "Treeview.Heading",
+        background=APPLE_SIDEBAR_BG,
+        foreground=APPLE_TEXT_PRIMARY,
+        font=(text_family, 9, "bold"),
+        relief="flat",
+        borderwidth=1,
+        bordercolor=APPLE_CARD_BORDER,
+        padding=[6, 4],
+    )
+    style.map(
+        "Treeview",
+        background=[("selected", APPLE_SELECTION)],
+        foreground=[("selected", "#ffffff")],
+    )
+    style.map(
+        "Treeview.Heading",
+        background=[("active", APPLE_CARD_HOVER)],
+        foreground=[("active", "#ffffff")],
+    )
+
+    style.configure("TFrame", background=APPLE_DARK_BG)
+    style.configure("Sidebar.TFrame", background=APPLE_SIDEBAR_BG)
+    style.configure("Card.TFrame", background=APPLE_CARD_BG, relief="solid", borderwidth=1, bordercolor=APPLE_CARD_BORDER)
+
+    style.configure("TLabel", background=APPLE_DARK_BG, foreground=APPLE_TEXT_PRIMARY)
+    style.configure("Card.TLabel", background=APPLE_CARD_BG, foreground=APPLE_TEXT_PRIMARY)
+    style.configure("Muted.TLabel", background=APPLE_DARK_BG, foreground=APPLE_TEXT_SECONDARY)
+    style.configure("Sidebar.TLabel", background=APPLE_SIDEBAR_BG, foreground=APPLE_TEXT_SECONDARY)
+
+    style.configure(
+        "TLabelframe",
+        background=APPLE_CARD_BG,
+        foreground=APPLE_TEXT_PRIMARY,
+        relief="solid",
+        borderwidth=1,
+        bordercolor=APPLE_CARD_BORDER,
+    )
+    style.configure(
+        "TLabelframe.Label",
+        background=APPLE_CARD_BG,
+        foreground=APPLE_TEXT_PRIMARY,
         font=(text_family, 10, "bold"),
-        foreground="#ffffff",
-        background=PROGRAM_BLUE,
-        padding=(10, 4),
+    )
+
+    style.configure("TNotebook", background=APPLE_DARK_BG, tabmargins=[2, 4, 2, 0], borderwidth=0)
+    style.configure(
+        "TNotebook.Tab",
+        background=APPLE_SIDEBAR_BG,
+        foreground=APPLE_TEXT_SECONDARY,
+        font=(text_family, 10, "bold"),
+        padding=[14, 6],
         borderwidth=0,
-        focusthickness=0,
+    )
+    style.map(
+        "TNotebook.Tab",
+        background=[("selected", APPLE_CARD_BG), ("active", APPLE_CARD_HOVER)],
+        foreground=[("selected", PROGRAM_BLUE), ("active", APPLE_TEXT_PRIMARY)],
+    )
+
+    style.configure(
+        "TEntry",
+        fieldbackground=APPLE_DARK_BG,
+        foreground=APPLE_TEXT_PRIMARY,
+        insertcolor=APPLE_TEXT_PRIMARY,
+        bordercolor=APPLE_CARD_BORDER,
+        padding=[6, 4],
+    )
+    style.configure(
+        "TCombobox",
+        fieldbackground=APPLE_DARK_BG,
+        background=APPLE_SIDEBAR_BG,
+        foreground=APPLE_TEXT_PRIMARY,
+        arrowcolor=APPLE_TEXT_PRIMARY,
+        bordercolor=APPLE_CARD_BORDER,
+        padding=[6, 4],
+    )
+    style.map(
+        "TCombobox",
+        fieldbackground=[("readonly", APPLE_DARK_BG)],
+        selectbackground=[("readonly", PROGRAM_BLUE)],
+        selectforeground=[("readonly", "#ffffff")],
+    )
+
+    style.configure(
+        "TCheckbutton",
+        background=APPLE_CARD_BG,
+        foreground=APPLE_TEXT_PRIMARY,
+        focuscolor="",
+    )
+    style.map(
+        "TCheckbutton",
+        background=[("active", APPLE_CARD_BG)],
+        foreground=[("active", APPLE_TEXT_PRIMARY)],
+    )
+
+    style.configure(
+        "TButton",
+        background=APPLE_SIDEBAR_BG,
+        foreground=APPLE_TEXT_PRIMARY,
+        bordercolor=APPLE_CARD_BORDER,
+        font=(text_family, 10),
+        padding=(8, 4),
+        relief="solid",
+        borderwidth=1,
+    )
+    style.map(
+        "TButton",
+        background=[("pressed", APPLE_CARD_BORDER), ("active", APPLE_CARD_HOVER), ("disabled", "#21262d")],
+        foreground=[("disabled", "#484f58")],
+    )
+
+    style.configure(
+        "Accent.TButton",
+        background=PROGRAM_BLUE,
+        foreground="#ffffff",
+        bordercolor=PROGRAM_BLUE_HOVER,
+        font=(text_family, 10, "bold"),
+        padding=(12, 5),
+        relief="solid",
+        borderwidth=1,
     )
     style.map(
         "Accent.TButton",
-        background=[
-            ("pressed", PROGRAM_BLUE_ACTIVE),
-            ("active", PROGRAM_BLUE_HOVER),
-            ("disabled", "#64748b"),
-        ],
-        foreground=[
-            ("disabled", "#ffffff"),
-        ],
+        background=[("pressed", PROGRAM_BLUE_ACTIVE), ("active", PROGRAM_BLUE_HOVER), ("disabled", "#21262d")],
+        foreground=[("disabled", "#484f58")],
     )
 
-    # Standard Button
-    style.configure("TButton", padding=(6, 3))
-    
-    # Modern Circular Play/Pause Button (Signature Blue)
     style.configure(
         "ApplePlay.TButton",
-        font=(text_family, 11, "bold"),
-        foreground="#ffffff",
         background=PROGRAM_BLUE,
-        padding=(8, 4),
-        borderwidth=0,
-        focusthickness=0,
+        foreground="#ffffff",
+        bordercolor=PROGRAM_BLUE_HOVER,
+        font=(text_family, 11, "bold"),
+        padding=(10, 5),
+        relief="solid",
+        borderwidth=1,
     )
     style.map(
         "ApplePlay.TButton",
-        background=[
-            ("pressed", PROGRAM_BLUE_ACTIVE),
-            ("active", PROGRAM_BLUE_HOVER),
-            ("disabled", "#64748b"),
-        ],
-        foreground=[
-            ("disabled", "#ffffff"),
-        ],
+        background=[("pressed", PROGRAM_BLUE_ACTIVE), ("active", PROGRAM_BLUE_HOVER), ("disabled", "#21262d")],
+        foreground=[("disabled", "#484f58")],
     )
 
-    # Sidebar Navigation Buttons
     style.configure(
         "Sidebar.TButton",
+        background=APPLE_SIDEBAR_BG,
+        foreground=APPLE_TEXT_SECONDARY,
         font=(text_family, 10),
         anchor="w",
         padding=(10, 6),
+        relief="flat",
+        borderwidth=0,
     )
+    style.map(
+        "Sidebar.TButton",
+        background=[("active", APPLE_CARD_HOVER), ("pressed", APPLE_CARD_BORDER)],
+        foreground=[("active", APPLE_TEXT_PRIMARY)],
+    )
+
     style.configure(
         "ActiveSidebar.TButton",
+        background="#1f293d",
+        foreground="#60a5fa",
         font=(text_family, 10, "bold"),
-        foreground=PROGRAM_BLUE,
         anchor="w",
         padding=(10, 6),
+        relief="flat",
+        borderwidth=0,
     )
-
-    # Modern Notebook Tabs with Blue Accent
-    style.configure("TNotebook.Tab", font=(text_family, 10, "bold"), padding=[12, 6])
     style.map(
-        "TNotebook.Tab",
-        foreground=[("selected", PROGRAM_BLUE), ("!selected", "#475569")],
+        "ActiveSidebar.TButton",
+        background=[("active", "#253450")],
+        foreground=[("active", "#93c5fd")],
     )
 
-    # Progressbar with Apple Accent
-    style.configure("Horizontal.TProgressbar", thickness=10)
-
-    # Success Button (Green action)
     style.configure(
         "Success.TButton",
-        font=(text_family, 10, "bold"),
-        foreground="#ffffff",
         background="#10b981",
-        padding=(8, 3),
-        borderwidth=0,
-        focusthickness=0,
+        foreground="#ffffff",
+        bordercolor="#059669",
+        font=(text_family, 10, "bold"),
+        padding=(10, 5),
+        relief="solid",
+        borderwidth=1,
     )
     style.map(
         "Success.TButton",
-        background=[
-            ("pressed", "#047857"),
-            ("active", "#059669"),
-            ("disabled", "#64748b"),
-        ],
-        foreground=[
-            ("disabled", "#ffffff"),
-        ],
+        background=[("pressed", "#047857"), ("active", "#059669"), ("disabled", "#21262d")],
+        foreground=[("disabled", "#484f58")],
+    )
+
+    style.configure(
+        "Horizontal.TProgressbar",
+        background=PROGRAM_BLUE,
+        troughcolor="#21262d",
+        bordercolor=APPLE_CARD_BORDER,
+        thickness=8,
+    )
+
+    style.configure(
+        "TScrollbar",
+        background=APPLE_SIDEBAR_BG,
+        troughcolor=APPLE_DARK_BG,
+        bordercolor=APPLE_CARD_BORDER,
+        arrowcolor=APPLE_TEXT_SECONDARY,
+        relief="flat",
+        borderwidth=0,
     )
     return style
 
@@ -320,7 +419,7 @@ class ScrollablePage(ttk.Frame):
         super().__init__(parent)
         self.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
-        self.canvas = Canvas(self, highlightthickness=0, borderwidth=0, takefocus=False)
+        self.canvas = Canvas(self, highlightthickness=0, borderwidth=0, takefocus=False, bg=APPLE_DARK_BG)
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self.vertical = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.horizontal = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
@@ -389,7 +488,7 @@ class ScrollablePage(ttk.Frame):
 
 def wrapping_label(parent, **kwargs):
     label = ttk.Label(parent, width=1, wraplength=480, justify="left", **kwargs)
-    label.pack(fill="x", pady=(0, 8))
+    label.pack(fill="x", pady=(0, 6))
     label.bind("<Configure>", lambda event: label.configure(wraplength=max(1, event.width)))
     return label
 
@@ -438,6 +537,8 @@ class ToolTip:
             padding=(7, 4),
             relief="solid",
             borderwidth=1,
+            background="#21262d",
+            foreground="#f0f6fc",
         ).pack()
 
     def _hide(self, _event=None):

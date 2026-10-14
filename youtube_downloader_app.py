@@ -50,7 +50,9 @@ from spotify_catalog import is_spotify_url
 from download_control import DownloadCancelled, DownloadControl
 from ui_layout import (
     APPLE_CARD_BG,
+    APPLE_CARD_BORDER,
     APPLE_DARK_BG,
+    APPLE_GREEN,
     APPLE_RED,
     APPLE_SIDEBAR_BG,
     APPLE_TEXT_MUTED,
@@ -790,6 +792,10 @@ class DownloadApp(QueueUI):
         self.about_page = ttk.Frame(self.tabs, padding=18)
 
         self.settings_dialog = Toplevel(self.root)
+        try:
+            self.settings_dialog.configure(background=APPLE_DARK_BG)
+        except Exception:
+            pass
         self.settings_dialog.withdraw()
         self.settings_dialog.title("Configurações")
         self.settings_dialog.transient(self.root)
@@ -817,18 +823,18 @@ class DownloadApp(QueueUI):
                 about_brand,
                 text="C² - Downloader",
                 font=(self.display_family, 18, "bold"),
-                foreground="#1876d2",
+                foreground=PROGRAM_BLUE,
             ).pack()
         ttk.Label(
             self.about_page,
             text="C2 Sistemas",
             font=(self.display_family, 14, "bold"),
-            foreground="#172b4d",
+            foreground=APPLE_TEXT_PRIMARY,
         ).pack(pady=(0, 4))
         ttk.Label(
             self.about_page,
             text=f"Versão {APP_VERSION}",
-            foreground="#596579",
+            foreground=APPLE_TEXT_SECONDARY,
         ).pack()
         about_text = ttk.Label(
             self.about_page,
@@ -902,6 +908,14 @@ class DownloadApp(QueueUI):
         self.btn_top_global.pack(side="left", padx=(0, 4))
         add_tooltip(self.btn_top_global, "Carregar a parada mundial Top 50 da Deezer")
 
+        self.btn_top_spotify = ttk.Button(
+            discovery_row,
+            text="🟢 Top Spotify",
+            command=self._load_top_spotify,
+        )
+        self.btn_top_spotify.pack(side="left", padx=(0, 4))
+        add_tooltip(self.btn_top_spotify, "Carregar as músicas mais tocadas no Spotify (Today's Top Hits)")
+
         self.btn_user_favs = ttk.Button(
             discovery_row,
             text="⭐ Meus Favoritos",
@@ -921,7 +935,7 @@ class DownloadApp(QueueUI):
         ttk.Label(
             search_frame,
             textvariable=self.music_search_status_var,
-            foreground="#596579",
+            foreground=APPLE_TEXT_SECONDARY,
         ).pack(anchor="w", pady=(6, 0))
 
         result_area = ttk.Panedwindow(music, orient="horizontal")
@@ -989,7 +1003,7 @@ class DownloadApp(QueueUI):
         wrapping_label(
             detail_info,
             textvariable=self.catalog_type_var,
-            foreground="#596579",
+            foreground=APPLE_TEXT_SECONDARY,
         )
         result_buttons = ttk.Frame(detail_info)
         result_buttons.pack(fill="x", pady=(6, 0))
@@ -1109,7 +1123,7 @@ class DownloadApp(QueueUI):
         music_player_card = ttk.Frame(music)
         player_info_row = ttk.Frame(music_player_card)
         wrapping_label(player_info_row, textvariable=self.music_player_track_var, font=(self.text_family, 10, "bold"))
-        ttk.Label(player_info_row, textvariable=self.music_player_status_var, foreground="#596579", font=(self.text_family, 9))
+        ttk.Label(player_info_row, textvariable=self.music_player_status_var, foreground=APPLE_TEXT_SECONDARY, font=(self.text_family, 9))
         player_ctrls_row = ttk.Frame(music_player_card)
         self.audio_play_button = ttk.Button(player_ctrls_row, text="▶", width=3, command=self._toggle_audio_player_playback)
         self.audio_stop_button = ttk.Button(player_ctrls_row, text="■", width=3, command=self.stop_music, state="disabled")
@@ -1183,7 +1197,7 @@ class DownloadApp(QueueUI):
         wrapping_label(
             video_input,
             text="Cole um link por linha. YouTube, Kanal D, JW.ORG e outras fontes compatíveis com yt-dlp.",
-            foreground="#596579",
+            foreground=APPLE_TEXT_SECONDARY,
         )
         self.video_url_text.bind("<KeyRelease>", lambda e: (self._update_detected_links_count(), self._schedule_video_preview_check()))
         self.video_url_text.bind("<<Paste>>", lambda e: self.root.after(100, lambda: (self._update_detected_links_count(), self._schedule_video_preview_check())))
@@ -1212,7 +1226,7 @@ class DownloadApp(QueueUI):
         wrapping_label(
             video_detail_info,
             textvariable=self.video_preview_author_var,
-            foreground="#596579",
+            foreground=APPLE_TEXT_SECONDARY,
         )
 
         player = ttk.LabelFrame(video, text="Player", padding=8)
@@ -1273,7 +1287,7 @@ class DownloadApp(QueueUI):
         wrapping_label(
             player,
             textvariable=self.video_player_status_var,
-            foreground="#596579",
+            foreground=APPLE_TEXT_SECONDARY,
         )
 
         video_options = ttk.LabelFrame(video, text="Opções", padding=8)
@@ -1354,7 +1368,7 @@ class DownloadApp(QueueUI):
             variable=self.progress_value_var,
         )
         self.progress.pack(fill="x", pady=(0, 6))
-        wrapping_label(progress_frame, textvariable=self.download_metrics_var, foreground="#3f4f5f")
+        wrapping_label(progress_frame, textvariable=self.download_metrics_var, foreground=APPLE_TEXT_SECONDARY)
 
         self._build_completed_list(self.completed_page)
 
@@ -1397,7 +1411,7 @@ class DownloadApp(QueueUI):
         wrapping_label(
             speed_frame,
             text="Dica: use 4 fragmentos; limite a velocidade para não sobrecarregar sua conexão.",
-            foreground="#596579",
+            foreground=APPLE_TEXT_SECONDARY,
         )
 
         automation_frame = ttk.LabelFrame(settings, text="Automação & Ação ao Concluir Fila", padding=10)
@@ -1415,7 +1429,7 @@ class DownloadApp(QueueUI):
         wrapping_label(
             automation_frame,
             text="Permite tocar aviso sonoro, abrir a pasta ou suspender/desligar o PC após concluir a fila.",
-            foreground="#596579",
+            foreground=APPLE_TEXT_SECONDARY,
         )
 
         subtitles_frame = ttk.LabelFrame(settings, text="Legendas (Subtitles & CC)", padding=10)
@@ -1444,7 +1458,7 @@ class DownloadApp(QueueUI):
         wrapping_label(
             subtitles_frame,
             text="Separe idiomas por vírgula (ex: pt,pt-BR,en,es). Desmarque 'Embutir' para salvar arquivos .srt separados.",
-            foreground="#596579",
+            foreground=APPLE_TEXT_SECONDARY,
         )
 
         video_features_frame = ttk.LabelFrame(settings, text="Otimizações de Vídeo & Capítulos", padding=10)
@@ -1467,7 +1481,7 @@ class DownloadApp(QueueUI):
         wrapping_label(
             video_features_frame,
             text="A divisão por capítulos é recomendada para coletâneas de música ou podcasts em vídeo único.",
-            foreground="#596579",
+            foreground=APPLE_TEXT_SECONDARY,
         )
 
         cookies_frame = ttk.LabelFrame(settings, text="Acesso a sites com login", padding=10)
@@ -1485,7 +1499,7 @@ class DownloadApp(QueueUI):
         wrapping_label(
             cookies_frame,
             text="Feche o Chrome/Edge antes de usar seus cookies. Fontes públicas do Kanal D não precisam deles.",
-            foreground="#596579",
+            foreground=APPLE_TEXT_SECONDARY,
         )
         ttk.Label(cookies_frame, text="Ou arquivo cookies.txt:").pack(anchor="w")
         file_row = ttk.Frame(cookies_frame)
@@ -1546,8 +1560,28 @@ class DownloadApp(QueueUI):
         wrapping_label(
             deezer_frame,
             text="Dica: Faça login no deezer.com pelo navegador > F12 > Armazenamento/Cookies > copie o valor de 'arl'. Sem ARL, o aplicativo continuará baixando as prévias públicas de 30s.",
-            foreground="#596579",
+            foreground=APPLE_TEXT_SECONDARY,
         )
+
+        spotify_frame = ttk.LabelFrame(settings, text="Integração Spotify & Librespot", padding=10)
+        spotify_frame.pack(fill="x", pady=(0, 12))
+        wrapping_label(
+            spotify_frame,
+            text=(
+                "O C² Downloader integra metadados oficiais do Spotify (ISRC, capas em alta definição 640x640 e prévias de áudio oficiais em 160 kbps).\n"
+                "Para faixas completas, as músicas do Spotify são sincronizadas diretamente via código ISRC no Deezer Hi-Fi ou YouTube."
+            ),
+            foreground=APPLE_TEXT_SECONDARY,
+        )
+        spot_status_row = ttk.Frame(spotify_frame)
+        spot_status_row.pack(fill="x", pady=(4, 2))
+        ttk.Label(spot_status_row, text="Status do Catálogo Spotify:").pack(side="left", padx=(0, 8))
+        ttk.Label(
+            spot_status_row,
+            text="🟢 Ativo (Resolução ISRC & Áudio Prévia sem credenciais)",
+            foreground=APPLE_GREEN,
+            font=(self.text_family, 9, "bold"),
+        ).pack(side="left")
 
         about_frame = ttk.LabelFrame(settings, text="Aplicativo", padding=10)
         about_frame.pack(fill="x")
@@ -1556,7 +1590,7 @@ class DownloadApp(QueueUI):
             text=f"{APP_NAME} • Versão {APP_VERSION}",
             font=(self.text_family, 10, "bold"),
         )
-        wrapping_label(about_frame, textvariable=self.update_status_var, foreground="#596579")
+        wrapping_label(about_frame, textvariable=self.update_status_var, foreground=APPLE_TEXT_SECONDARY)
         self.update_button = ttk.Button(
             about_frame,
             text="Verificar atualizações",
@@ -1624,7 +1658,7 @@ class DownloadApp(QueueUI):
             self.sidebar_visible = True
 
     def _build_apple_sidebar(self, parent) -> None:
-        self.sidebar_frame = ttk.Frame(parent, width=200, padding=(2, 4))
+        self.sidebar_frame = ttk.Frame(parent, width=205, padding=(2, 4), style="Sidebar.TFrame")
         self.sidebar_frame.pack_propagate(False)
         self.sidebar_frame.pack(side="left", fill="y", padx=(0, 6), before=self.content_container)
 
@@ -1634,13 +1668,14 @@ class DownloadApp(QueueUI):
             text="⚡ C² Downloader",
             font=(self.display_family, 11, "bold"),
             foreground=PROGRAM_BLUE,
-            padding=(10, 4, 4, 6),
+            style="Sidebar.TLabel",
+            padding=(10, 6, 4, 6),
         )
         brand_lbl.pack(fill="x")
 
         # Container interno com rolagem suave
-        canvas = Canvas(self.sidebar_frame, borderwidth=0, highlightthickness=0)
-        inner = ttk.Frame(canvas)
+        canvas = Canvas(self.sidebar_frame, borderwidth=0, highlightthickness=0, bg=APPLE_SIDEBAR_BG)
+        inner = ttk.Frame(canvas, style="Sidebar.TFrame")
         canvas_win = canvas.create_window((0, 0), window=inner, anchor="nw")
         canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_win, width=e.width))
         inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
@@ -1713,6 +1748,11 @@ class DownloadApp(QueueUI):
             "🌐 Top 50 Global",
             lambda: (self.tabs.select(self.music_page), self._load_top_global()),
             "Carregar Top 50 mais ouvidas no Mundo",
+        )
+        self.sidebar_top_sp_btn = _action(
+            "🟢 Top Spotify Hits",
+            lambda: (self.tabs.select(self.music_page), self._load_top_spotify()),
+            "Carregar as músicas mais tocadas no Spotify (Today's Top Hits)",
         )
 
         _sec("FERRAMENTAS")
@@ -1959,7 +1999,7 @@ class DownloadApp(QueueUI):
         frame = ttk.LabelFrame(parent, text=title, padding=8)
         frame.pack(fill="x", pady=(8, 0))
 
-        count = ttk.Label(frame, text="Nenhum item nesta fila.", foreground="#596579")
+        count = ttk.Label(frame, text="Nenhum item nesta fila.", foreground=APPLE_TEXT_SECONDARY)
         count.pack(anchor="w", pady=(0, 4))
         self.context_queue_counts[mode] = count
 
@@ -2002,7 +2042,7 @@ class DownloadApp(QueueUI):
         metrics_label = wrapping_label(
             frame,
             textvariable=self.download_metrics_var,
-            foreground="#596579",
+            foreground=APPLE_TEXT_SECONDARY,
         )
         progress.pack_configure(before=table)
         item_label.pack_configure(before=table)
@@ -2088,7 +2128,7 @@ class DownloadApp(QueueUI):
         custom.pack(side="left", padx=(5, 2))
         unit = ttk.Label(holder, text="kbps")
         unit.pack(side="left")
-        hint = ttk.Label(holder, text="", foreground="#596579")
+        hint = ttk.Label(holder, text="", foreground=APPLE_TEXT_SECONDARY)
         hint.pack(side="left", padx=(6, 0))
         if not hasattr(self, "audio_control_sets"):
             self.audio_control_sets = []
@@ -2105,8 +2145,25 @@ class DownloadApp(QueueUI):
     def _make_text(self, parent, height: int):
         from tkinter import Text
 
-        return Text(parent, height=height, width=1, wrap="word", font=(self.text_family, 10),
-                    relief="solid", borderwidth=1, padx=8, pady=6)
+        return Text(
+            parent,
+            height=height,
+            width=1,
+            wrap="word",
+            font=(self.text_family, 10),
+            relief="solid",
+            borderwidth=1,
+            padx=8,
+            pady=6,
+            background=APPLE_DARK_BG,
+            foreground=APPLE_TEXT_PRIMARY,
+            insertbackground=APPLE_TEXT_PRIMARY,
+            selectbackground=PROGRAM_BLUE,
+            selectforeground="#ffffff",
+            highlightthickness=1,
+            highlightcolor=PROGRAM_BLUE,
+            highlightbackground=APPLE_CARD_BORDER,
+        )
 
     def _update_audio_controls(self, *_args) -> None:
         format_choice = self.resolution_var.get()
@@ -3346,6 +3403,60 @@ class DownloadApp(QueueUI):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _load_top_spotify(self) -> None:
+        self._save_search_state_before_drill()
+        self.music_search_status_var.set("Carregando Top Hits do Spotify...")
+
+        def worker():
+            try:
+                from spotify_catalog import resolve_spotify_url
+                collection = resolve_spotify_url("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M", self._find_engine())
+                results = tuple(
+                    DeezerSearchResult(
+                        kind="track",
+                        item_id=t.track_id,
+                        title=t.title,
+                        subtitle=f"{t.artist} • {t.album}" if t.album else t.artist,
+                        cover_url=t.cover_url,
+                        page_url=t.page_url,
+                        album_id=None,
+                        album_title=t.album,
+                        explicit=t.explicit,
+                    ) for t in collection.tracks
+                )
+                self.event_queue.put(("music_drill_results", ("🟢 Top Spotify Hits", results, "")))
+            except Exception as exc:
+                self.event_queue.put(("music_drill_results", ("Spotify Top Hits", (), str(exc))))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _start_spotify_url_resolution(self, url: str) -> None:
+        self._save_search_state_before_drill()
+        self.music_search_status_var.set("Resolvendo link do Spotify (carregando faixas e capas)...")
+
+        def worker():
+            try:
+                from spotify_catalog import resolve_spotify_url
+                collection = resolve_spotify_url(url, self._find_engine())
+                results = tuple(
+                    DeezerSearchResult(
+                        kind="track",
+                        item_id=t.track_id,
+                        title=t.title,
+                        subtitle=f"{t.artist} • {t.album}" if t.album else t.artist,
+                        cover_url=t.cover_url,
+                        page_url=t.page_url,
+                        album_id=None,
+                        album_title=t.album,
+                        explicit=t.explicit,
+                    ) for t in collection.tracks
+                )
+                self.event_queue.put(("music_drill_results", (collection.title or "Spotify", results, "")))
+            except Exception as exc:
+                self.event_queue.put(("music_drill_results", ("Spotify", (), str(exc))))
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _load_user_favorites(self) -> None:
         arl = str(self.deezer_arl_var.get() if hasattr(self, "deezer_arl_var") else "").strip()
         if not arl:
@@ -3477,6 +3588,10 @@ class DownloadApp(QueueUI):
                 return
 
         dialog = Toplevel(self.root)
+        try:
+            dialog.configure(background=APPLE_DARK_BG)
+        except Exception:
+            pass
         dialog.title("🔍 Raio-X de Metadados Deezer (Link Analyzer)")
         dialog.transient(self.root)
         fit_window(dialog, max_width=680, max_height=600)
@@ -3496,8 +3611,8 @@ class DownloadApp(QueueUI):
                     header.pack(fill="x", pady=(0, 12))
                     title_txt = f"{data['title']}"
                     sub_txt = f"{data['artist']} • {data['album']}" if data['album'] else data['artist']
-                    ttk.Label(header, text=title_txt, font=(self.display_family, 13, "bold"), foreground="#2563eb").pack(anchor="w")
-                    ttk.Label(header, text=sub_txt, font=(self.text_family, 10), foreground="#475569").pack(anchor="w", pady=(2, 0))
+                    ttk.Label(header, text=title_txt, font=(self.display_family, 13, "bold"), foreground=PROGRAM_BLUE).pack(anchor="w")
+                    ttk.Label(header, text=sub_txt, font=(self.text_family, 10), foreground=APPLE_TEXT_SECONDARY).pack(anchor="w", pady=(2, 0))
 
                     tbl = ttk.Frame(container)
                     tbl.pack(fill="both", expand=True, pady=(0, 12))
@@ -3521,8 +3636,8 @@ class DownloadApp(QueueUI):
                         info_fields.append(("Países Disponíveis", f"{data['available_countries_count']} países"))
 
                     for r, (lbl, val) in enumerate(info_fields):
-                        bg_color = "#f8fafc" if r % 2 == 0 else "#ffffff"
-                        row_frame = Frame(tbl, bg=bg_color, padx=6, pady=3)
+                        bg_color = APPLE_CARD_BG if r % 2 == 0 else APPLE_SIDEBAR_BG
+                        row_frame = Frame(tbl, bg=bg_color, padx=8, pady=4)
                         row_frame.pack(fill="x")
                         ttk.Label(row_frame, text=lbl, font=(self.text_family, 9, "bold"), width=24).pack(side="left")
                         ttk.Label(row_frame, text=val, font=(self.text_family, 9)).pack(side="left", fill="x", expand=True)
@@ -3566,6 +3681,10 @@ class DownloadApp(QueueUI):
             return
 
         dialog = Toplevel(self.root)
+        try:
+            dialog.configure(background=APPLE_DARK_BG)
+        except Exception:
+            pass
         dialog.title(f"☑️ Faixas do Álbum: {album_title}")
         dialog.transient(self.root)
         fit_window(dialog, max_width=720, max_height=620)
@@ -3583,9 +3702,9 @@ class DownloadApp(QueueUI):
 
                     header = ttk.Frame(container)
                     header.pack(fill="x", pady=(0, 8))
-                    ttk.Label(header, text=f"Álbum: {album_title}", font=(self.display_family, 12, "bold"), foreground="#2563eb").pack(anchor="w")
+                    ttk.Label(header, text=f"Álbum: {album_title}", font=(self.display_family, 12, "bold"), foreground=PROGRAM_BLUE).pack(anchor="w")
                     count_var = StringVar()
-                    count_lbl = ttk.Label(header, textvariable=count_var, font=(self.text_family, 9), foreground="#64748b")
+                    count_lbl = ttk.Label(header, textvariable=count_var, font=(self.text_family, 9), foreground=APPLE_TEXT_SECONDARY)
                     count_lbl.pack(anchor="w")
 
                     table_frame = ttk.Frame(container)
@@ -3712,7 +3831,7 @@ class DownloadApp(QueueUI):
         wrapping_label(info, textvariable=self.music_title_var, font=(self.text_family, 11, "bold"))
         wrapping_label(info, textvariable=self.music_artist_var)
         wrapping_label(info, textvariable=self.music_album_var)
-        wrapping_label(info, textvariable=self.music_extra_var, foreground="#596579")
+        wrapping_label(info, textvariable=self.music_extra_var, foreground=APPLE_TEXT_SECONDARY)
         buttons = ttk.Frame(info)
         buttons.pack(fill="x", pady=(8, 0))
         self.music_play_button = ttk.Button(
@@ -3889,38 +4008,107 @@ class DownloadApp(QueueUI):
 
         def worker():
             try:
-                track = resolve_deezer_track(result.item_id)
+                is_spotify = "spotify.com" in getattr(result, "page_url", "") or "spotify:" in getattr(result, "page_url", "")
                 played_full = False
-                track_explicit = getattr(track, "explicit", False) or getattr(result, "explicit", False)
-                if arl:
-                    try:
-                        self.event_queue.put(("music_player_status", f"Baixando faixa completa: {result.title}..."))
-                        pref_qual = str(getattr(self, "deezer_quality_var", None) and self.deezer_quality_var.get() or "auto")
-                        self.music_player.play_deezer_full(
-                            result.item_id,
-                            arl,
+                track_explicit = getattr(result, "explicit", False)
+                album_title = getattr(result, "album_title", "") or ""
+
+                if is_spotify:
+                    from spotify_catalog import SpotifyTrack, match_spotify_track_to_deezer, resolve_spotify_url
+                    sp_tr = SpotifyTrack(
+                        track_id=result.item_id,
+                        title=result.title,
+                        artist=result.subtitle.split(" • ")[0] if " • " in result.subtitle else result.subtitle,
+                        album=album_title,
+                        explicit=track_explicit,
+                    )
+                    # If ARL is present, try exact ISRC/title match on Deezer for full HiFi playback
+                    if arl:
+                        try:
+                            deezer_cand = match_spotify_track_to_deezer(sp_tr)
+                            if deezer_cand and deezer_cand.track_id:
+                                self.event_queue.put(("music_player_status", f"Baixando faixa completa via Deezer: {result.title}..."))
+                                pref_qual = str(getattr(self, "deezer_quality_var", None) and self.deezer_quality_var.get() or "auto")
+                                self.music_player.play_deezer_full(
+                                    deezer_cand.track_id,
+                                    arl,
+                                    title=result.title,
+                                    artist=result.subtitle,
+                                    album=deezer_cand.album or album_title,
+                                    duration=deezer_cand.duration or 0.0,
+                                    quality_preference=pref_qual,
+                                    explicit=track_explicit or deezer_cand.explicit,
+                                )
+                                played_full = True
+                        except Exception:
+                            pass
+
+                    if not played_full:
+                        # Direct Spotify preview playback
+                        sp_preview = getattr(result, "preview_url", None)
+                        if not sp_preview:
+                            try:
+                                col = resolve_spotify_url(result.page_url, self._find_engine())
+                                if col.tracks and col.tracks[0].preview_url:
+                                    sp_preview = col.tracks[0].preview_url
+                            except Exception:
+                                pass
+
+                        if sp_preview:
+                            self.music_player.play_preview(
+                                sp_preview,
+                                title=result.title,
+                                artist=result.subtitle,
+                                album=album_title,
+                                duration=30.0,
+                                explicit=track_explicit,
+                            )
+                        else:
+                            # Fallback: search Deezer public preview
+                            deezer_cand = match_spotify_track_to_deezer(sp_tr)
+                            if deezer_cand and deezer_cand.preview_url:
+                                self.music_player.play_preview(
+                                    deezer_cand.preview_url,
+                                    title=result.title,
+                                    artist=result.subtitle,
+                                    album=deezer_cand.album or album_title,
+                                    duration=deezer_cand.duration or 30.0,
+                                    explicit=track_explicit or deezer_cand.explicit,
+                                )
+                            else:
+                                raise MusicPlayerError("Áudio indisponível para esta faixa do Spotify.")
+                else:
+                    track = resolve_deezer_track(result.item_id)
+                    track_explicit = getattr(track, "explicit", False) or getattr(result, "explicit", False)
+                    if arl:
+                        try:
+                            self.event_queue.put(("music_player_status", f"Baixando faixa completa: {result.title}..."))
+                            pref_qual = str(getattr(self, "deezer_quality_var", None) and self.deezer_quality_var.get() or "auto")
+                            self.music_player.play_deezer_full(
+                                result.item_id,
+                                arl,
+                                title=result.title,
+                                artist=result.subtitle,
+                                album=track.album,
+                                duration=track.duration or 0.0,
+                                quality_preference=pref_qual,
+                                explicit=track_explicit,
+                            )
+                            played_full = True
+                        except Exception:
+                            pass
+
+                    if not played_full:
+                        if not track.preview_url:
+                            raise MusicPlayerError("A Deezer não disponibilizou áudio para esta faixa.")
+                        self.music_player.play_preview(
+                            track.preview_url,
                             title=result.title,
                             artist=result.subtitle,
                             album=track.album,
-                            duration=track.duration or 0.0,
-                            quality_preference=pref_qual,
+                            duration=track.duration or 30.0,
                             explicit=track_explicit,
                         )
-                        played_full = True
-                    except Exception:
-                        pass
-
-                if not played_full:
-                    if not track.preview_url:
-                        raise MusicPlayerError("A Deezer não disponibilizou áudio para esta faixa.")
-                    self.music_player.play_preview(
-                        track.preview_url,
-                        title=result.title,
-                        artist=result.subtitle,
-                        album=track.album,
-                        duration=track.duration or 30.0,
-                        explicit=track_explicit,
-                    )
 
                 self._playing_item_id = catalog_id
                 self._catalog_playing_active = True
@@ -3989,6 +4177,10 @@ class DownloadApp(QueueUI):
 
     def _metadata_dialog(self, item: dict, *, completed: bool) -> None:
         dialog = Toplevel(self.root)
+        try:
+            dialog.configure(background=APPLE_DARK_BG)
+        except Exception:
+            pass
         dialog.title("Editar metadados")
         dialog.transient(self.root)
         dialog.grab_set()

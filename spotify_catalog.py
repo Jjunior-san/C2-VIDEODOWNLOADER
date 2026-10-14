@@ -62,6 +62,8 @@ class SpotifyTrack:
     cover_url: str | None = None
     page_url: str = ""
     explicit: bool = False
+    preview_url: str | None = None
+    isrc: str = ""
 
     @property
     def display_title(self) -> str:
@@ -174,6 +176,8 @@ def _resolve_with_ytdlp(url: str, engine_path: Path | None) -> SpotifyCollection
                 cover = str(entry.get("thumbnail") or "")
                 page_url = str(entry.get("url") or entry.get("webpage_url") or f"https://open.spotify.com/track/{track_id}")
                 is_explicit = bool(entry.get("explicit") or entry.get("is_explicit"))
+                isrc = str(entry.get("isrc") or "").strip()
+                preview = str(entry.get("preview_url") or "") or None
                 if track_title:
                     tracks.append(SpotifyTrack(
                         track_id=track_id,
@@ -184,6 +188,8 @@ def _resolve_with_ytdlp(url: str, engine_path: Path | None) -> SpotifyCollection
                         cover_url=cover or None,
                         page_url=page_url,
                         explicit=is_explicit,
+                        preview_url=preview,
+                        isrc=isrc,
                     ))
         elif data.get("title"):
             track_id = str(data.get("id") or "")
@@ -193,6 +199,8 @@ def _resolve_with_ytdlp(url: str, engine_path: Path | None) -> SpotifyCollection
                 parts = track_title.split(" - ", 1)
                 artist, track_title = parts[0].strip(), parts[1].strip()
             is_explicit = bool(data.get("explicit") or data.get("is_explicit"))
+            isrc = str(data.get("isrc") or "").strip()
+            preview = str(data.get("preview_url") or "") or None
             tracks.append(SpotifyTrack(
                 track_id=track_id,
                 title=track_title,
@@ -202,6 +210,8 @@ def _resolve_with_ytdlp(url: str, engine_path: Path | None) -> SpotifyCollection
                 cover_url=str(data.get("thumbnail") or "") or None,
                 page_url=str(data.get("webpage_url") or url),
                 explicit=is_explicit,
+                preview_url=preview,
+                isrc=isrc,
             ))
 
         if tracks:
@@ -245,6 +255,18 @@ def _resolve_with_embed(url: str, kind: str, identifier: str) -> SpotifyCollecti
     title = str(entity.get("title") or entity.get("name") or f"Spotify {kind.title()}").strip()
     tracks: list[SpotifyTrack] = []
 
+    # Try to find high-res cover from entity
+    entity_cover = None
+    v_images = entity.get("visualIdentity", {}).get("image") or entity.get("images") or []
+    if isinstance(v_images, list) and v_images:
+        sorted_imgs = sorted(
+            [img for img in v_images if isinstance(img, dict) and img.get("url")],
+            key=lambda img: int(img.get("maxHeight") or img.get("height") or img.get("maxWidth") or img.get("width") or 0),
+            reverse=True,
+        )
+        if sorted_imgs:
+            entity_cover = sorted_imgs[0].get("url")
+
     track_list = entity.get("trackList") or []
     if not track_list and entity.get("type") == "track":
         track_list = [entity]
@@ -264,13 +286,50 @@ def _resolve_with_embed(url: str, kind: str, identifier: str) -> SpotifyCollecti
         duration_ms = item.get("duration") or item.get("duration_ms")
         duration = int(duration_ms) // 1000 if duration_ms else None
         is_explicit = bool(item.get("isExplicit") or item.get("explicit"))
+        
+        # Audio preview URL
+        audio_prev = item.get("audioPreview")
+        preview_url = None
+        if isinstance(audio_prev, dict):
+            preview_url = audio_prev.get("url")
+        elif isinstance(audio_prev, str) and audio_prev.startswith("http"):
+            preview_url = audio_prev
+
+        # ISRC code if available
+        ext_ids = item.get("external_ids") or {}
+        isrc = str(item.get("isrc") or (ext_ids.get("isrc") if isinstance(ext_ids, dict) else "") or "").strip()
+
+        # Cover resolution
+        item_cover = entity_cover
+        item_imgs = item.get("images") or item.get("visualIdentity", {}).get("image") or []
+        if isinstance(item_imgs, list) and item_imgs:
+            sorted_item_imgs = sorted(
+                [img for img in item_imgs if isinstance(img, dict) and img.get("url")],
+                key=lambda img: int(img.get("maxHeight") or img.get("height") or img.get("maxWidth") or img.get("width") or 0),
+                reverse=True,
+            )
+            if sorted_item_imgs:
+                item_cover = sorted_item_imgs[0].get("url")
+
+        album_val = ""
+        if isinstance(item.get("album"), dict):
+            album_val = str(item["album"].get("name") or item["album"].get("title") or "")
+        elif item.get("album"):
+            album_val = str(item.get("album"))
+        if not album_val and kind == "album":
+            album_val = title
+
         tracks.append(SpotifyTrack(
             track_id=track_id or identifier,
             title=track_title,
             artist=artist,
+            album=album_val,
             duration=duration,
+            cover_url=item_cover,
             page_url=f"https://open.spotify.com/track/{track_id}" if track_id else url,
             explicit=is_explicit,
+            preview_url=preview_url,
+            isrc=isrc,
         ))
 
     if not tracks:
@@ -286,24 +345,50 @@ def resolve_spotify_url(url: str, engine_path: Path | None = None) -> SpotifyCol
         raise SpotifyCatalogError("O endereço informado não é um link válido do Spotify.")
     kind, identifier = parsed
 
-    # 1. Try yt-dlp first if available (fast and extracts all metadata)
+    # 1. Try direct embed scraping first (fastest, gets covers & preview URLs)
+    try:
+        return _resolve_with_embed(url, kind, identifier)
+    except Exception:
+        pass
+
+    # 2. Try yt-dlp if available
     if engine_path:
         ytdlp_res = _resolve_with_ytdlp(url, engine_path)
         if ytdlp_res and ytdlp_res.tracks:
             return ytdlp_res
 
-    # 2. Try direct embed scraping
+    # 3. Fallback to embed with full error handling
     try:
         return _resolve_with_embed(url, kind, identifier)
     except Exception as exc:
-        # 3. Last attempt with yt-dlp without strict validation if not attempted before
-        if not engine_path:
-            raise exc
         raise SpotifyCatalogError(f"Falha ao consultar o link do Spotify: {exc}") from exc
 
 
 def match_spotify_track_to_deezer(track: SpotifyTrack) -> DeezerTrack | None:
     """Search Deezer for a matching track to enable lossless/320kbps download."""
+    # 1. Exact ISRC matching (highest precision, guarantees exact recording)
+    if getattr(track, "isrc", None) and str(track.isrc).strip():
+        try:
+            clean_isrc = str(track.isrc).strip().upper()
+            sess = _http_session()
+            resp = sess.get(f"https://api.deezer.com/track/isrc:{clean_isrc}", timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                if not data.get("error") and data.get("id"):
+                    return DeezerTrack(
+                        track_id=str(data["id"]),
+                        title=str(data.get("title") or track.title),
+                        artist=str(data.get("artist", {}).get("name") or track.artist),
+                        album=str(data.get("album", {}).get("title") or track.album),
+                        preview_url=str(data.get("preview") or "") or None,
+                        cover_url=str(data.get("album", {}).get("cover_big") or data.get("album", {}).get("cover_medium") or "") or None,
+                        duration=data.get("duration") or track.duration,
+                        album_id=str(data.get("album", {}).get("id") or "") or None,
+                        explicit=bool(data.get("explicit_lyrics") or track.explicit),
+                    )
+        except Exception:
+            pass
+
     query = f"{track.artist} {track.title}".strip() if track.artist else track.title.strip()
     if len(query) < 2:
         return None

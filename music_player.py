@@ -18,10 +18,20 @@ class MusicPlayerError(RuntimeError):
     pass
 
 
-def is_public_deezer_preview(url: str) -> bool:
+def is_public_audio_preview(url: str) -> bool:
     parsed = urlparse(str(url or "").strip())
     host = (parsed.hostname or "").lower()
-    return parsed.scheme == "https" and host.endswith("dzcdn.net")
+    return parsed.scheme == "https" and (
+        host.endswith("dzcdn.net")
+        or host.endswith("scdn.co")
+        or host.endswith("spotifycdn.com")
+        or "audio-preview" in host
+    )
+
+
+def is_public_deezer_preview(url: str) -> bool:
+    """Backward compatibility alias for is_public_audio_preview."""
+    return is_public_audio_preview(url)
 
 
 class MusicPlayer:
@@ -54,8 +64,8 @@ class MusicPlayer:
         return pygame
 
     def _preview_file(self, url: str) -> Path:
-        if not is_public_deezer_preview(url):
-            raise MusicPlayerError("A reprodução aceita somente a prévia pública oficial da Deezer.")
+        if not is_public_audio_preview(url):
+            raise MusicPlayerError("A reprodução aceita somente a prévia pública oficial (Deezer/Spotify).")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
         path = self.cache_dir / f"{digest}.mp3"
@@ -70,9 +80,9 @@ class MusicPlayer:
             with urlopen(request, timeout=20) as response:
                 data = response.read(MAX_PREVIEW_BYTES + 1)
         except OSError as exc:
-            raise MusicPlayerError(f"Não foi possível carregar a prévia da Deezer: {exc}") from exc
+            raise MusicPlayerError(f"Não foi possível carregar a prévia de áudio: {exc}") from exc
         if not data or len(data) > MAX_PREVIEW_BYTES:
-            raise MusicPlayerError("A prévia recebida da Deezer é inválida ou excede o limite permitido.")
+            raise MusicPlayerError("A prévia recebida é inválida ou excede o limite permitido.")
         temporary = path.with_suffix(".tmp")
         temporary.write_bytes(data)
         temporary.replace(path)

@@ -251,6 +251,19 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
+## Versão 2.5.0 — Redesign Dark Obsidian e Integração com Spotify & Librespot
+
+- **Revisão Gráfica e Design System Dark Obsidian**:
+  - Migração completa do motor ttk para o tema `clam`, eliminando definitivamente os painéis cinza-claro do Windows 7/Vista que não respeitavam o modo escuro;
+  - Paleta escura consistente (`#0d1117` fundo principal, `#161b22` cartões e barra lateral, `#30363d` bordas elegantes);
+  - Tipografia de alto contraste com `#f0f6fc` para texto principal e `#8b949e` para textos secundários;
+  - Todas as janelas e caixas de diálogo (*Configurações*, *Raio-X de Metadados*, *Seleção de Faixas* e *Metadados*) padronizadas no mesmo estilo moderno.
+- **Integração Spotify & Prévias Oficiais de Áudio**:
+  - Extração de metadados oficiais do catálogo Spotify com capas 640x640, código internacional ISRC e prévias de áudio oficiais de 30 segundos em 160 kbps via CDN do Spotify (`p.scdn.co`);
+  - Reprodução instantânea de prévias do Spotify no player integrado sem necessidade de credenciais de login;
+  - Botão de descoberta rápida **🟢 Top Spotify** na barra de busca e no menu lateral para carregar a parada mundial *Today's Top Hits*;
+  - Pareamento 100% fiel de faixas Spotify para Deezer Hi-Fi através do código ISRC oficial de gravação.
+
 ## Versão 2.4.1 — Identidade Azul do Programa, Reprodução Completa via ARL e Gestão de Álbuns
 
 - **Identidade Visual e Paleta Azul Assinatura (`#2563eb`)**:
