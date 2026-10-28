@@ -81,7 +81,7 @@ jobs:
               --repo $env:GITHUB_REPOSITORY `
               --target $env:GITHUB_SHA `
               --title "C² Video Downloader $env:VERSION" `
-              --notes "Versão 2.6.1 com redesign completo da interface inspirado no Deemix: tema Dark Obsidian (#0e0e13 / #161622), remoção das abas nativas horizontais substituídas por navegação limpa na barra lateral, barra de busca hero com chips de descoberta integrados, cartões de detalhes e tabela de faixas ampliada com alto contraste." `
+              --notes "Versão $env:VERSION com reconstrução gráfica completa estilo Deemix Studio (Dark Obsidian #0e0e13 / #161622 / #1b1b26): eliminação total de bordas 3D claras, barras de rolagem e sliders escuros minimalistas, harmonização recursiva de superfícies, painel de detalhes em 3 fileiras sem cortes e layout Estúdio em 2 colunas nas abas Música e Vídeo sem necessidade de rolagem." `
               --latest
             if ($LASTEXITCODE -ne 0) {
               throw "Falha ao criar a Release $env:TAG."
