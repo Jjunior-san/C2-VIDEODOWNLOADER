@@ -38,18 +38,39 @@ APPLE_RED_ACTIVE = PROGRAM_BLUE_ACTIVE
 APPLE_RED_SUBTLE = PROGRAM_BLUE_SUBTLE
 
 # Clean, Unified Obsidian / Dark Slate Theme Palette
-APPLE_DARK_BG = "#0d1117"
-APPLE_SIDEBAR_BG = "#161b22"
-APPLE_CARD_BG = "#161b22"
-APPLE_CARD_BORDER = "#30363d"
-APPLE_CARD_HOVER = "#21262d"
-APPLE_TEXT_PRIMARY = "#f0f6fc"
-APPLE_TEXT_SECONDARY = "#8b949e"
-APPLE_TEXT_MUTED = "#6e7681"
-APPLE_GREEN = "#10b981"
-APPLE_ORANGE = "#d29922"
-APPLE_BLUE = "#2563eb"
-APPLE_SELECTION = "#1f3a5f"
+# Deemix-Inspired Dark Obsidian Theme Palette (Extracted directly from Deemix GUI bundle.js)
+DEEMIX_DARK_BG = "#0e0e13"          # hsl(240, 10%, 8%) - Fundo principal da aplicação
+DEEMIX_SIDEBAR_BG = "#161622"       # hsl(240, 15%, 12%) - Painel lateral e cabeçalhos
+DEEMIX_CARD_BG = "#1f1f2b"          # hsl(240, 12%, 16%) - Cartões e caixas de diálogo
+DEEMIX_CARD_BORDER = "#2c2c3e"      # Bordas sutis dos elementos
+DEEMIX_CARD_HOVER = "#2a2a3b"       # hsl(240, 10%, 22%) - Destaque ao passar o mouse
+DEEMIX_TEXT_PRIMARY = "#f3f4f6"     # hsl(0, 0%, 93%) - Texto principal de alto contraste
+DEEMIX_TEXT_SECONDARY = "#9ca3af"   # Textos secundários, subtítulos e metadados
+DEEMIX_TEXT_MUTED = "#64748b"       # Dicas e placeholders
+DEEMIX_BLUE = "#0a84ff"             # hsl(210, 100%, 52%) - Azul elétrico assinatura Deemix
+DEEMIX_BLUE_HOVER = "#0070e0"
+DEEMIX_BLUE_ACTIVE = "#005bb5"
+DEEMIX_GOLD = "#ffd024"             # hsl(46, 100%, 57%) - Destaques VIP / explícito / avisos
+DEEMIX_GREEN = "#10b981"            # Indicadores de sucesso / status ativo
+DEEMIX_SELECTION = "#1e3a5f"        # Seleção de linhas em tabelas
+
+# Aliases de compatibilidade retroativa
+APPLE_DARK_BG = DEEMIX_DARK_BG
+APPLE_SIDEBAR_BG = DEEMIX_SIDEBAR_BG
+APPLE_CARD_BG = DEEMIX_CARD_BG
+APPLE_CARD_BORDER = DEEMIX_CARD_BORDER
+APPLE_CARD_HOVER = DEEMIX_CARD_HOVER
+APPLE_TEXT_PRIMARY = DEEMIX_TEXT_PRIMARY
+APPLE_TEXT_SECONDARY = DEEMIX_TEXT_SECONDARY
+APPLE_TEXT_MUTED = DEEMIX_TEXT_MUTED
+APPLE_GREEN = DEEMIX_GREEN
+APPLE_ORANGE = DEEMIX_GOLD
+APPLE_BLUE = DEEMIX_BLUE
+APPLE_SELECTION = DEEMIX_SELECTION
+PROGRAM_BLUE = DEEMIX_BLUE
+PROGRAM_BLUE_HOVER = DEEMIX_BLUE_HOVER
+PROGRAM_BLUE_ACTIVE = DEEMIX_BLUE_ACTIVE
+PROGRAM_BLUE_SUBTLE = "#1e293b" 
 
 
 def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.Style:
@@ -71,7 +92,7 @@ def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.
         font=(text_family, 10),
     )
 
-    row_height = max(28, font.Font(root=root, family=text_family, size=10).metrics("linespace") + 12)
+    row_height = max(34, font.Font(root=root, family=text_family, size=10).metrics("linespace") + 16)
     style.configure(
         "Treeview",
         background=APPLE_DARK_BG,
@@ -127,6 +148,10 @@ def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.
         foreground=APPLE_TEXT_PRIMARY,
         font=(text_family, 10, "bold"),
     )
+
+    # Deemix-style hidden tab bar for main navigation notebook
+    style.layout("Deemix.TNotebook.Tab", [])
+    style.configure("Deemix.TNotebook", background=APPLE_DARK_BG, tabmargins=[0, 0, 0, 0], borderwidth=0)
 
     style.configure("TNotebook", background=APPLE_DARK_BG, tabmargins=[2, 4, 2, 0], borderwidth=0)
     style.configure(
@@ -245,8 +270,8 @@ def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.
 
     style.configure(
         "ActiveSidebar.TButton",
-        background="#1f293d",
-        foreground="#60a5fa",
+        background="#1e2238",
+        foreground=DEEMIX_BLUE,
         font=(text_family, 10, "bold"),
         anchor="w",
         padding=(10, 6),
@@ -255,8 +280,24 @@ def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.
     )
     style.map(
         "ActiveSidebar.TButton",
-        background=[("active", "#253450")],
-        foreground=[("active", "#93c5fd")],
+        background=[("active", "#252b46"), ("pressed", "#161b2e")],
+        foreground=[("active", "#60a5fa")],
+    )
+
+    style.configure(
+        "Chip.TButton",
+        background=DEEMIX_CARD_BG,
+        foreground=DEEMIX_TEXT_PRIMARY,
+        font=(text_family, 9),
+        padding=(8, 4),
+        relief="solid",
+        borderwidth=1,
+        bordercolor=DEEMIX_CARD_BORDER,
+    )
+    style.map(
+        "Chip.TButton",
+        background=[("active", DEEMIX_CARD_HOVER), ("pressed", DEEMIX_CARD_BORDER)],
+        foreground=[("active", "#ffffff")],
     )
 
     style.configure(

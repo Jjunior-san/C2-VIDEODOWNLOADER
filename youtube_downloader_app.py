@@ -54,6 +54,10 @@ from deezer_catalog import (
 from spotify_catalog import is_spotify_url
 from download_control import DownloadCancelled, DownloadControl
 from ui_layout import (
+    DEEMIX_BLUE,
+    DEEMIX_TEXT_SECONDARY,
+    DEEMIX_CARD_BG,
+    DEEMIX_CARD_BORDER,
     APPLE_CARD_BG,
     APPLE_CARD_BORDER,
     APPLE_DARK_BG,
@@ -799,8 +803,9 @@ class DownloadApp(QueueUI):
         self.content_container = ttk.Frame(self.main_split)
         self.content_container.pack(side="right", fill="both", expand=True)
 
-        self.tabs = ttk.Notebook(self.content_container)
+        self.tabs = ttk.Notebook(self.content_container, style="Deemix.TNotebook")
         self.tabs.pack(fill="both", expand=True)
+        self.tabs.bind("<<NotebookTabChanged>>", lambda _e: self._sync_sidebar_selection())
 
         self.music_page = ScrollablePage(self.tabs)
         self.video_page = ScrollablePage(self.tabs)
@@ -873,10 +878,21 @@ class DownloadApp(QueueUI):
         music = self.music_page.body
         video = self.video_page.body
 
-        # Música: pesquisa instantânea e resultados sem precisar de botão Buscar.
-        search_frame = ttk.LabelFrame(music, text="Pesquisar na Deezer & Spotify", padding=10)
-        search_frame.pack(fill="x", pady=(0, 8))
-        search_row = ttk.Frame(search_frame)
+        # Música: pesquisa estilo Deemix (TheSearchBar.vue) com card escuro e chips integrados
+        search_frame = ttk.Frame(music, style="Card.TFrame", padding=(14, 12))
+        search_frame.pack(fill="x", pady=(0, 10))
+
+        search_header = ttk.Frame(search_frame, style="Card.TFrame")
+        search_header.pack(fill="x", pady=(0, 6))
+        ttk.Label(
+            search_header,
+            text="CATÁLOGO & PESQUISA DEEZER",
+            font=(self.text_family, 8, "bold"),
+            foreground=DEEMIX_TEXT_SECONDARY,
+            style="Card.TLabel",
+        ).pack(side="left")
+
+        search_row = ttk.Frame(search_frame, style="Card.TFrame")
         search_row.pack(fill="x")
         self.catalog_back_button = ttk.Button(
             search_row,
@@ -892,7 +908,7 @@ class DownloadApp(QueueUI):
             textvariable=self.music_search_type_var,
             values=("Música", "Artista", "Álbum", "Playlist"),
             state="readonly",
-            width=12,
+            width=11,
         ).pack(side="left", padx=(0, 8))
         self.music_search_entry = ttk.Entry(
             search_row,
@@ -901,19 +917,21 @@ class DownloadApp(QueueUI):
         )
         self.music_search_entry.pack(side="left", fill="x", expand=True)
 
-        discovery_row = ttk.Frame(search_frame)
-        discovery_row.pack(fill="x", pady=(6, 2))
+        discovery_row = ttk.Frame(search_frame, style="Card.TFrame")
+        discovery_row.pack(fill="x", pady=(8, 2))
         ttk.Label(
             discovery_row,
-            text="🔥 Descoberta:",
+            text="Explorar:",
             font=(self.text_family, 9, "bold"),
-            foreground="#2563eb",
+            foreground=DEEMIX_BLUE,
+            style="Card.TLabel",
         ).pack(side="left", padx=(0, 6))
 
         self.btn_top_brasil = ttk.Button(
             discovery_row,
             text="🇧🇷 Top Brasil",
             command=self._load_top_brasil,
+            style="Chip.TButton",
         )
         self.btn_top_brasil.pack(side="left", padx=(0, 4))
         add_tooltip(self.btn_top_brasil, "Carregar as 50 músicas mais tocadas no Brasil na Deezer")
@@ -922,6 +940,7 @@ class DownloadApp(QueueUI):
             discovery_row,
             text="🌍 Top Global",
             command=self._load_top_global,
+            style="Chip.TButton",
         )
         self.btn_top_global.pack(side="left", padx=(0, 4))
         add_tooltip(self.btn_top_global, "Carregar a parada mundial Top 50 da Deezer")
@@ -930,6 +949,7 @@ class DownloadApp(QueueUI):
             discovery_row,
             text="🟢 Top Spotify",
             command=self._load_top_spotify,
+            style="Chip.TButton",
         )
         self.btn_top_spotify.pack(side="left", padx=(0, 4))
         add_tooltip(self.btn_top_spotify, "Carregar as músicas mais tocadas no Spotify (Today's Top Hits)")
@@ -938,14 +958,16 @@ class DownloadApp(QueueUI):
             discovery_row,
             text="⭐ Meus Favoritos",
             command=self._load_user_favorites,
+            style="Chip.TButton",
         )
         self.btn_user_favs.pack(side="left", padx=(0, 4))
         add_tooltip(self.btn_user_favs, "Carregar as músicas curtidas da sua conta Deezer conectada")
 
         self.btn_link_analyzer = ttk.Button(
             discovery_row,
-            text="🔍 Raio-X Metadados",
+            text="🔍 Raio-X",
             command=self._open_link_analyzer_dialog,
+            style="Chip.TButton",
         )
         self.btn_link_analyzer.pack(side="left", padx=(0, 4))
         add_tooltip(self.btn_link_analyzer, "Inspecionar metadados de qualquer link Deezer (ISRC, BPM, gravadora)")
@@ -962,6 +984,7 @@ class DownloadApp(QueueUI):
             discovery_row,
             text="Explorar País",
             command=self._load_selected_country_chart,
+            style="Chip.TButton",
         )
         self.btn_load_country.pack(side="left", padx=(0, 4))
         add_tooltip(self.btn_load_country, "Carregar o Top 50 do país selecionado na Deezer")
@@ -969,16 +992,27 @@ class DownloadApp(QueueUI):
         ttk.Label(
             search_frame,
             textvariable=self.music_search_status_var,
-            foreground=APPLE_TEXT_SECONDARY,
+            foreground=DEEMIX_TEXT_SECONDARY,
+            style="Card.TLabel",
         ).pack(anchor="w", pady=(6, 0))
 
         result_area = ttk.Panedwindow(music, orient="horizontal")
         result_area.pack(fill="both", expand=True, pady=(0, 8))
 
         result_list = ttk.Frame(result_area)
-        result_detail = ttk.LabelFrame(result_detail_parent := result_area, text="Detalhes", padding=10)
+        result_detail = ttk.Frame(result_detail_parent := result_area, style="Card.TFrame", padding=12)
         result_area.add(result_list, weight=3)
         result_area.add(result_detail, weight=2)
+
+        detail_hdr = ttk.Frame(result_detail, style="Card.TFrame")
+        detail_hdr.pack(fill="x", pady=(0, 8))
+        ttk.Label(
+            detail_hdr,
+            text="DETALHES DO ITEM",
+            font=(self.text_family, 8, "bold"),
+            foreground=DEEMIX_TEXT_SECONDARY,
+            style="Card.TLabel",
+        ).pack(anchor="w")
 
         result_table = ttk.Frame(result_list)
         result_table.pack(fill="both", expand=True)
@@ -1826,20 +1860,27 @@ class DownloadApp(QueueUI):
             self.sidebar_visible = True
 
     def _build_apple_sidebar(self, parent) -> None:
-        self.sidebar_frame = ttk.Frame(parent, width=205, padding=(2, 4), style="Sidebar.TFrame")
+        self.sidebar_frame = ttk.Frame(parent, width=215, padding=(2, 4), style="Sidebar.TFrame")
         self.sidebar_frame.pack_propagate(False)
         self.sidebar_frame.pack(side="left", fill="y", padx=(0, 6), before=self.content_container)
 
-        # Cabeçalho da Sidebar
-        brand_lbl = ttk.Label(
-            self.sidebar_frame,
+        # Cabeçalho da Sidebar estilo Deemix
+        brand_box = ttk.Frame(self.sidebar_frame, style="Sidebar.TFrame")
+        brand_box.pack(fill="x", padx=6, pady=(6, 8))
+        ttk.Label(
+            brand_box,
             text="⚡ C² Downloader",
             font=(self.display_family, 11, "bold"),
             foreground=PROGRAM_BLUE,
             style="Sidebar.TLabel",
-            padding=(10, 6, 4, 6),
-        )
-        brand_lbl.pack(fill="x")
+        ).pack(anchor="w", padx=6)
+        ttk.Label(
+            brand_box,
+            text="DEEMIX & YT-DLP CORE",
+            font=(self.text_family, 7, "bold"),
+            foreground="#64748b",
+            style="Sidebar.TLabel",
+        ).pack(anchor="w", padx=6)
 
         # Container interno com rolagem suave
         canvas = Canvas(self.sidebar_frame, borderwidth=0, highlightthickness=0, bg=APPLE_SIDEBAR_BG)
@@ -1952,7 +1993,10 @@ class DownloadApp(QueueUI):
     def _sync_sidebar_selection(self) -> None:
         if not hasattr(self, "_sidebar_buttons"):
             return
-        selected = self.tabs.select()
+        try:
+            selected = self.tabs.select()
+        except Exception:
+            return
         for key, (btn, page) in self._sidebar_buttons.items():
             if str(page) == selected:
                 btn.configure(style="ActiveSidebar.TButton")
