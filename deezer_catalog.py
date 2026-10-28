@@ -503,26 +503,55 @@ def get_track_album_info(track_id: str) -> tuple[str, str] | None:
     return None
 
 
+DEEZER_COUNTRY_CHARTS: dict[str, dict[str, str]] = {
+    "Brasil 🇧🇷": {"code": "br", "playlist": "1111141961", "chart_id": "0"},
+    "Global 🌍": {"code": "global", "playlist": "", "chart_id": "0"},
+    "Estados Unidos 🇺🇸": {"code": "us", "playlist": "1313621735", "chart_id": "0"},
+    "Reino Unido 🇬🇧": {"code": "uk", "playlist": "1116199381", "chart_id": "0"},
+    "Portugal 🇵🇹": {"code": "pt", "playlist": "1362528995", "chart_id": "0"},
+    "França 🇫🇷": {"code": "fr", "playlist": "1109890291", "chart_id": "0"},
+    "Alemanha 🇩🇪": {"code": "de", "playlist": "1111142221", "chart_id": "0"},
+    "Espanha 🇪🇸": {"code": "es", "playlist": "1116199461", "chart_id": "0"},
+    "Itália 🇮🇹": {"code": "it", "playlist": "1116199481", "chart_id": "0"},
+    "Japão 🇯🇵": {"code": "jp", "playlist": "1362529325", "chart_id": "0"},
+    "México 🇲🇽": {"code": "mx", "playlist": "1111143121", "chart_id": "0"},
+    "Argentina 🇦🇷": {"code": "ar", "playlist": "1279119721", "chart_id": "0"},
+}
+
+
+def get_deezer_top_country(country_key_or_name: str = "Brasil 🇧🇷", limit: int = 50) -> tuple[DeezerTrack, ...]:
+    """Fetch official Deezer charts for a specific country or global."""
+    limit = min(100, max(1, int(limit)))
+    ck = str(country_key_or_name or "").strip().lower()
+    info = None
+    for name, data in DEEZER_COUNTRY_CHARTS.items():
+        if ck in (name.lower(), data.get("code", "").lower(), name.split()[0].lower()):
+            info = data
+            break
+    if not info:
+        info = DEEZER_COUNTRY_CHARTS["Brasil 🇧🇷"]
+    playlist_id = info.get("playlist")
+    if playlist_id:
+        try:
+            payload = _api_json(f"{API_ROOT}/playlist/{playlist_id}/tracks?limit={limit}")
+            tracks = _paged_tracks(payload)
+            if tracks:
+                return tracks[:limit]
+        except Exception:
+            pass
+    chart_id = info.get("chart_id", "0")
+    payload = _api_json(f"{API_ROOT}/chart/{chart_id}/tracks?limit={limit}")
+    return _paged_tracks(payload)[:limit]
+
+
 def get_deezer_top_brasil(limit: int = 50) -> tuple[DeezerTrack, ...]:
     """Fetch the official Deezer Top Brasil tracks."""
-    limit = min(100, max(1, int(limit)))
-    try:
-        payload = _api_json(f"{API_ROOT}/playlist/1111141961/tracks?limit={limit}")
-        tracks = _paged_tracks(payload)
-        if tracks:
-            return tracks[:limit]
-    except Exception:
-        pass
-    # Fallback to general charts if playlist is temporarily unavailable
-    payload = _api_json(f"{API_ROOT}/chart/0/tracks?limit={limit}")
-    return _paged_tracks(payload)[:limit]
+    return get_deezer_top_country("br", limit)
 
 
 def get_deezer_top_global(limit: int = 50) -> tuple[DeezerTrack, ...]:
     """Fetch the official Deezer Global Top tracks."""
-    limit = min(100, max(1, int(limit)))
-    payload = _api_json(f"{API_ROOT}/chart/0/tracks?limit={limit}")
-    return _paged_tracks(payload)[:limit]
+    return get_deezer_top_country("global", limit)
 
 
 def get_deezer_user_favorites(arl: str, limit: int = 100) -> tuple[DeezerTrack, ...]:

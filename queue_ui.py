@@ -760,11 +760,15 @@ class QueueUI:
             music_filename_template=(
                 self.music_filename_var.get().strip()
                 if hasattr(self, "music_filename_var") and self.music_filename_var.get().strip()
-                else "{faixa:02} - {titulo}"
+                else "%artist% - %title%"
             ),
             deezer_arl=self.deezer_arl_var.get().strip() if hasattr(self, "deezer_arl_var") else "",
             deezer_quality=self.deezer_quality_var.get().strip() if hasattr(self, "deezer_quality_var") else "auto",
             create_collection_zip=bool(self.create_zip_var.get()) if hasattr(self, "create_zip_var") else False,
+            overwrite_policy=self.overwrite_policy_var.get() if hasattr(self, "overwrite_policy_var") else "Pular se já existir",
+            save_artwork=bool(self.save_artwork_var.get()) if hasattr(self, "save_artwork_var") else True,
+            create_m3u8=bool(self.create_m3u8_var.get()) if hasattr(self, "create_m3u8_var") else True,
+            pad_tracks=bool(self.pad_tracks_var.get()) if hasattr(self, "pad_tracks_var") else True,
             subtitles_enabled=bool(self.subtitles_enabled_var.get()) if hasattr(self, "subtitles_enabled_var") else False,
             subtitles_embed=bool(self.subtitles_embed_var.get()) if hasattr(self, "subtitles_embed_var") else True,
             subtitles_auto=bool(self.subtitles_auto_var.get()) if hasattr(self, "subtitles_auto_var") else False,

@@ -17,6 +17,9 @@ from audio_library import (
     is_audio_format,
     music_output_template,
     music_target_folder,
+    resolve_unique_path,
+    save_album_artwork,
+    should_overwrite_file,
 )
 from deezer_catalog import is_deezer_url, resolve_deezer_track, resolve_deezer_url, search_deezer_tracks
 from spotify_catalog import is_spotify_url, resolve_spotify_url, match_spotify_track_to_deezer
@@ -317,20 +320,26 @@ def run_queue(owner, repository, options, engine):
                     template = item.get("output_template") or music_output_template(
                         item,
                         ordinal,
-                        str(options.get("music_filename_template") or "{faixa:02} - {titulo}"),
+                        str(options.get("music_filename_template") or "%artist% - %title%"),
                     )
                     clean_filename = template.replace(".%(ext)s", "")
                     initial_file = folder / f"{clean_filename}.audio"
 
+                    overwrite_policy = str(options.get("overwrite_policy") or "skip")
                     possible_existing = [
                         folder / f"{clean_filename}.flac",
                         folder / f"{clean_filename}.mp3",
                     ]
                     existing_done = next((p for p in possible_existing if p.is_file() and p.stat().st_size > 0), None)
-                    if existing_done:
-                        owner.queue_log(f"Deezer: arquivo já concluído: {existing_done.name}")
+                    new_ext = ".flac" if pref_quality in {"flac", "lossless"} else ".mp3"
+                    new_bitrate = 1411 if pref_quality in {"flac", "lossless"} else (320 if pref_quality in {"320", "mp3_320"} else 128)
+
+                    if existing_done and not should_overwrite_file(existing_done, new_ext, new_bitrate, overwrite_policy):
+                        owner.queue_log(f"Deezer: arquivo já concluído ({existing_done.suffix.upper()}): {existing_done.name}")
                         output = existing_done
                     else:
+                        if existing_done and overwrite_policy in {"keep_both", "manter_ambos"}:
+                            initial_file = resolve_unique_path(folder / f"{clean_filename}.audio")
                         owner.queue_log(f"Deezer: baixando faixa completa autenticada ({item['title']})...")
 
                         def _deezer_progress(received, total, speed=None):
@@ -349,6 +358,8 @@ def run_queue(owner, repository, options, engine):
                     repository.update(item_id, status="finalizing")
                     owner.event_queue.put(("queue_changed", None))
                     apply_deezer_metadata(output, item, owner.queue_log)
+                    if options.get("save_artwork", True):
+                        save_album_artwork(folder, item, filename="cover.jpg", logger=owner.queue_log)
                     files = [str(output)]
                 elif item["kind"] == "jw":
                     key = item["source"]

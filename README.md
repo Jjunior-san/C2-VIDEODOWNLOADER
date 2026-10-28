@@ -251,6 +251,25 @@ removidos não são desbloqueados. Falhas reais de rede ou conversão permanecem
 para nova tentativa; fragmentos ausentes de um vídeo não são ignorados para produzir um
 arquivo incompleto.
 
+## Versão 2.6.0 — Integração Deemix: Template Engine, Políticas de Sobrescrita, Paradas Internacionais e Configurações em Abas
+
+- **Motor de Máscaras e Nomenclatura Dinâmica (Template Engine)**:
+  - Suporte completo a tags `%tags%` do Deemix: `%artist%`, `%title%`, `%album%`, `%tracknumber%`, `%discnumber%`, `%year%`, `%genre%`, `%isrc%`, `%bpm%`, `%playlist%`, `%position%`;
+  - Suporte a subpastas relativas dentro da própria máscara (ex.: `%artist%/%album%/%tracknumber% - %title%`);
+  - Botões interativos (*chips*) para inserção rápida de tags sem digitação;
+  - Opção para preenchimento de zeros à esquerda em faixas (`01`, `02`);
+  - Cartão de prévia dinâmica em tempo real exibindo a renderização do nome do arquivo com metadados reais;
+  - Compatibilidade retroativa mantida com máscaras legadas `{faixa:02} - {titulo}`.
+- **Políticas Inteligentes de Sobrescrita de Arquivos**:
+  - Modos configuráveis: *Pular se já existir*, *Sobrescrever sempre*, *Sobrescrever se qualidade for superior* (ex: FLAC substituindo MP3 ou bitrate maior) e *Manter ambos (renomear)* com sufixos incrementais (`(1)`, `(2)`).
+- **Explorador Internacional de Paradas Deezer (Charts Explorer)**:
+  - Navegação entre Top 50 de mais de 12 países (Brasil 🇧🇷, Global 🌍, EUA 🇺🇸, Reino Unido 🇬🇧, Portugal 🇵🇹, França 🇫🇷, Alemanha 🇩🇪, Espanha 🇪🇸, Itália 🇮🇹, Japão 🇯🇵, México 🇲🇽 e Argentina 🇦🇷).
+- **Preservação de Capas em Alta Resolução e Playlists .m3u8**:
+  - Download opcional de capa avulsa do álbum (`cover.jpg`) com resolução de até `1200x1200` na pasta do álbum;
+  - Exportação automática de playlists locais `.m3u8` para álbuns e seleções completas.
+- **Painel de Configurações Moderno em 5 Abas (`ttk.Notebook`)**:
+  - Reorganização intuitiva em: `🌐 Geral & Rede`, `🏷️ Nomes & Pastas`, `🎵 Áudio & Deezer`, `🎬 Vídeos & Legendas` e `🔑 Contas & Sobre`.
+
 ## Versão 2.5.0 — Redesign Dark Obsidian e Integração com Spotify & Librespot
 
 - **Revisão Gráfica e Design System Dark Obsidian**:

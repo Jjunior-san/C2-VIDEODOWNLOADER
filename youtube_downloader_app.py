@@ -24,15 +24,19 @@ from audio_library import (
     AUDIO_BITRATE_CHOICES,
     AUDIO_CUSTOM_BITRATE,
     AUDIO_ORIGINAL_FORMAT,
+    DEEMIX_TEMPLATE_VARIABLES,
     DEFAULT_MUSIC_FILENAME,
     MUSIC_FOLDER_STRUCTURES,
+    OVERWRITE_CHOICES,
     audio_codec,
     cover_bytes_for_item,
     is_audio_format,
+    music_output_template,
     read_audio_metadata,
     write_audio_metadata,
 )
 from deezer_catalog import (
+    DEEZER_COUNTRY_CHARTS,
     DeezerSearchResult,
     resolve_deezer_track,
     search_deezer_catalog,
@@ -40,6 +44,7 @@ from deezer_catalog import (
     get_artist_albums,
     get_album_tracks,
     get_deezer_top_brasil,
+    get_deezer_top_country,
     get_deezer_top_global,
     get_deezer_user_favorites,
     analyze_deezer_metadata,
@@ -556,6 +561,16 @@ class DownloadApp(QueueUI):
         self.allow_explicit_var = BooleanVar(value=bool(self.user_settings.get("allow_explicit", True)))
         self.deezer_show_arl_var = BooleanVar(value=False)
 
+        saved_overwrite = str(self.user_settings.get("overwrite_policy") or "Pular se já existir")
+        if saved_overwrite not in OVERWRITE_CHOICES:
+            saved_overwrite = "Pular se já existir"
+        self.overwrite_policy_var = StringVar(value=saved_overwrite)
+        self.save_artwork_var = BooleanVar(value=bool(self.user_settings.get("save_artwork", True)))
+        self.create_m3u8_var = BooleanVar(value=bool(self.user_settings.get("create_m3u8", True)))
+        self.pad_tracks_var = BooleanVar(value=bool(self.user_settings.get("pad_tracks", True)))
+        self.country_chart_var = StringVar(value=str(self.user_settings.get("country_chart") or "Brasil 🇧🇷"))
+        self.template_preview_var = StringVar()
+
         # Configurações de legendas
         self.subtitles_enabled_var = BooleanVar(value=bool(self.user_settings.get("subtitles_enabled", False)))
         self.subtitles_embed_var = BooleanVar(value=bool(self.user_settings.get("subtitles_embed", True)))
@@ -591,6 +606,9 @@ class DownloadApp(QueueUI):
         self.detected_links_var = StringVar(value="Nenhum link inserido")
 
         self.music_filename_var = StringVar(value=saved_music_filename)
+        self.music_filename_var.trace_add("write", self._update_template_preview)
+        self.pad_tracks_var.trace_add("write", self._update_template_preview)
+        self._update_template_preview()
         self.music_search_var = StringVar()
         self.music_search_type_var = StringVar(
             value=str(self.user_settings.get("music_search_type") or "Música"),
@@ -931,6 +949,22 @@ class DownloadApp(QueueUI):
         )
         self.btn_link_analyzer.pack(side="left", padx=(0, 4))
         add_tooltip(self.btn_link_analyzer, "Inspecionar metadados de qualquer link Deezer (ISRC, BPM, gravadora)")
+
+        self.country_chart_combo = ttk.Combobox(
+            discovery_row,
+            textvariable=self.country_chart_var,
+            values=tuple(DEEZER_COUNTRY_CHARTS.keys()),
+            state="readonly",
+            width=15,
+        )
+        self.country_chart_combo.pack(side="left", padx=(6, 2))
+        self.btn_load_country = ttk.Button(
+            discovery_row,
+            text="Explorar País",
+            command=self._load_selected_country_chart,
+        )
+        self.btn_load_country.pack(side="left", padx=(0, 4))
+        add_tooltip(self.btn_load_country, "Carregar o Top 50 do país selecionado na Deezer")
 
         ttk.Label(
             search_frame,
@@ -1373,7 +1407,17 @@ class DownloadApp(QueueUI):
         self._build_completed_list(self.completed_page)
 
         settings = self.settings_page.body
-        speed_frame = ttk.LabelFrame(settings, text="Desempenho e Rede", padding=10)
+
+        self.settings_notebook = ttk.Notebook(settings)
+        self.settings_notebook.pack(fill="both", expand=True, pady=(0, 10))
+
+        # ---------------------------------------------------------
+        # Aba 1: 🌐 Geral & Rede
+        # ---------------------------------------------------------
+        tab_general = ttk.Frame(self.settings_notebook, padding=12)
+        self.settings_notebook.add(tab_general, text="  🌐 Geral & Rede  ")
+
+        speed_frame = ttk.LabelFrame(tab_general, text="Desempenho e Conexão", padding=10)
         speed_frame.pack(fill="x", pady=(0, 12))
 
         speed_row = ttk.Frame(speed_frame)
@@ -1410,12 +1454,12 @@ class DownloadApp(QueueUI):
 
         wrapping_label(
             speed_frame,
-            text="Dica: use 4 fragmentos; limite a velocidade para não sobrecarregar sua conexão.",
+            text="Dica: use 4 fragmentos; limite a velocidade caso queira economizar banda da sua rede.",
             foreground=APPLE_TEXT_SECONDARY,
         )
 
-        automation_frame = ttk.LabelFrame(settings, text="Automação & Ação ao Concluir Fila", padding=10)
-        automation_frame.pack(fill="x", pady=(0, 12))
+        automation_frame = ttk.LabelFrame(tab_general, text="Automação & Ação ao Concluir Fila", padding=10)
+        automation_frame.pack(fill="x", pady=(0, 8))
         post_row = ttk.Frame(automation_frame)
         post_row.pack(fill="x", pady=(0, 6))
         ttk.Label(post_row, text="Ao concluir todos os downloads:").pack(side="left", padx=(0, 8))
@@ -1432,7 +1476,151 @@ class DownloadApp(QueueUI):
             foreground=APPLE_TEXT_SECONDARY,
         )
 
-        subtitles_frame = ttk.LabelFrame(settings, text="Legendas (Subtitles & CC)", padding=10)
+        # ---------------------------------------------------------
+        # Aba 2: 🏷️ Nomes & Pastas (Inspirado no Deemix Template Engine)
+        # ---------------------------------------------------------
+        tab_naming = ttk.Frame(self.settings_notebook, padding=12)
+        self.settings_notebook.add(tab_naming, text="  🏷️ Nomes & Pastas  ")
+
+        folder_frame = ttk.LabelFrame(tab_naming, text="Organização de Subpastas", padding=10)
+        folder_frame.pack(fill="x", pady=(0, 12))
+        struct_row = ttk.Frame(folder_frame)
+        struct_row.pack(fill="x", pady=(0, 6))
+        ttk.Label(struct_row, text="Estrutura de pastas para coleções:").pack(side="left", padx=(0, 8))
+        ttk.Combobox(
+            struct_row,
+            textvariable=self.music_structure_var,
+            values=MUSIC_FOLDER_STRUCTURES,
+            state="readonly",
+            width=24,
+        ).pack(side="left")
+        wrapping_label(
+            folder_frame,
+            text="Define como as músicas de álbuns e playlists são agrupadas no seu disco (ex: Artista\\Álbum).",
+            foreground=APPLE_TEXT_SECONDARY,
+        )
+
+        template_frame = ttk.LabelFrame(tab_naming, text="Padrão de Nomenclatura das Músicas (Template Deemix)", padding=10)
+        template_frame.pack(fill="x", pady=(0, 12))
+
+        templ_row = ttk.Frame(template_frame)
+        templ_row.pack(fill="x", pady=(0, 6))
+        ttk.Label(templ_row, text="Máscara de nome:").pack(side="left", padx=(0, 8))
+        self.template_entry = ttk.Entry(
+            templ_row,
+            textvariable=self.music_filename_var,
+            font=(self.text_family, 10),
+        )
+        self.template_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ttk.Button(
+            templ_row,
+            text="Redefinir padrão",
+            command=self._reset_template_default,
+        ).pack(side="left")
+
+        pad_check = ttk.Checkbutton(
+            template_frame,
+            text="Preencher número da faixa com zero à esquerda (ex: 01, 02 em vez de 1, 2)",
+            variable=self.pad_tracks_var,
+        )
+        pad_check.pack(anchor="w", pady=(2, 8))
+
+        chips_frame = ttk.Frame(template_frame)
+        chips_frame.pack(fill="x", pady=(0, 8))
+        ttk.Label(chips_frame, text="Variáveis dinâmicas (clique para inserir na máscara):", font=(self.text_family, 9, "bold")).pack(anchor="w", pady=(0, 4))
+        chips_bar = ttk.Frame(chips_frame)
+        chips_bar.pack(fill="x")
+        for var_tag in DEEMIX_TEMPLATE_VARIABLES:
+            btn = ttk.Button(
+                chips_bar,
+                text=var_tag,
+                command=lambda t=var_tag: self._insert_template_tag(t),
+            )
+            btn.pack(side="left", padx=(0, 4), pady=(0, 4))
+
+        preview_box = ttk.LabelFrame(template_frame, text="Prévia em Tempo Real", padding=8)
+        preview_box.pack(fill="x", pady=(4, 0))
+        ttk.Label(
+            preview_box,
+            textvariable=self.template_preview_var,
+            font=(self.text_family, 10, "bold"),
+            foreground=PROGRAM_BLUE,
+        ).pack(anchor="w")
+        wrapping_label(
+            preview_box,
+            text="Dica: Você também pode usar barras '/' para criar pastas no padrão (ex: %artist%/%album%/%tracknumber% - %title%).",
+            foreground=APPLE_TEXT_SECONDARY,
+        )
+
+        # ---------------------------------------------------------
+        # Aba 3: 🎵 Áudio & Deezer
+        # ---------------------------------------------------------
+        tab_audio = ttk.Frame(self.settings_notebook, padding=12)
+        self.settings_notebook.add(tab_audio, text="  🎵 Áudio & Deezer  ")
+
+        deezer_frame = ttk.LabelFrame(tab_audio, text="Qualidade Deezer e Coleta", padding=10)
+        deezer_frame.pack(fill="x", pady=(0, 12))
+
+        options_row = ttk.Frame(deezer_frame)
+        options_row.pack(fill="x", pady=(4, 8))
+        ttk.Label(options_row, text="Qualidade Deezer:").pack(side="left", padx=(0, 8))
+        ttk.Combobox(
+            options_row,
+            textvariable=self.deezer_quality_var,
+            values=["Automática (melhor da conta)", "FLAC Lossless", "MP3 320 kbps", "MP3 128 kbps"],
+            state="readonly",
+            width=26,
+        ).pack(side="left", padx=(0, 16))
+
+        ttk.Checkbutton(
+            deezer_frame,
+            text="Salvar capa do álbum em alta resolução (cover.jpg na pasta)",
+            variable=self.save_artwork_var,
+        ).pack(anchor="w", pady=(2, 4))
+
+        ttk.Checkbutton(
+            deezer_frame,
+            text="Gerar playlist .m3u8 para álbuns e seleções",
+            variable=self.create_m3u8_var,
+        ).pack(anchor="w", pady=(2, 4))
+
+        ttk.Checkbutton(
+            deezer_frame,
+            text="Compactar álbum / playlist em arquivo .ZIP ao concluir",
+            variable=self.create_zip_var,
+        ).pack(anchor="w", pady=(2, 4))
+
+        ttk.Checkbutton(
+            deezer_frame,
+            text="Permitir baixar conteúdo explícito (Explicit 🅴)",
+            variable=self.allow_explicit_var,
+        ).pack(anchor="w", pady=(2, 6))
+
+        overwrite_frame = ttk.LabelFrame(tab_audio, text="Política de Sobrescrita de Arquivos (Deemix Overwrite)", padding=10)
+        overwrite_frame.pack(fill="x", pady=(0, 12))
+        over_row = ttk.Frame(overwrite_frame)
+        over_row.pack(fill="x", pady=(0, 6))
+        ttk.Label(over_row, text="Quando o arquivo já existir:").pack(side="left", padx=(0, 8))
+        ttk.Combobox(
+            over_row,
+            textvariable=self.overwrite_policy_var,
+            values=OVERWRITE_CHOICES,
+            state="readonly",
+            width=32,
+        ).pack(side="left")
+        wrapping_label(
+            overwrite_frame,
+            text="Opção inteligente: substitui arquivos antigos apenas se a nova faixa possuir qualidade superior (ex: FLAC substituindo MP3 ou bitrate maior), ou cria cópias numeradas sem sobrescrever.",
+            foreground=APPLE_TEXT_SECONDARY,
+        )
+
+        # ---------------------------------------------------------
+        # Aba 4: 🎬 Vídeos & Legendas
+        # ---------------------------------------------------------
+        tab_video = ttk.Frame(self.settings_notebook, padding=12)
+        self.settings_notebook.add(tab_video, text="  🎬 Vídeos & Legendas  ")
+
+        subtitles_frame = ttk.LabelFrame(tab_video, text="Legendas (Subtitles & CC)", padding=10)
         subtitles_frame.pack(fill="x", pady=(0, 12))
         ttk.Checkbutton(
             subtitles_frame,
@@ -1461,7 +1649,7 @@ class DownloadApp(QueueUI):
             foreground=APPLE_TEXT_SECONDARY,
         )
 
-        video_features_frame = ttk.LabelFrame(settings, text="Otimizações de Vídeo & Capítulos", padding=10)
+        video_features_frame = ttk.LabelFrame(tab_video, text="Otimizações de Vídeo & Capítulos", padding=10)
         video_features_frame.pack(fill="x", pady=(0, 12))
         ttk.Checkbutton(
             video_features_frame,
@@ -1484,7 +1672,42 @@ class DownloadApp(QueueUI):
             foreground=APPLE_TEXT_SECONDARY,
         )
 
-        cookies_frame = ttk.LabelFrame(settings, text="Acesso a sites com login", padding=10)
+        # ---------------------------------------------------------
+        # Aba 5: 🔑 Contas & Sobre
+        # ---------------------------------------------------------
+        tab_accounts = ttk.Frame(self.settings_notebook, padding=12)
+        self.settings_notebook.add(tab_accounts, text="  🔑 Contas & Sobre  ")
+
+        deezer_auth_frame = ttk.LabelFrame(tab_accounts, text="Autenticação Deezer (Músicas completas)", padding=10)
+        deezer_auth_frame.pack(fill="x", pady=(0, 12))
+
+        arl_row = ttk.Frame(deezer_auth_frame)
+        arl_row.pack(fill="x", pady=(0, 6))
+        ttk.Label(arl_row, text="Cookie ARL:").pack(side="left", padx=(0, 8))
+        self.deezer_arl_entry = ttk.Entry(
+            arl_row,
+            textvariable=self.deezer_arl_var,
+            show="*" if not self.deezer_show_arl_var.get() else "",
+            width=28,
+        )
+        self.deezer_arl_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ttk.Button(arl_row, text="Colar", command=self._paste_deezer_arl).pack(side="left", padx=(0, 4))
+        self.deezer_toggle_btn = ttk.Button(arl_row, text="Mostrar", command=self._toggle_show_arl, width=8)
+        self.deezer_toggle_btn.pack(side="left", padx=(0, 4))
+        ttk.Button(arl_row, text="Verificar / Salvar", command=lambda: self._check_deezer_arl(show_dialog=True)).pack(side="left", padx=(0, 4))
+        ttk.Button(arl_row, text="Limpar", command=self._clear_deezer_arl).pack(side="left")
+
+        status_row = ttk.Frame(deezer_auth_frame)
+        status_row.pack(fill="x", pady=(2, 6))
+        ttk.Label(status_row, text="Status da conta:").pack(side="left", padx=(0, 8))
+        wrapping_label(status_row, textvariable=self.deezer_status_var, font=(self.text_family, 9, "bold"))
+        wrapping_label(
+            deezer_auth_frame,
+            text="Dica: Faça login no deezer.com pelo navegador > F12 > Armazenamento/Cookies > copie o valor de 'arl'. Sem ARL, o aplicativo continuará baixando as prévias públicas de 30s.",
+            foreground=APPLE_TEXT_SECONDARY,
+        )
+
+        cookies_frame = ttk.LabelFrame(tab_accounts, text="Acesso a sites com login", padding=10)
         cookies_frame.pack(fill="x", pady=(0, 12))
         browser_row = ttk.Frame(cookies_frame)
         browser_row.pack(fill="x", pady=(0, 8))
@@ -1508,62 +1731,7 @@ class DownloadApp(QueueUI):
         ttk.Button(file_row, text="Selecionar", command=self.choose_cookies_file).pack(side="left", padx=(8, 0))
         ttk.Button(file_row, text="Limpar", command=lambda: self.cookies_file_var.set("")).pack(side="left", padx=(8, 0))
 
-        deezer_frame = ttk.LabelFrame(settings, text="Autenticação Deezer (Músicas completas)", padding=10)
-        deezer_frame.pack(fill="x", pady=(0, 12))
-
-        arl_row = ttk.Frame(deezer_frame)
-        arl_row.pack(fill="x", pady=(0, 6))
-        ttk.Label(arl_row, text="Cookie ARL:").pack(side="left", padx=(0, 8))
-        self.deezer_arl_entry = ttk.Entry(
-            arl_row,
-            textvariable=self.deezer_arl_var,
-            show="*" if not self.deezer_show_arl_var.get() else "",
-            width=28,
-        )
-        self.deezer_arl_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
-        ttk.Button(arl_row, text="Colar", command=self._paste_deezer_arl).pack(side="left", padx=(0, 4))
-        self.deezer_toggle_btn = ttk.Button(arl_row, text="Mostrar", command=self._toggle_show_arl, width=8)
-        self.deezer_toggle_btn.pack(side="left", padx=(0, 4))
-        ttk.Button(arl_row, text="Verificar / Salvar", command=lambda: self._check_deezer_arl(show_dialog=True)).pack(side="left", padx=(0, 4))
-        ttk.Button(arl_row, text="Limpar", command=self._clear_deezer_arl).pack(side="left")
-
-        status_row = ttk.Frame(deezer_frame)
-        status_row.pack(fill="x", pady=(2, 6))
-        ttk.Label(status_row, text="Status da conta:").pack(side="left", padx=(0, 8))
-        wrapping_label(status_row, textvariable=self.deezer_status_var, font=(self.text_family, 9, "bold"))
-
-        options_row = ttk.Frame(deezer_frame)
-        options_row.pack(fill="x", pady=(4, 6))
-        ttk.Label(options_row, text="Qualidade Deezer:").pack(side="left", padx=(0, 8))
-        ttk.Combobox(
-            options_row,
-            textvariable=self.deezer_quality_var,
-            values=["Automática (melhor da conta)", "FLAC Lossless", "MP3 320 kbps", "MP3 128 kbps"],
-            state="readonly",
-            width=26,
-        ).pack(side="left", padx=(0, 16))
-
-        zip_check = ttk.Checkbutton(
-            deezer_frame,
-            text="Compactar álbum / playlist em arquivo .ZIP ao concluir",
-            variable=self.create_zip_var,
-        )
-        zip_check.pack(anchor="w", pady=(2, 4))
-
-        explicit_check = ttk.Checkbutton(
-            deezer_frame,
-            text="Permitir baixar conteúdo explícito (Explicit 🅴)",
-            variable=self.allow_explicit_var,
-        )
-        explicit_check.pack(anchor="w", pady=(2, 6))
-
-        wrapping_label(
-            deezer_frame,
-            text="Dica: Faça login no deezer.com pelo navegador > F12 > Armazenamento/Cookies > copie o valor de 'arl'. Sem ARL, o aplicativo continuará baixando as prévias públicas de 30s.",
-            foreground=APPLE_TEXT_SECONDARY,
-        )
-
-        spotify_frame = ttk.LabelFrame(settings, text="Integração Spotify & Librespot", padding=10)
+        spotify_frame = ttk.LabelFrame(tab_accounts, text="Integração Spotify & Librespot", padding=10)
         spotify_frame.pack(fill="x", pady=(0, 12))
         wrapping_label(
             spotify_frame,
@@ -1583,7 +1751,7 @@ class DownloadApp(QueueUI):
             font=(self.text_family, 9, "bold"),
         ).pack(side="left")
 
-        about_frame = ttk.LabelFrame(settings, text="Aplicativo", padding=10)
+        about_frame = ttk.LabelFrame(tab_accounts, text="Aplicativo", padding=10)
         about_frame.pack(fill="x")
         wrapping_label(
             about_frame,
@@ -2087,6 +2255,7 @@ class DownloadApp(QueueUI):
             "sponsorblock_var", "embed_chapters_var", "split_chapters_var",
             "rate_limit_var", "proxy_url_var", "clipboard_monitor_var",
             "preset_var", "post_download_action_var",
+            "overwrite_policy_var", "save_artwork_var", "create_m3u8_var", "pad_tracks_var", "country_chart_var",
         )
         return {name: getattr(self, name).get() for name in names if hasattr(self, name)}
 
@@ -2105,6 +2274,42 @@ class DownloadApp(QueueUI):
                 getattr(self, name).set(value)
             self._update_audio_controls()
         self.settings_dialog.withdraw()
+
+    def _insert_template_tag(self, tag: str) -> None:
+        if hasattr(self, "template_entry"):
+            try:
+                self.template_entry.insert("insert", tag)
+                self.template_entry.focus_set()
+                return
+            except Exception:
+                pass
+        current = self.music_filename_var.get()
+        self.music_filename_var.set(f"{current} {tag}".strip())
+
+    def _reset_template_default(self) -> None:
+        self.music_filename_var.set("%artist% - %title%")
+
+    def _update_template_preview(self, *_args) -> None:
+        template = self.music_filename_var.get().strip() or "%artist% - %title%"
+        pad = bool(self.pad_tracks_var.get()) if hasattr(self, "pad_tracks_var") else True
+        sample_meta = {
+            "artist": "Daft Punk",
+            "title": "Get Lucky",
+            "album": "Random Access Memories",
+            "track_number": 8,
+            "disc_number": 1,
+            "release_year": "2013",
+            "genre": "Disco",
+            "isrc": "USX1R1300057",
+            "bpm": 116,
+            "playlist_title": "Top Hits",
+        }
+        try:
+            rendered = music_output_template(sample_meta, 8, template, pad_tracks=pad)
+            rendered_display = rendered.replace(".%(ext)s", ".mp3")
+            self.template_preview_var.set(f"📄 Exemplo: {rendered_display}")
+        except Exception:
+            self.template_preview_var.set(f"📄 Exemplo: {template}.mp3")
 
     def _build_audio_controls(self, parent, *, row: int, column: int) -> None:
         holder = ttk.Frame(parent)
@@ -3430,6 +3635,31 @@ class DownloadApp(QueueUI):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _load_selected_country_chart(self) -> None:
+        country_name = self.country_chart_var.get() or "Brasil 🇧🇷"
+        self._save_search_state_before_drill()
+        self.music_search_status_var.set(f"Carregando Top 50 ({country_name}) da Deezer...")
+
+        def worker():
+            try:
+                tracks = get_deezer_top_country(country_name, 50)
+                results = tuple(
+                    DeezerSearchResult(
+                        kind="track",
+                        item_id=t.track_id,
+                        title=t.title,
+                        subtitle=f"{t.artist} • {t.album}",
+                        cover_url=t.cover_url,
+                        page_url=t.page_url,
+                        explicit=t.explicit,
+                    ) for t in tracks
+                )
+                self.event_queue.put(("music_drill_results", (f"📊 Top {country_name}", results, "")))
+            except Exception as exc:
+                self.event_queue.put(("music_drill_results", (f"Top {country_name}", (), str(exc))))
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _start_spotify_url_resolution(self, url: str) -> None:
         self._save_search_state_before_drill()
         self.music_search_status_var.set("Resolvendo link do Spotify (carregando faixas e capas)...")
@@ -4477,6 +4707,11 @@ class DownloadApp(QueueUI):
             "clipboard_monitor": bool(self.clipboard_monitor_var.get()),
             "preset": self.preset_var.get() if hasattr(self, "preset_var") else "Personalizado",
             "post_download_action": self.post_download_action_var.get() if hasattr(self, "post_download_action_var") else "Nenhuma ação",
+            "overwrite_policy": self.overwrite_policy_var.get() if hasattr(self, "overwrite_policy_var") else "Pular se já existir",
+            "save_artwork": bool(self.save_artwork_var.get()) if hasattr(self, "save_artwork_var") else True,
+            "create_m3u8": bool(self.create_m3u8_var.get()) if hasattr(self, "create_m3u8_var") else True,
+            "pad_tracks": bool(self.pad_tracks_var.get()) if hasattr(self, "pad_tracks_var") else True,
+            "country_chart": self.country_chart_var.get() if hasattr(self, "country_chart_var") else "Brasil 🇧🇷",
         }
         try:
             save_user_settings(settings)

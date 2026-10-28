@@ -36,7 +36,58 @@ AUDIO_FORMATS = {
 }
 AUDIO_EXTENSIONS = {".m4a", ".mp3", ".opus", ".ogg", ".flac", ".wav"}
 MUSIC_FOLDER_STRUCTURES = ("Pasta raiz", "Artista", "Artista\\Álbum")
-DEFAULT_MUSIC_FILENAME = "{faixa:02} - {titulo}"
+DEFAULT_MUSIC_FILENAME = "%artist% - %title%"
+LEGACY_MUSIC_FILENAME = "{faixa:02} - {titulo}"
+
+OVERWRITE_ALWAYS = "always"
+OVERWRITE_SKIP = "skip"
+OVERWRITE_HIGHER_QUALITY = "higher_quality"
+OVERWRITE_KEEP_BOTH = "keep_both"
+
+OVERWRITE_CHOICES = (
+    "Pular se já existir",
+    "Sobrescrever sempre",
+    "Sobrescrever se qualidade for superior",
+    "Manter ambos (renomear)",
+)
+OVERWRITE_LABEL_TO_CODE = {
+    "Pular se já existir": OVERWRITE_SKIP,
+    "pular": OVERWRITE_SKIP,
+    "skip": OVERWRITE_SKIP,
+    "Sobrescrever sempre": OVERWRITE_ALWAYS,
+    "Sempre sobrescrever": OVERWRITE_ALWAYS,
+    "sempre": OVERWRITE_ALWAYS,
+    "always": OVERWRITE_ALWAYS,
+    "Sobrescrever se qualidade for superior": OVERWRITE_HIGHER_QUALITY,
+    "Sobrescrever se qualidade maior": OVERWRITE_HIGHER_QUALITY,
+    "qualidade": OVERWRITE_HIGHER_QUALITY,
+    "higher_quality": OVERWRITE_HIGHER_QUALITY,
+    "Manter ambos (1)": OVERWRITE_KEEP_BOTH,
+    "Manter ambos (renomear)": OVERWRITE_KEEP_BOTH,
+    "manter": OVERWRITE_KEEP_BOTH,
+    "keep_both": OVERWRITE_KEEP_BOTH,
+}
+OVERWRITE_CODE_TO_LABEL = {
+    OVERWRITE_SKIP: "Pular se já existir",
+    OVERWRITE_ALWAYS: "Sobrescrever sempre",
+    OVERWRITE_HIGHER_QUALITY: "Sobrescrever se qualidade for superior",
+    OVERWRITE_KEEP_BOTH: "Manter ambos (renomear)",
+}
+
+DEEMIX_TEMPLATE_VARIABLES = {
+    "%artist%": "Nome do artista principal",
+    "%title%": "Título da música",
+    "%album%": "Nome do álbum ou coleção",
+    "%tracknumber%": "Número da faixa (01, 02)",
+    "%discnumber%": "Número do disco / CD",
+    "%year%": "Ano de lançamento",
+    "%date%": "Data ou ano da gravação",
+    "%genre%": "Gênero musical",
+    "%isrc%": "Código ISRC internacional",
+    "%bpm%": "Batidas por minuto (BPM)",
+    "%position%": "Posição na playlist ou fila",
+    "%playlist%": "Nome da playlist",
+}
 
 
 def is_audio_format(format_choice: str) -> bool:
@@ -72,7 +123,7 @@ def bitrate_from_options(options: dict | None) -> int | None:
 
 
 def _safe_name(value: str, fallback: str = "Playlist") -> str:
-    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value).strip(" .")
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(value or "")).strip(" .")
     return cleaned[:120] or fallback
 
 
@@ -87,36 +138,177 @@ def music_target_folder(root: Path, item: dict, structure: str = "Pasta raiz") -
     return root
 
 
-def music_output_template(item: dict, index: int, template: str = DEFAULT_MUSIC_FILENAME) -> str:
-    values = {
-        "faixa": int(item.get("track_number") or index or 1),
-        "titulo": str(item.get("track_title") or item.get("title") or "Música"),
-        "artista": str(item.get("artist") or "Artista desconhecido"),
-        "album": str(item.get("album") or item.get("collection_title") or "Sem álbum"),
-        "ano": str(item.get("release_year") or ""),
-        "id": str(item.get("media_id") or item.get("id") or ""),
-    }
+def music_output_template(
+    item: dict,
+    index: int = 1,
+    template: str = DEFAULT_MUSIC_FILENAME,
+    *,
+    pad_tracks: bool = True,
+) -> str:
+    """Render a dynamic filename template supporting Deemix %tags% and legacy {tags}."""
+    raw_track = item.get("track_number") or index or 1
     try:
-        name = str(template or DEFAULT_MUSIC_FILENAME).format_map(values)
-    except (KeyError, ValueError, TypeError):
-        name = DEFAULT_MUSIC_FILENAME.format_map(values)
-    return f"{_safe_name(name, 'Música')}.%(ext)s"
+        track_num = int(raw_track)
+    except (ValueError, TypeError):
+        track_num = 1
+    track_str = f"{track_num:02d}" if pad_tracks else str(track_num)
+    pos_str = f"{index:02d}" if pad_tracks else str(index)
+
+    artist = str(item.get("artist") or "Artista desconhecido")
+    title = str(item.get("track_title") or item.get("title") or "Música")
+    album = str(item.get("album") or item.get("collection_title") or "Sem álbum")
+    year = str(item.get("release_year") or "")
+    genre = str(item.get("genre") or "")
+    isrc = str(item.get("isrc") or "")
+    bpm = str(item.get("bpm") or "")
+    disc = str(item.get("disc_number") or "1")
+    playlist = str(item.get("collection_title") or item.get("playlist_title") or "Playlist")
+
+    result = str(template or DEFAULT_MUSIC_FILENAME).strip()
+
+    # Legacy python format string support ({faixa:02}, {titulo}, etc.)
+    if "{" in result and "}" in result:
+        values = {
+            "faixa": track_num,
+            "titulo": title,
+            "artista": artist,
+            "album": album,
+            "ano": year,
+            "id": str(item.get("media_id") or item.get("id") or ""),
+        }
+        try:
+            result = result.format_map(values)
+        except Exception:
+            result = f"{track_str} - {title}"
+
+    # Deemix %tags% support
+    var_map = {
+        "%artist%": artist,
+        "%title%": title,
+        "%album%": album,
+        "%tracknumber%": track_str,
+        "%discnumber%": disc,
+        "%year%": year,
+        "%date%": year,
+        "%genre%": genre,
+        "%isrc%": isrc,
+        "%bpm%": bpm,
+        "%playlist%": playlist,
+        "%position%": pos_str,
+    }
+    for var_key, var_val in var_map.items():
+        result = re.sub(re.escape(var_key), var_val, result, flags=re.IGNORECASE)
+
+    # Remove any unhandled percent tags
+    result = re.sub(r'%[a-zA-Z0-9_]+%', '', result)
+
+    # Sanitize each path segment to allow subfolders like %artist%/%album%/%title%
+    segments = re.split(r'[\\/]', result)
+    clean_segments = [_safe_name(s, "Música") for s in segments if s.strip()]
+    if not clean_segments:
+        clean_segments = ["Música"]
+    clean_path = "/".join(clean_segments)
+    return f"{clean_path}.%(ext)s"
 
 
-def _cover_bytes(url: str | None) -> bytes | None:
+def get_audio_quality_score(path_or_ext: str, bitrate_kbps: int | None = None) -> int:
+    """Return a relative quality score: FLAC/lossless=1411, MP3 320=320, etc."""
+    ext = Path(path_or_ext).suffix.lower() if "." in str(path_or_ext) else f".{str(path_or_ext).lower()}"
+    if ext in {".flac", ".wav", ".alac"}:
+        return 1411
+    if bitrate_kbps:
+        return int(bitrate_kbps)
+    if ext in {".m4a", ".aac"}:
+        return 256
+    if ext == ".mp3":
+        return 320
+    return 128
+
+
+def should_overwrite_file(
+    existing_path: Path,
+    new_ext: str = ".mp3",
+    new_bitrate_kbps: int | None = None,
+    policy: str = OVERWRITE_SKIP,
+) -> bool:
+    """Determine whether to overwrite an existing file based on the configured policy."""
+    if not existing_path.is_file() or existing_path.stat().st_size == 0:
+        return True
+    policy_code = OVERWRITE_LABEL_TO_CODE.get(policy, str(policy).lower())
+    if policy_code == OVERWRITE_ALWAYS:
+        return True
+    if policy_code in {OVERWRITE_SKIP, OVERWRITE_KEEP_BOTH}:
+        return False
+    if policy_code == OVERWRITE_HIGHER_QUALITY:
+        existing_score = get_audio_quality_score(existing_path)
+        new_score = get_audio_quality_score(new_ext, new_bitrate_kbps)
+        return new_score > existing_score
+    return False
+
+
+def resolve_unique_path(path: Path) -> Path:
+    """Return an incremented filename path if the file already exists (e.g. 'Song (1).mp3')."""
+    if not path.exists():
+        return path
+    parent = path.parent
+    stem = path.stem
+    suffix = path.suffix
+    counter = 1
+    while True:
+        candidate = parent / f"{stem} ({counter}){suffix}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
+
+
+def _cover_bytes(url: str | None, high_res: bool = True) -> bytes | None:
     if not url:
         return None
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
-    if parsed.scheme != "https" or not host.endswith("dzcdn.net"):
+    if parsed.scheme != "https" or not host.endswith(("dzcdn.net", "scdn.co", "spotifycdn.com")):
         return None
-    request = Request(url, headers={"User-Agent": f"C2VideoDownloader/{APP_VERSION}"})
+    target_url = url
+    if high_res and "dzcdn.net" in host:
+        # Request high-definition 1200x1200 image if available
+        target_url = re.sub(r'/\d+x\d+-', '/1200x1200-', target_url)
+    request = Request(target_url, headers={"User-Agent": f"C2VideoDownloader/{APP_VERSION}"})
     try:
         with urlopen(request, timeout=20) as response:
             content = response.read(8 * 1024 * 1024 + 1)
     except OSError:
-        return None
+        if target_url != url:
+            try:
+                with urlopen(Request(url, headers={"User-Agent": f"C2VideoDownloader/{APP_VERSION}"}), timeout=15) as resp:
+                    content = resp.read(8 * 1024 * 1024 + 1)
+            except OSError:
+                return None
+        else:
+            return None
     return content if 0 < len(content) <= 8 * 1024 * 1024 else None
+
+
+def save_album_artwork(folder: Path, item: dict, filename: str = "cover.jpg", logger=None) -> Path | None:
+    """Download and save high-resolution album artwork into the target album folder."""
+    try:
+        folder = Path(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        art_path = folder / filename
+        if art_path.is_file() and art_path.stat().st_size > 0:
+            return art_path
+        cover_url = item.get("cover_url")
+        if not cover_url:
+            return None
+        data = _cover_bytes(cover_url, high_res=True)
+        if data:
+            art_path.write_bytes(data)
+            if logger:
+                logger(f"Capa do álbum salva: {art_path.name}")
+            return art_path
+    except Exception as exc:
+        if logger:
+            logger(f"Aviso: não foi possível salvar a capa avulsa ({exc}).")
+    return None
 
 
 def _syncsafe(value: int) -> bytes:
