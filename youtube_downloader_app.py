@@ -58,6 +58,7 @@ from ui_layout import (
     DEEMIX_TEXT_SECONDARY,
     DEEMIX_CARD_BG,
     DEEMIX_CARD_BORDER,
+    harmonize_widget_surfaces,
     APPLE_CARD_BG,
     APPLE_CARD_BORDER,
     APPLE_DARK_BG,
@@ -734,64 +735,84 @@ class DownloadApp(QueueUI):
         self.root.after(1500, self._schedule_clipboard_tick)
 
     def _build_ui(self) -> None:
-        shell = ttk.Frame(self.root, padding=6)
+        shell = ttk.Frame(self.root, padding=0)
         shell.pack(fill="both", expand=True)
 
-        header = ttk.Frame(shell)
-        header.pack(fill="x", pady=(0, 6))
-        try:
-            self._build_site_logo(header).pack(side="left", padx=(0, 10))
-        except Exception as exc:
-            self.queue_log(f"Aviso: não foi possível carregar a logo ({exc}).")
-            ttk.Label(
-                header,
-                text="C² - Downloader",
-                font=(self.display_family, 15, "bold"),
-                foreground=PROGRAM_BLUE,
-            ).pack(side="left")
+        header = ttk.Frame(shell, style="Header.TFrame", padding=(12, 7))
+        header.pack(fill="x")
+        ttk.Separator(shell, orient="horizontal").pack(fill="x")
 
         self.sidebar_toggle_btn = ttk.Button(
             header,
             text="☰",
             width=3,
+            style="Chip.TButton",
             command=self._toggle_sidebar,
         )
-        self.sidebar_toggle_btn.pack(side="left", padx=(2, 8))
+        self.sidebar_toggle_btn.pack(side="left", padx=(0, 10))
         add_tooltip(self.sidebar_toggle_btn, "Mostrar/Ocultar barra lateral")
+
+        try:
+            self._build_site_logo(header).pack(side="left", padx=(0, 8))
+        except Exception as exc:
+            self.queue_log(f"Aviso: não foi possível carregar a logo ({exc}).")
+            ttk.Label(
+                header,
+                text="⚡ C² Downloader",
+                font=(self.display_family, 13, "bold"),
+                foreground=PROGRAM_BLUE,
+                style="Sidebar.TLabel",
+            ).pack(side="left")
+
+        ttk.Label(
+            header,
+            text="DEEMIX & YT-DLP STUDIO",
+            font=(self.text_family, 8, "bold"),
+            foreground="#64748b",
+            style="Sidebar.TLabel",
+        ).pack(side="left", padx=(6, 0))
 
         self.settings_button = ttk.Button(
             header,
-            text="⚙",
-            width=3,
+            text="⚙ Configurações",
+            style="Chip.TButton",
             command=self._open_settings,
         )
         self.settings_button.pack(side="right")
-        add_tooltip(self.settings_button, "Configurações")
+        add_tooltip(self.settings_button, "Abrir painel de configurações")
 
-        # Mantidos como atributos em memória para compatibilidade sem poluir o cabeçalho superior
-        self.open_folder_header_btn = ttk.Button(
-            header,
-            text="📁 Pasta",
-            command=self.open_current_download_folder,
-        )
-        self.lyrics_header_btn = ttk.Button(
-            header,
-            text="💬 Letras",
-            command=self._open_lyrics_window,
-        )
         self.mini_player_header_btn = ttk.Button(
             header,
             text="🔲 Mini",
+            style="Chip.TButton",
             command=self._open_mini_player,
         )
+        self.mini_player_header_btn.pack(side="right", padx=(0, 6))
+
+        self.lyrics_header_btn = ttk.Button(
+            header,
+            text="💬 Letras",
+            style="Chip.TButton",
+            command=self._open_lyrics_window,
+        )
+        self.lyrics_header_btn.pack(side="right", padx=(0, 6))
+
+        self.open_folder_header_btn = ttk.Button(
+            header,
+            text="📁 Pasta",
+            style="Chip.TButton",
+            command=self.open_current_download_folder,
+        )
+        self.open_folder_header_btn.pack(side="right", padx=(0, 6))
 
         self.header_status_label = ttk.Label(
             header,
             textvariable=self.header_status_var,
             font=(self.text_family, 9, "bold"),
             foreground=PROGRAM_BLUE,
+            style="Sidebar.TLabel",
         )
-        self.header_status_label.pack(side="right", padx=(0, 10))
+        self.header_status_label.pack(side="right", padx=(0, 14))
 
         # Barra de reprodução estilo Apple Music fixada no rodapé
         self._build_apple_now_playing_bar(shell)
@@ -823,7 +844,7 @@ class DownloadApp(QueueUI):
         self.settings_dialog.title("Configurações")
         self.settings_dialog.transient(self.root)
         self.settings_dialog.protocol("WM_DELETE_WINDOW", lambda: self._close_settings(True))
-        fit_window(self.settings_dialog, max_width=820, max_height=720)
+        fit_window(self.settings_dialog, max_width=960, max_height=720)
         self.settings_page = ScrollablePage(self.settings_dialog)
         self.settings_page.pack(fill="both", expand=True)
 
@@ -878,28 +899,35 @@ class DownloadApp(QueueUI):
         music = self.music_page.body
         video = self.video_page.body
 
-        # Música: pesquisa estilo Deemix (TheSearchBar.vue) com card escuro e chips integrados
-        search_frame = ttk.Frame(music, style="Card.TFrame", padding=(14, 12))
-        search_frame.pack(fill="x", pady=(0, 10))
+        # Música: Barra de Pesquisa Hero estilo Deemix (TheSearchBar.vue)
+        search_frame = ttk.Frame(music, style="Card.TFrame", padding=(12, 8))
+        search_frame.pack(fill="x", pady=(0, 8))
 
-        search_header = ttk.Frame(search_frame, style="Card.TFrame")
-        search_header.pack(fill="x", pady=(0, 6))
+        search_header = ttk.Frame(search_frame, style="CardInner.TFrame")
+        search_header.pack(fill="x", pady=(0, 4))
         ttk.Label(
             search_header,
-            text="CATÁLOGO & PESQUISA DEEZER",
+            text="CATÁLOGO & PESQUISA DEEZER / SPOTIFY",
             font=(self.text_family, 8, "bold"),
-            foreground=DEEMIX_TEXT_SECONDARY,
+            foreground=DEEMIX_BLUE,
             style="Card.TLabel",
         ).pack(side="left")
+        ttk.Label(
+            search_header,
+            textvariable=self.music_search_status_var,
+            font=(self.text_family, 8),
+            foreground=DEEMIX_TEXT_SECONDARY,
+            style="CardMuted.TLabel",
+        ).pack(side="right")
 
-        search_row = ttk.Frame(search_frame, style="Card.TFrame")
+        search_row = ttk.Frame(search_frame, style="CardInner.TFrame")
         search_row.pack(fill="x")
         self.catalog_back_button = ttk.Button(
             search_row,
             text="⬅ Voltar",
             command=self._restore_previous_music_search,
             state="disabled",
-            width=9,
+            width=8,
         )
         self.catalog_back_button.pack(side="left", padx=(0, 6))
         add_tooltip(self.catalog_back_button, "Voltar para o resultado da busca anterior")
@@ -908,23 +936,23 @@ class DownloadApp(QueueUI):
             textvariable=self.music_search_type_var,
             values=("Música", "Artista", "Álbum", "Playlist"),
             state="readonly",
-            width=11,
+            width=10,
         ).pack(side="left", padx=(0, 8))
         self.music_search_entry = ttk.Entry(
             search_row,
             textvariable=self.music_search_var,
-            font=(self.text_family, 11),
+            font=(self.text_family, 10),
         )
         self.music_search_entry.pack(side="left", fill="x", expand=True)
 
-        discovery_row = ttk.Frame(search_frame, style="Card.TFrame")
-        discovery_row.pack(fill="x", pady=(8, 2))
+        discovery_row = ttk.Frame(search_frame, style="CardInner.TFrame")
+        discovery_row.pack(fill="x", pady=(6, 0))
         ttk.Label(
             discovery_row,
             text="Explorar:",
-            font=(self.text_family, 9, "bold"),
-            foreground=DEEMIX_BLUE,
-            style="Card.TLabel",
+            font=(self.text_family, 8, "bold"),
+            foreground=DEEMIX_TEXT_SECONDARY,
+            style="CardMuted.TLabel",
         ).pack(side="left", padx=(0, 6))
 
         self.btn_top_brasil = ttk.Button(
@@ -956,7 +984,7 @@ class DownloadApp(QueueUI):
 
         self.btn_user_favs = ttk.Button(
             discovery_row,
-            text="⭐ Meus Favoritos",
+            text="⭐ Favoritos",
             command=self._load_user_favorites,
             style="Chip.TButton",
         )
@@ -977,42 +1005,25 @@ class DownloadApp(QueueUI):
             textvariable=self.country_chart_var,
             values=tuple(DEEZER_COUNTRY_CHARTS.keys()),
             state="readonly",
-            width=15,
+            width=12,
         )
-        self.country_chart_combo.pack(side="left", padx=(6, 2))
+        self.country_chart_combo.pack(side="left", padx=(4, 2))
         self.btn_load_country = ttk.Button(
             discovery_row,
             text="Explorar País",
             command=self._load_selected_country_chart,
             style="Chip.TButton",
         )
-        self.btn_load_country.pack(side="left", padx=(0, 4))
+        self.btn_load_country.pack(side="left", padx=(0, 2))
         add_tooltip(self.btn_load_country, "Carregar o Top 50 do país selecionado na Deezer")
 
-        ttk.Label(
-            search_frame,
-            textvariable=self.music_search_status_var,
-            foreground=DEEMIX_TEXT_SECONDARY,
-            style="Card.TLabel",
-        ).pack(anchor="w", pady=(6, 0))
-
         result_area = ttk.Panedwindow(music, orient="horizontal")
-        result_area.pack(fill="both", expand=True, pady=(0, 8))
+        result_area.pack(fill="both", expand=True, pady=(0, 6))
 
         result_list = ttk.Frame(result_area)
-        result_detail = ttk.Frame(result_detail_parent := result_area, style="Card.TFrame", padding=12)
+        result_detail = ttk.Frame(result_detail_parent := result_area, style="Card.TFrame", padding=10)
         result_area.add(result_list, weight=3)
         result_area.add(result_detail, weight=2)
-
-        detail_hdr = ttk.Frame(result_detail, style="Card.TFrame")
-        detail_hdr.pack(fill="x", pady=(0, 8))
-        ttk.Label(
-            detail_hdr,
-            text="DETALHES DO ITEM",
-            font=(self.text_family, 8, "bold"),
-            foreground=DEEMIX_TEXT_SECONDARY,
-            style="Card.TLabel",
-        ).pack(anchor="w")
 
         result_table = ttk.Frame(result_list)
         result_table.pack(fill="both", expand=True)
@@ -1020,19 +1031,19 @@ class DownloadApp(QueueUI):
             result_table,
             columns=("type", "title", "detail"),
             show="headings",
-            height=11,
+            height=6,
             selectmode="browse",
         )
         for name, label, width in (
-            ("type", "Tipo", 85),
-            ("title", "Resultado", 280),
-            ("detail", "Artista / Álbum / Autor", 250),
+            ("type", "Tipo", 70),
+            ("title", "Resultado", 185),
+            ("detail", "Artista / Álbum / Autor", 165),
         ):
             self.music_results_tree.heading(name, text=label)
             self.music_results_tree.column(
                 name,
                 width=width,
-                minwidth=70,
+                minwidth=65,
                 stretch=name != "type",
                 anchor="w",
             )
@@ -1048,16 +1059,33 @@ class DownloadApp(QueueUI):
         result_scroll.grid(row=0, column=1, sticky="ns")
         self.music_results_tree.configure(yscrollcommand=result_scroll.set)
 
-        cover_box = ttk.Frame(result_detail)
-        cover_box.pack(side="left", anchor="n", padx=(0, 12))
+        # Card Inspetor de Detalhes (Layout vertical limpo estilo Deemix sem cortar botões)
+        detail_hdr = ttk.Frame(result_detail, style="CardInner.TFrame")
+        detail_hdr.pack(fill="x", pady=(0, 6))
+        ttk.Label(
+            detail_hdr,
+            text="DETALHES DO ITEM SELECIONADO",
+            font=(self.text_family, 8, "bold"),
+            foreground=DEEMIX_BLUE,
+            style="Card.TLabel",
+        ).pack(anchor="w")
+
+        detail_top = ttk.Frame(result_detail, style="CardInner.TFrame")
+        detail_top.pack(fill="x", pady=(0, 8))
+
+        cover_box = ttk.Frame(detail_top, style="CoverBox.TFrame", padding=6)
+        cover_box.pack(side="left", anchor="n", padx=(0, 10))
         self.catalog_cover_label = ttk.Label(
             cover_box,
             text="Sem capa",
-            width=18,
+            width=12,
             anchor="center",
+            justify="center",
+            style="Cover.TLabel",
         )
         self.catalog_cover_label.pack()
-        detail_info = ttk.Frame(result_detail)
+
+        detail_info = ttk.Frame(detail_top, style="CardInner.TFrame")
         detail_info.pack(side="left", fill="both", expand=True)
         self.catalog_title_var = StringVar(value="Selecione um resultado")
         self.catalog_subtitle_var = StringVar()
@@ -1065,25 +1093,32 @@ class DownloadApp(QueueUI):
         wrapping_label(
             detail_info,
             textvariable=self.catalog_title_var,
-            font=(self.text_family, 11, "bold"),
+            font=(self.text_family, 10, "bold"),
+            style="Card.TLabel",
         )
-        wrapping_label(detail_info, textvariable=self.catalog_subtitle_var)
+        wrapping_label(
+            detail_info,
+            textvariable=self.catalog_subtitle_var,
+            style="CardMuted.TLabel",
+        )
         wrapping_label(
             detail_info,
             textvariable=self.catalog_type_var,
-            foreground=APPLE_TEXT_SECONDARY,
+            foreground=DEEMIX_BLUE,
+            style="Card.TLabel",
         )
-        result_buttons = ttk.Frame(detail_info)
-        result_buttons.pack(fill="x", pady=(6, 0))
 
-        # Linha 1 de Ações Principais
-        r1 = ttk.Frame(result_buttons)
+        result_buttons = ttk.Frame(result_detail, style="CardInner.TFrame")
+        result_buttons.pack(fill="x")
+
+        # Linha 1: Reprodução e Download Direto
+        r1 = ttk.Frame(result_buttons, style="CardInner.TFrame")
         r1.pack(fill="x", pady=(0, 4))
 
         self.catalog_play_button = ttk.Button(
             r1,
             text="▶",
-            width=3,
+            width=4,
             command=self._toggle_catalog_playback,
             state="normal",
             style="ApplePlay.TButton",
@@ -1120,18 +1155,22 @@ class DownloadApp(QueueUI):
         self.catalog_load_button.pack(side="left", padx=(4, 0))
         add_tooltip(self.catalog_load_button, "Adicionar à fila geral de downloads")
 
+        # Linha 2: Álbum e Seleção de Faixas
+        r2 = ttk.Frame(result_buttons, style="CardInner.TFrame")
+        r2.pack(fill="x", pady=(0, 4))
+
         self.catalog_drill_button = ttk.Button(
-            r1,
+            r2,
             text="💿 Ver Álbum",
             command=self._view_album_for_selected,
             state="normal",
         )
-        self.catalog_drill_button.pack(side="left", padx=(6, 0))
+        self.catalog_drill_button.pack(side="left")
         add_tooltip(self.catalog_drill_button, "Ver todas as faixas do álbum correspondente")
 
         self.catalog_album_download_button = ttk.Button(
-            r1,
-            text="⚡ Baixar Álbum Completo",
+            r2,
+            text="⚡ Baixar Álbum",
             command=self._download_album_for_selected,
             state="normal",
             style="Accent.TButton",
@@ -1139,55 +1178,59 @@ class DownloadApp(QueueUI):
         self.catalog_album_download_button.pack(side="left", padx=(4, 0))
         add_tooltip(self.catalog_album_download_button, "Adicionar todas as faixas deste álbum à fila e iniciar o download")
 
-        # Linha 2 de Ferramentas e Opções Adicionais
-        r2 = ttk.Frame(result_buttons)
-        r2.pack(fill="x", pady=(2, 0))
-
         self.catalog_tracklist_button = ttk.Button(
             r2,
-            text="☑️ Escolher Faixas do Álbum...",
+            text="☑️ Faixas...",
             command=self._tracklist_for_selected,
             state="normal",
         )
-        self.catalog_tracklist_button.pack(side="left")
+        self.catalog_tracklist_button.pack(side="left", padx=(4, 0))
         add_tooltip(self.catalog_tracklist_button, "Abrir lista interativa [✓] para escolher faixas específicas do álbum")
 
+        # Linha 3: Discografia e Ferramentas
+        r3 = ttk.Frame(result_buttons, style="CardInner.TFrame")
+        r3.pack(fill="x")
+
         self.catalog_artist_albums_button = ttk.Button(
-            r2,
+            r3,
             text="💿 Discografia",
             command=self._drill_artist_albums,
             state="normal",
+            style="Chip.TButton",
         )
-        self.catalog_artist_albums_button.pack(side="left", padx=(6, 0))
+        self.catalog_artist_albums_button.pack(side="left")
         add_tooltip(self.catalog_artist_albums_button, "Ver todos os álbuns deste artista")
 
         self.catalog_analyzer_button = ttk.Button(
-            r2,
+            r3,
             text="🔍 Raio-X",
             command=lambda: self._open_link_analyzer_dialog(),
             state="normal",
+            style="Chip.TButton",
         )
-        self.catalog_analyzer_button.pack(side="left", padx=(6, 0))
+        self.catalog_analyzer_button.pack(side="left", padx=(4, 0))
         add_tooltip(self.catalog_analyzer_button, "Inspecionar metadados detalhados (ISRC, BPM, gravadora)")
 
         self.catalog_open_button = ttk.Button(
-            r2,
+            r3,
             text="🌐 Deezer",
             command=self._open_selected_catalog_result,
             state="normal",
+            style="Chip.TButton",
         )
-        self.catalog_open_button.pack(side="left", padx=(6, 0))
+        self.catalog_open_button.pack(side="left", padx=(4, 0))
         add_tooltip(self.catalog_open_button, "Abrir página oficial no Deezer")
 
         open_local_btn = ttk.Button(
-            r2,
-            text="📂 Abrir local...",
+            r3,
+            text="📂 Local",
             command=self.open_local_audio_file,
+            style="Chip.TButton",
         )
-        open_local_btn.pack(side="left", padx=(6, 0))
+        open_local_btn.pack(side="left", padx=(4, 0))
         add_tooltip(open_local_btn, "Reproduzir arquivo de áudio do computador")
 
-        # In-memory audio controls frame to keep backward compatibility and test invariants without cluttering UI
+        # In-memory audio controls frame to keep backward compatibility and test invariants
         music_player_card = ttk.Frame(music)
         player_info_row = ttk.Frame(music_player_card)
         wrapping_label(player_info_row, textvariable=self.music_player_track_var, font=(self.text_family, 10, "bold"))
@@ -1203,83 +1246,105 @@ class DownloadApp(QueueUI):
         self.audio_volume_scale = ttk.Scale(player_ctrls_row, from_=0, to=100, variable=self.music_volume_var, command=self._set_music_volume, length=80)
         ttk.Label(player_ctrls_row, textvariable=self.music_volume_label_var, width=5, anchor="w", font=(self.text_family, 9))
 
-        options = ttk.LabelFrame(music, text="Download e organização", padding=8)
-        options.pack(fill="x")
+        # Rodapé da página de Música em 2 colunas: Esquerda (Opções) | Direita (Fila de músicas)
+        music_bottom_split = ttk.Frame(music)
+        music_bottom_split.pack(fill="x")
+        music_bottom_split.columnconfigure(0, weight=1)
+        music_bottom_split.columnconfigure(1, weight=1)
+
+        options = ttk.LabelFrame(music_bottom_split, text="Download e organização", padding=(10, 6))
+        options.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         options.columnconfigure(1, weight=1)
-        options.columnconfigure(5, weight=1)
+        options.columnconfigure(3, weight=1)
 
-        ttk.Label(options, text="Pasta:").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=3)
-        ttk.Entry(options, textvariable=self.music_folder_var).grid(row=0, column=1, columnspan=3, sticky="ew", pady=3)
-        ttk.Button(options, text="Escolher", command=self.choose_music_folder).grid(row=0, column=4, padx=(6, 12), pady=3)
+        ttk.Label(options, text="Pasta:").grid(row=0, column=0, sticky="w", padx=(0, 4), pady=2)
+        ttk.Entry(options, textvariable=self.music_folder_var, width=16).grid(row=0, column=1, columnspan=2, sticky="ew", pady=2)
+        ttk.Button(options, text="Escolher", command=self.choose_music_folder).grid(row=0, column=3, sticky="w", padx=(4, 0), pady=2)
 
-        ttk.Label(options, text="Formato:").grid(row=0, column=5, sticky="e", padx=(0, 6), pady=3)
+        ttk.Label(options, text="Formato:").grid(row=1, column=0, sticky="w", padx=(0, 4), pady=2)
         self.music_format_combo = ttk.Combobox(
             options,
             textvariable=self.music_format_var,
             values=MUSIC_DOWNLOAD_FORMATS,
             state="readonly",
-            width=21,
+            width=16,
         )
-        self.music_format_combo.grid(row=0, column=6, sticky="ew", pady=3)
+        self.music_format_combo.grid(row=1, column=1, sticky="ew", pady=2)
         self.music_format_combo.bind("<<ComboboxSelected>>", self._on_music_format_selected)
 
-        ttk.Label(options, text="Pastas:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=3)
+        ttk.Label(options, text="Pastas:").grid(row=1, column=2, sticky="e", padx=(6, 4), pady=2)
         ttk.Combobox(
             options,
             textvariable=self.music_structure_var,
             values=MUSIC_FOLDER_STRUCTURES,
             state="readonly",
-            width=18,
-        ).grid(row=1, column=1, sticky="w", pady=3)
-        ttk.Label(options, text="Nome:").grid(row=1, column=2, sticky="e", padx=(8, 6), pady=3)
-        ttk.Entry(options, textvariable=self.music_filename_var).grid(row=1, column=3, columnspan=2, sticky="ew", pady=3)
-        ttk.Label(options, text="Taxa:").grid(row=1, column=5, sticky="e", padx=(8, 6), pady=3)
-        self._build_audio_controls(options, row=1, column=6)
+            width=12,
+        ).grid(row=1, column=3, sticky="ew", pady=2)
+
+        ttk.Label(options, text="Nome:").grid(row=2, column=0, sticky="w", padx=(0, 4), pady=2)
+        ttk.Entry(options, textvariable=self.music_filename_var, width=14).grid(row=2, column=1, columnspan=3, sticky="ew", pady=2)
+
+        ttk.Label(options, text="Taxa:").grid(row=3, column=0, sticky="w", padx=(0, 4), pady=2)
+        self._build_audio_controls(options, row=3, column=1, columnspan=3)
+
         ttk.Checkbutton(
             options,
             text="Carregar todas as faixas ao abrir artista, álbum ou playlist",
             variable=self.playlist_var,
-        ).grid(row=2, column=0, columnspan=7, sticky="w", pady=(4, 0))
-        self._build_context_queue(music, "music")
+        ).grid(row=4, column=0, columnspan=4, sticky="w", pady=(2, 0))
 
-        # Vídeo: entrada e opções em uma tela própria.
-        video_input = ttk.LabelFrame(video, text="Links de vídeo / playlists", padding=10)
-        video_input.pack(fill="x", pady=(0, 8))
+        music_queue_holder = ttk.Frame(music_bottom_split)
+        music_queue_holder.grid(row=0, column=1, sticky="nsew")
+        self._build_context_queue(music_queue_holder, "music", pady=0)
+
+        # Vídeo: Estúdio de Download em 2 Colunas (sem necessidade de rolagem vertical ou horizontal)
+        video_input = ttk.LabelFrame(video, text="Links de vídeo / playlists", padding=(10, 6))
+        video_input.pack(fill="x", pady=(0, 6))
 
         url_toolbar = ttk.Frame(video_input)
-        url_toolbar.pack(fill="x", pady=(0, 6))
-        ttk.Button(url_toolbar, text="📋 Colar", command=self._paste_clipboard_to_url_text).pack(side="left")
-        ttk.Button(url_toolbar, text="📂 Importar .txt", command=self._import_urls_from_file).pack(side="left", padx=4)
-        ttk.Button(url_toolbar, text="💾 Exportar", command=self._export_urls_to_file).pack(side="left")
-        ttk.Button(url_toolbar, text="🧹 Limpar", command=self._clear_url_text).pack(side="left", padx=4)
+        url_toolbar.pack(fill="x", pady=(0, 4))
+        ttk.Button(url_toolbar, text="📋 Colar", style="Chip.TButton", command=self._paste_clipboard_to_url_text).pack(side="left")
+        ttk.Button(url_toolbar, text="📂 Importar .txt", style="Chip.TButton", command=self._import_urls_from_file).pack(side="left", padx=4)
+        ttk.Button(url_toolbar, text="💾 Exportar", style="Chip.TButton", command=self._export_urls_to_file).pack(side="left")
+        ttk.Button(url_toolbar, text="🧹 Limpar", style="Chip.TButton", command=self._clear_url_text).pack(side="left", padx=4)
         self.detected_links_label = ttk.Label(
             url_toolbar,
             textvariable=self.detected_links_var,
-            font=(self.text_family, 9),
-            foreground="#2563eb",
+            font=(self.text_family, 9, "bold"),
+            foreground=DEEMIX_BLUE,
         )
         self.detected_links_label.pack(side="right")
 
-        self.video_url_text = self._make_text(video_input, height=3)
+        self.video_url_text = self._make_text(video_input, height=2)
         self.video_url_text.pack(fill="both", expand=True)
         wrapping_label(
             video_input,
-            text="Cole um link por linha. YouTube, Kanal D, JW.ORG e outras fontes compatíveis com yt-dlp.",
+            text="Cole um link por linha. YouTube, Kanal D, JW.ORG e +1000 fontes compatíveis com yt-dlp.",
             foreground=APPLE_TEXT_SECONDARY,
         )
         self.video_url_text.bind("<KeyRelease>", lambda e: (self._update_detected_links_count(), self._schedule_video_preview_check()))
         self.video_url_text.bind("<<Paste>>", lambda e: self.root.after(100, lambda: (self._update_detected_links_count(), self._schedule_video_preview_check())))
 
-        # Card de prévia automática de vídeo
-        self.video_preview_frame = ttk.LabelFrame(video, text="Prévia do vídeo", padding=8)
-        self.video_preview_frame.pack(fill="x", pady=(0, 8))
-        video_cover_box = ttk.Frame(self.video_preview_frame)
-        video_cover_box.pack(side="left", anchor="n", padx=(0, 12))
+        # Divisão central do Estúdio de Vídeo: Esquerda (Prévia + Opções) | Direita (Player Integrado + Fila)
+        video_studio_split = ttk.Frame(video)
+        video_studio_split.pack(fill="both", expand=True)
+        video_studio_split.columnconfigure(0, weight=1)
+        video_studio_split.columnconfigure(1, weight=1)
+
+        video_left_col = ttk.Frame(video_studio_split)
+        video_left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+
+        self.video_preview_frame = ttk.LabelFrame(video_left_col, text="Prévia do vídeo", padding=(10, 6))
+        self.video_preview_frame.pack(fill="x", pady=(0, 6))
+        video_cover_box = ttk.Frame(self.video_preview_frame, style="CoverBox.TFrame", padding=6)
+        video_cover_box.pack(side="left", anchor="n", padx=(0, 10))
         self.video_cover_label = ttk.Label(
             video_cover_box,
             text="Sem capa",
-            width=20,
+            width=12,
             anchor="center",
+            justify="center",
+            style="Cover.TLabel",
         )
         self.video_cover_label.pack()
         video_detail_info = ttk.Frame(self.video_preview_frame)
@@ -1289,7 +1354,7 @@ class DownloadApp(QueueUI):
         wrapping_label(
             video_detail_info,
             textvariable=self.video_preview_title_var,
-            font=(self.text_family, 11, "bold"),
+            font=(self.text_family, 10, "bold"),
         )
         wrapping_label(
             video_detail_info,
@@ -1297,23 +1362,82 @@ class DownloadApp(QueueUI):
             foreground=APPLE_TEXT_SECONDARY,
         )
 
-        player = ttk.LabelFrame(video, text="Player", padding=8)
-        player.pack(fill="x", pady=(0, 8))
+        video_options = ttk.LabelFrame(video_left_col, text="Opções de download", padding=(10, 6))
+        video_options.pack(fill="both", expand=True)
+        video_options.columnconfigure(1, weight=1)
+        ttk.Label(video_options, text="Pasta:").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=2)
+        ttk.Entry(video_options, textvariable=self.video_folder_var, width=16).grid(row=0, column=1, sticky="ew", pady=2)
+        ttk.Button(video_options, text="Escolher", command=self.choose_video_folder).grid(row=0, column=2, padx=(6, 0), pady=2)
+
+        ttk.Label(video_options, text="Formato:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=2)
+        self.video_format_combo = ttk.Combobox(
+            video_options,
+            textvariable=self.video_format_var,
+            values=VIDEO_DOWNLOAD_FORMATS,
+            state="readonly",
+            width=18,
+        )
+        self.video_format_combo.grid(row=1, column=1, sticky="ew", pady=2)
+        self.video_format_combo.bind("<<ComboboxSelected>>", self._on_video_format_selected)
+        ttk.Checkbutton(
+            video_options,
+            text="Playlist inteira",
+            variable=self.playlist_var,
+        ).grid(row=1, column=2, sticky="w", padx=(6, 0), pady=2)
+
+        ttk.Label(video_options, text="Taxa áudio:").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=2)
+        self._build_audio_controls(video_options, row=2, column=1, columnspan=2)
+
+        preset_row = ttk.Frame(video_options)
+        preset_row.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+        ttk.Label(preset_row, text="⚡ Perfil:", font=(self.text_family, 9, "bold")).pack(side="left", padx=(0, 4))
+        self.preset_combo = ttk.Combobox(
+            preset_row,
+            textvariable=self.preset_var,
+            values=PRESET_CHOICES,
+            state="readonly",
+            width=18,
+        )
+        self.preset_combo.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        self.preset_combo.bind("<<ComboboxSelected>>", self._on_preset_selected)
+        add_tooltip(self.preset_combo, "Aplica formatos e opções recomendadas para o seu objetivo")
+
+        video_actions = ttk.Frame(preset_row)
+        video_actions.pack(side="right")
+        ttk.Button(
+            video_actions,
+            text="➕ Fila",
+            command=self.analyze_links,
+        ).pack(side="left")
+        ttk.Button(
+            video_actions,
+            text="⬇️ Baixar",
+            command=self.start_download,
+            style="Accent.TButton",
+        ).pack(side="left", padx=(4, 0))
+
+        # Coluna Direita: Player Integrado + Fila de vídeos
+        video_right_col = ttk.Frame(video_studio_split)
+        video_right_col.grid(row=0, column=1, sticky="nsew")
+
+        player = ttk.LabelFrame(video_right_col, text="Player Integrado", padding=(10, 6))
+        player.pack(fill="x", pady=(0, 6))
         self.video_surface = Frame(
             player,
-            background="#05070a",
-            height=300,
+            background="#08080c",
+            height=96,
             highlightthickness=1,
-            highlightbackground="#26364a",
+            highlightbackground=DEEMIX_CARD_BORDER,
         )
         self.video_surface.pack(fill="x")
         self.video_surface.pack_propagate(False)
         controls = ttk.Frame(player)
-        controls.pack(fill="x", pady=(8, 0))
+        controls.pack(fill="x", pady=(4, 0))
         self.video_play_button = ttk.Button(
             controls,
             text="▶",
             width=3,
+            style="ApplePlay.TButton",
             command=self.play_selected_video,
         )
         self.video_play_button.pack(side="left")
@@ -1324,7 +1448,7 @@ class DownloadApp(QueueUI):
             command=self.stop_video,
             state="disabled",
         )
-        self.video_stop_button.pack(side="left", padx=(6, 8))
+        self.video_stop_button.pack(side="left", padx=(4, 4))
         add_tooltip(self.video_play_button, "Reproduzir ou pausar o vídeo")
         add_tooltip(self.video_stop_button, "Parar o vídeo")
         self.video_seek_scale = ttk.Scale(
@@ -1339,77 +1463,27 @@ class DownloadApp(QueueUI):
         ttk.Label(
             controls,
             textvariable=self.video_player_time_var,
-            width=15,
+            width=11,
             anchor="center",
-        ).pack(side="left", padx=(8, 8))
-        ttk.Label(controls, text="🔊").pack(side="left")
+            font=(self.text_family, 8),
+        ).pack(side="left", padx=(4, 2))
+        ttk.Label(controls, text="🔊", font=(self.text_family, 8)).pack(side="left")
         self.video_volume_scale = ttk.Scale(
             controls,
             from_=0,
             to=100,
             variable=self.video_volume_var,
             command=self._set_video_volume,
-            length=100,
+            length=45,
         )
-        self.video_volume_scale.pack(side="left", padx=(4, 0))
+        self.video_volume_scale.pack(side="left", padx=(2, 0))
         wrapping_label(
             player,
             textvariable=self.video_player_status_var,
             foreground=APPLE_TEXT_SECONDARY,
         )
 
-        video_options = ttk.LabelFrame(video, text="Opções", padding=8)
-        video_options.pack(fill="x")
-        video_options.columnconfigure(1, weight=1)
-        ttk.Label(video_options, text="Pasta:").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=3)
-        ttk.Entry(video_options, textvariable=self.video_folder_var).grid(row=0, column=1, sticky="ew", pady=3)
-        ttk.Button(video_options, text="Escolher", command=self.choose_video_folder).grid(row=0, column=2, padx=(6, 12), pady=3)
-        ttk.Label(video_options, text="Formato:").grid(row=0, column=3, sticky="e", padx=(0, 6), pady=3)
-        self.video_format_combo = ttk.Combobox(
-            video_options,
-            textvariable=self.video_format_var,
-            values=VIDEO_DOWNLOAD_FORMATS,
-            state="readonly",
-            width=24,
-        )
-        self.video_format_combo.grid(row=0, column=4, sticky="w", pady=3)
-        self.video_format_combo.bind("<<ComboboxSelected>>", self._on_video_format_selected)
-        ttk.Checkbutton(
-            video_options,
-            text="Playlist inteira",
-            variable=self.playlist_var,
-        ).grid(row=1, column=0, sticky="w", pady=3)
-        ttk.Label(video_options, text="Taxa do áudio:").grid(row=1, column=3, sticky="e", padx=(0, 6), pady=3)
-        self._build_audio_controls(video_options, row=1, column=4)
-        video_actions = ttk.Frame(video_options)
-        video_actions.grid(row=1, column=2, sticky="e", padx=(6, 12), pady=3)
-        ttk.Button(
-            video_actions,
-            text="Adicionar à fila",
-            command=self.analyze_links,
-        ).pack(side="left")
-        ttk.Button(
-            video_actions,
-            text="Baixar",
-            command=self.start_download,
-            style="Accent.TButton",
-        ).pack(side="left", padx=(6, 0))
-
-        preset_row = ttk.Frame(video_options)
-        preset_row.grid(row=2, column=0, columnspan=5, sticky="ew", pady=(4, 0))
-        ttk.Label(preset_row, text="⚡ Perfil Rápido:", font=(self.text_family, 9, "bold")).pack(side="left", padx=(0, 6))
-        self.preset_combo = ttk.Combobox(
-            preset_row,
-            textvariable=self.preset_var,
-            values=PRESET_CHOICES,
-            state="readonly",
-            width=36,
-        )
-        self.preset_combo.pack(side="left")
-        self.preset_combo.bind("<<ComboboxSelected>>", self._on_preset_selected)
-        add_tooltip(self.preset_combo, "Aplica formatos e opções recomendadas para o seu objetivo")
-
-        self._build_context_queue(video, "video")
+        self._build_context_queue(video_right_col, "video", pady=0)
 
         # Fila em aba própria: elimina a maior parte do scroll da tela de trabalho.
         self._build_episode_list(self.queue_page)
@@ -1848,6 +1922,9 @@ class DownloadApp(QueueUI):
         self.root.bind("<Control-Key-5>", lambda _e: self.tabs.select(self.activity_page))
         self.root.bind("<Control-Key-6>", lambda _e: self.tabs.select(self.about_page))
         self._update_audio_controls()
+        harmonize_widget_surfaces(self.root)
+        harmonize_widget_surfaces(self.settings_dialog)
+        self._sync_sidebar_selection()
         if self.deezer_arl_var.get().strip():
             self.root.after(400, lambda: self._check_deezer_arl(show_dialog=False))
 
@@ -1856,31 +1933,13 @@ class DownloadApp(QueueUI):
             self.sidebar_frame.pack_forget()
             self.sidebar_visible = False
         else:
-            self.sidebar_frame.pack(side="left", fill="y", padx=(0, 6), before=self.content_container)
+            self.sidebar_frame.pack(side="left", fill="y", before=self.content_container)
             self.sidebar_visible = True
 
     def _build_apple_sidebar(self, parent) -> None:
-        self.sidebar_frame = ttk.Frame(parent, width=215, padding=(2, 4), style="Sidebar.TFrame")
+        self.sidebar_frame = ttk.Frame(parent, width=205, padding=(4, 6), style="Sidebar.TFrame")
         self.sidebar_frame.pack_propagate(False)
-        self.sidebar_frame.pack(side="left", fill="y", padx=(0, 6), before=self.content_container)
-
-        # Cabeçalho da Sidebar estilo Deemix
-        brand_box = ttk.Frame(self.sidebar_frame, style="Sidebar.TFrame")
-        brand_box.pack(fill="x", padx=6, pady=(6, 8))
-        ttk.Label(
-            brand_box,
-            text="⚡ C² Downloader",
-            font=(self.display_family, 11, "bold"),
-            foreground=PROGRAM_BLUE,
-            style="Sidebar.TLabel",
-        ).pack(anchor="w", padx=6)
-        ttk.Label(
-            brand_box,
-            text="DEEMIX & YT-DLP CORE",
-            font=(self.text_family, 7, "bold"),
-            foreground="#64748b",
-            style="Sidebar.TLabel",
-        ).pack(anchor="w", padx=6)
+        self.sidebar_frame.pack(side="left", fill="y", before=self.content_container)
 
         # Container interno com rolagem suave
         canvas = Canvas(self.sidebar_frame, borderwidth=0, highlightthickness=0, bg=APPLE_SIDEBAR_BG)
@@ -1899,8 +1958,7 @@ class DownloadApp(QueueUI):
             ttk.Label(
                 inner,
                 text=title,
-                font=(self.text_family, 8, "bold"),
-                foreground="#8e8e93",
+                style="SidebarSection.TLabel",
                 padding=(10, 8, 2, 2),
             ).pack(fill="x")
 
@@ -1929,7 +1987,7 @@ class DownloadApp(QueueUI):
                 add_tooltip(btn, tooltip)
             return btn
 
-        _sec("NAVEGAÇÃO")
+        _sec("CATÁLOGO")
         _item("🎵 Música & Catálogo", self.music_page, "music", "Buscar e ouvir faixas, álbuns e discografias")
         _item("🎬 Vídeos & Links", self.video_page, "video", "Baixar vídeos do YouTube e links diretos")
 
@@ -2004,11 +2062,11 @@ class DownloadApp(QueueUI):
                 btn.configure(style="Sidebar.TButton")
 
     def _build_apple_now_playing_bar(self, parent) -> None:
-        self.bottom_player_bar = ttk.Frame(parent, padding=(10, 6))
-        self.bottom_player_bar.pack(side="bottom", fill="x", pady=(4, 0))
+        self.bottom_player_bar = ttk.Frame(parent, style="Sidebar.TFrame", padding=(14, 8))
+        self.bottom_player_bar.pack(side="bottom", fill="x")
 
         div = ttk.Separator(parent, orient="horizontal")
-        div.pack(side="bottom", fill="x", before=self.bottom_player_bar)
+        div.pack(side="bottom", fill="x")
 
         left_col = ttk.Frame(self.bottom_player_bar)
         left_col.pack(side="left", padx=(0, 12))
@@ -2206,29 +2264,40 @@ class DownloadApp(QueueUI):
             on_restore=lambda: self.root.deiconify(),
         )
 
-    def _build_context_queue(self, parent, mode: str) -> None:
+    def _build_context_queue(self, parent, mode: str, *, pady=(6, 0)) -> None:
         title = "Fila de músicas" if mode == "music" else "Fila de vídeos"
-        frame = ttk.LabelFrame(parent, text=title, padding=8)
-        frame.pack(fill="x", pady=(8, 0))
+        frame = ttk.LabelFrame(parent, text=title, padding=(8, 4))
+        frame.pack(fill="both", expand=True, pady=pady)
 
-        count = ttk.Label(frame, text="Nenhum item nesta fila.", foreground=APPLE_TEXT_SECONDARY)
-        count.pack(anchor="w", pady=(0, 4))
+        top_status = ttk.Frame(frame)
+        top_status.pack(fill="x", pady=(0, 2))
+        count = ttk.Label(top_status, text="Nenhum item nesta fila.", foreground=APPLE_TEXT_SECONDARY, font=(self.text_family, 8))
+        count.pack(side="left")
         self.context_queue_counts[mode] = count
 
+        progress = ttk.Progressbar(
+            frame,
+            mode="determinate",
+            maximum=100,
+            variable=self.progress_value_var,
+        )
+        progress.pack(fill="x", pady=(0, 3))
+
         table = ttk.Frame(frame)
-        table.pack(fill="x")
+        table.pack(fill="both", expand=True, pady=(0, 4))
         tree = ttk.Treeview(
             table,
             columns=("title", "status"),
             show="headings",
-            height=3,
+            height=2,
             selectmode="browse",
         )
         tree.heading("title", text="Mídia")
         tree.heading("status", text="Situação")
-        tree.column("title", width=430, minwidth=150, stretch=True, anchor="w")
-        tree.column("status", width=130, minwidth=95, stretch=False, anchor="center")
-        tree.grid(row=0, column=0, sticky="ew")
+        tree.column("title", width=210, minwidth=110, stretch=True, anchor="w")
+        tree.column("status", width=95, minwidth=75, stretch=False, anchor="center")
+        tree.grid(row=0, column=0, sticky="nsew")
+        table.rowconfigure(0, weight=1)
         table.columnconfigure(0, weight=1)
         ybar = ttk.Scrollbar(table, orient="vertical", command=tree.yview)
         ybar.grid(row=0, column=1, sticky="ns")
@@ -2239,33 +2308,12 @@ class DownloadApp(QueueUI):
         )
         self.context_queue_trees[mode] = tree
 
-        progress = ttk.Progressbar(
-            frame,
-            mode="determinate",
-            maximum=100,
-            variable=self.progress_value_var,
-        )
-        progress.pack(fill="x", pady=(6, 3))
-        item_label = wrapping_label(
-            frame,
-            textvariable=self.download_item_var,
-            font=(self.text_family, 9, "bold"),
-        )
-        metrics_label = wrapping_label(
-            frame,
-            textvariable=self.download_metrics_var,
-            foreground=APPLE_TEXT_SECONDARY,
-        )
-        progress.pack_configure(before=table)
-        item_label.pack_configure(before=table)
-        metrics_label.pack_configure(before=table)
-
         actions = ttk.Frame(frame)
         actions.pack(fill="x")
         download = ttk.Button(actions, text="Baixar / Continuar", command=self.start_download, style="Accent.TButton")
         download.pack(side="left")
         pause = ttk.Button(actions, text="⏸", width=3, command=self.toggle_pause, state="disabled")
-        pause.pack(side="left", padx=(6, 0))
+        pause.pack(side="left", padx=(4, 0))
         stop = ttk.Button(actions, text="■", width=3, command=self.stop_queue, state="disabled")
         stop.pack(side="left", padx=(4, 0))
         ttk.Button(
@@ -2355,15 +2403,15 @@ class DownloadApp(QueueUI):
         except Exception:
             self.template_preview_var.set(f"📄 Exemplo: {template}.mp3")
 
-    def _build_audio_controls(self, parent, *, row: int, column: int) -> None:
+    def _build_audio_controls(self, parent, *, row: int, column: int, columnspan: int = 1) -> None:
         holder = ttk.Frame(parent)
-        holder.grid(row=row, column=column, sticky="w", pady=3)
+        holder.grid(row=row, column=column, columnspan=columnspan, sticky="w", pady=2)
         combo = ttk.Combobox(
             holder,
             textvariable=self.audio_bitrate_mode_var,
             values=AUDIO_BITRATE_CHOICES,
             state="readonly",
-            width=17,
+            width=16,
         )
         combo.pack(side="left")
         custom = ttk.Spinbox(
@@ -2374,10 +2422,10 @@ class DownloadApp(QueueUI):
             increment=1,
             width=5,
         )
-        custom.pack(side="left", padx=(5, 2))
+        custom.pack(side="left", padx=(4, 2))
         unit = ttk.Label(holder, text="kbps")
         unit.pack(side="left")
-        hint = ttk.Label(holder, text="", foreground=APPLE_TEXT_SECONDARY)
+        hint = ttk.Label(holder, text="", foreground=APPLE_TEXT_SECONDARY, font=(self.text_family, 8))
         hint.pack(side="left", padx=(6, 0))
         if not hasattr(self, "audio_control_sets"):
             self.audio_control_sets = []
@@ -2400,18 +2448,18 @@ class DownloadApp(QueueUI):
             width=1,
             wrap="word",
             font=(self.text_family, 10),
-            relief="solid",
-            borderwidth=1,
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=1,
+            highlightbackground=APPLE_CARD_BORDER,
+            highlightcolor=PROGRAM_BLUE,
             padx=8,
-            pady=6,
-            background=APPLE_DARK_BG,
+            pady=5,
+            background="#12121a",
             foreground=APPLE_TEXT_PRIMARY,
             insertbackground=APPLE_TEXT_PRIMARY,
             selectbackground=PROGRAM_BLUE,
             selectforeground="#ffffff",
-            highlightthickness=1,
-            highlightcolor=PROGRAM_BLUE,
-            highlightbackground=APPLE_CARD_BORDER,
         )
 
     def _update_audio_controls(self, *_args) -> None:

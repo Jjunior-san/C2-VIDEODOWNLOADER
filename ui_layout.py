@@ -25,25 +25,13 @@ def configure_fonts(root):
     return text_family, display_family
 
 
-# C2 Signature Blue & Apple/macOS-inspired Design System
-PROGRAM_BLUE = "#2563eb"
-PROGRAM_BLUE_HOVER = "#1d4ed8"
-PROGRAM_BLUE_ACTIVE = "#1e40af"
-PROGRAM_BLUE_SUBTLE = "#1e293b"
-
-# Color aliases for backward compatibility
-APPLE_RED = PROGRAM_BLUE
-APPLE_RED_HOVER = PROGRAM_BLUE_HOVER
-APPLE_RED_ACTIVE = PROGRAM_BLUE_ACTIVE
-APPLE_RED_SUBTLE = PROGRAM_BLUE_SUBTLE
-
-# Clean, Unified Obsidian / Dark Slate Theme Palette
 # Deemix-Inspired Dark Obsidian Theme Palette (Extracted directly from Deemix GUI bundle.js)
 DEEMIX_DARK_BG = "#0e0e13"          # hsl(240, 10%, 8%) - Fundo principal da aplicação
 DEEMIX_SIDEBAR_BG = "#161622"       # hsl(240, 15%, 12%) - Painel lateral e cabeçalhos
-DEEMIX_CARD_BG = "#1f1f2b"          # hsl(240, 12%, 16%) - Cartões e caixas de diálogo
-DEEMIX_CARD_BORDER = "#2c2c3e"      # Bordas sutis dos elementos
-DEEMIX_CARD_HOVER = "#2a2a3b"       # hsl(240, 10%, 22%) - Destaque ao passar o mouse
+DEEMIX_CARD_BG = "#1b1b26"          # hsl(240, 14%, 13%) - Cartões e painéis elevados
+DEEMIX_INPUT_BG = "#12121a"         # Campos de entrada e caixas de texto
+DEEMIX_CARD_BORDER = "#2a2a3c"      # Bordas sutis dos elementos
+DEEMIX_CARD_HOVER = "#262638"       # hsl(240, 10%, 22%) - Destaque ao passar o mouse
 DEEMIX_TEXT_PRIMARY = "#f3f4f6"     # hsl(0, 0%, 93%) - Texto principal de alto contraste
 DEEMIX_TEXT_SECONDARY = "#9ca3af"   # Textos secundários, subtítulos e metadados
 DEEMIX_TEXT_MUTED = "#64748b"       # Dicas e placeholders
@@ -52,7 +40,7 @@ DEEMIX_BLUE_HOVER = "#0070e0"
 DEEMIX_BLUE_ACTIVE = "#005bb5"
 DEEMIX_GOLD = "#ffd024"             # hsl(46, 100%, 57%) - Destaques VIP / explícito / avisos
 DEEMIX_GREEN = "#10b981"            # Indicadores de sucesso / status ativo
-DEEMIX_SELECTION = "#1e3a5f"        # Seleção de linhas em tabelas
+DEEMIX_SELECTION = "#1d3557"        # Seleção de linhas em tabelas
 
 # Aliases de compatibilidade retroativa
 APPLE_DARK_BG = DEEMIX_DARK_BG
@@ -70,7 +58,11 @@ APPLE_SELECTION = DEEMIX_SELECTION
 PROGRAM_BLUE = DEEMIX_BLUE
 PROGRAM_BLUE_HOVER = DEEMIX_BLUE_HOVER
 PROGRAM_BLUE_ACTIVE = DEEMIX_BLUE_ACTIVE
-PROGRAM_BLUE_SUBTLE = "#1e293b" 
+PROGRAM_BLUE_SUBTLE = "#1e293b"
+APPLE_RED = PROGRAM_BLUE
+APPLE_RED_HOVER = PROGRAM_BLUE_HOVER
+APPLE_RED_ACTIVE = PROGRAM_BLUE_ACTIVE
+APPLE_RED_SUBTLE = PROGRAM_BLUE_SUBTLE
 
 
 def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.Style:
@@ -81,143 +73,301 @@ def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.
         pass
 
     try:
-        root.configure(background=APPLE_DARK_BG)
+        root.configure(background=DEEMIX_DARK_BG)
+        root.option_add("*TCombobox*Listbox*background", DEEMIX_CARD_BG)
+        root.option_add("*TCombobox*Listbox*foreground", DEEMIX_TEXT_PRIMARY)
+        root.option_add("*TCombobox*Listbox*selectBackground", DEEMIX_BLUE)
+        root.option_add("*TCombobox*Listbox*selectForeground", "#ffffff")
+        root.option_add("*Menu*background", DEEMIX_CARD_BG)
+        root.option_add("*Menu*foreground", DEEMIX_TEXT_PRIMARY)
+        root.option_add("*Menu*activeBackground", DEEMIX_BLUE)
+        root.option_add("*Menu*activeForeground", "#ffffff")
     except Exception:
         pass
 
+    # Base style: eliminate all default clam white/beige bevels (lightcolor/darkcolor)
     style.configure(
         ".",
-        background=APPLE_DARK_BG,
-        foreground=APPLE_TEXT_PRIMARY,
+        background=DEEMIX_DARK_BG,
+        foreground=DEEMIX_TEXT_PRIMARY,
+        bordercolor=DEEMIX_CARD_BORDER,
+        lightcolor=DEEMIX_CARD_BORDER,
+        darkcolor=DEEMIX_CARD_BORDER,
+        focuscolor=DEEMIX_DARK_BG,
+        troughcolor=DEEMIX_DARK_BG,
         font=(text_family, 10),
     )
 
-    row_height = max(34, font.Font(root=root, family=text_family, size=10).metrics("linespace") + 16)
+    row_height = max(30, font.Font(root=root, family=text_family, size=10).metrics("linespace") + 12)
     style.configure(
         "Treeview",
-        background=APPLE_DARK_BG,
-        fieldbackground=APPLE_DARK_BG,
-        foreground=APPLE_TEXT_PRIMARY,
+        background=DEEMIX_INPUT_BG,
+        fieldbackground=DEEMIX_INPUT_BG,
+        foreground=DEEMIX_TEXT_PRIMARY,
         font=(text_family, 10),
         rowheight=row_height,
         borderwidth=1,
         relief="solid",
-        bordercolor=APPLE_CARD_BORDER,
+        bordercolor=DEEMIX_CARD_BORDER,
+        lightcolor=DEEMIX_CARD_BORDER,
+        darkcolor=DEEMIX_CARD_BORDER,
     )
     style.configure(
         "Treeview.Heading",
-        background=APPLE_SIDEBAR_BG,
-        foreground=APPLE_TEXT_PRIMARY,
+        background=DEEMIX_SIDEBAR_BG,
+        foreground=DEEMIX_TEXT_SECONDARY,
         font=(text_family, 9, "bold"),
         relief="flat",
         borderwidth=1,
-        bordercolor=APPLE_CARD_BORDER,
-        padding=[6, 4],
+        bordercolor=DEEMIX_CARD_BORDER,
+        lightcolor=DEEMIX_CARD_BORDER,
+        darkcolor=DEEMIX_CARD_BORDER,
+        padding=[8, 5],
     )
     style.map(
         "Treeview",
-        background=[("selected", APPLE_SELECTION)],
+        background=[("selected", DEEMIX_SELECTION)],
         foreground=[("selected", "#ffffff")],
     )
     style.map(
         "Treeview.Heading",
-        background=[("active", APPLE_CARD_HOVER)],
+        background=[("active", DEEMIX_CARD_HOVER)],
         foreground=[("active", "#ffffff")],
     )
 
-    style.configure("TFrame", background=APPLE_DARK_BG)
-    style.configure("Sidebar.TFrame", background=APPLE_SIDEBAR_BG)
-    style.configure("Card.TFrame", background=APPLE_CARD_BG, relief="solid", borderwidth=1, bordercolor=APPLE_CARD_BORDER)
-
-    style.configure("TLabel", background=APPLE_DARK_BG, foreground=APPLE_TEXT_PRIMARY)
-    style.configure("Card.TLabel", background=APPLE_CARD_BG, foreground=APPLE_TEXT_PRIMARY)
-    style.configure("Muted.TLabel", background=APPLE_DARK_BG, foreground=APPLE_TEXT_SECONDARY)
-    style.configure("Sidebar.TLabel", background=APPLE_SIDEBAR_BG, foreground=APPLE_TEXT_SECONDARY)
-
+    # Frame & Surface Styles
+    style.configure("TFrame", background=DEEMIX_DARK_BG, borderwidth=0, relief="flat")
+    style.configure("Sidebar.TFrame", background=DEEMIX_SIDEBAR_BG, borderwidth=0, relief="flat")
+    style.configure("Header.TFrame", background=DEEMIX_SIDEBAR_BG, borderwidth=0, relief="flat")
     style.configure(
-        "TLabelframe",
-        background=APPLE_CARD_BG,
-        foreground=APPLE_TEXT_PRIMARY,
+        "Card.TFrame",
+        background=DEEMIX_CARD_BG,
         relief="solid",
         borderwidth=1,
-        bordercolor=APPLE_CARD_BORDER,
+        bordercolor=DEEMIX_CARD_BORDER,
+        lightcolor=DEEMIX_CARD_BORDER,
+        darkcolor=DEEMIX_CARD_BORDER,
+    )
+    style.configure("CardInner.TFrame", background=DEEMIX_CARD_BG, relief="flat", borderwidth=0)
+    style.configure(
+        "CoverBox.TFrame",
+        background=DEEMIX_INPUT_BG,
+        relief="solid",
+        borderwidth=1,
+        bordercolor=DEEMIX_CARD_BORDER,
+        lightcolor=DEEMIX_CARD_BORDER,
+        darkcolor=DEEMIX_CARD_BORDER,
+    )
+
+    # Label Styles
+    style.configure("TLabel", background=DEEMIX_DARK_BG, foreground=DEEMIX_TEXT_PRIMARY)
+    style.configure("Card.TLabel", background=DEEMIX_CARD_BG, foreground=DEEMIX_TEXT_PRIMARY)
+    style.configure("CardMuted.TLabel", background=DEEMIX_CARD_BG, foreground=DEEMIX_TEXT_SECONDARY)
+    style.configure("Cover.TLabel", background=DEEMIX_INPUT_BG, foreground=DEEMIX_TEXT_MUTED)
+    style.configure("Muted.TLabel", background=DEEMIX_DARK_BG, foreground=DEEMIX_TEXT_SECONDARY)
+    style.configure("Sidebar.TLabel", background=DEEMIX_SIDEBAR_BG, foreground=DEEMIX_TEXT_PRIMARY)
+    style.configure("SidebarMuted.TLabel", background=DEEMIX_SIDEBAR_BG, foreground=DEEMIX_TEXT_SECONDARY)
+    style.configure(
+        "SidebarSection.TLabel",
+        background=DEEMIX_SIDEBAR_BG,
+        foreground="#64748b",
+        font=(text_family, 8, "bold"),
+    )
+    for lbl_style, lbl_bg in (
+        ("TLabel", DEEMIX_DARK_BG),
+        ("Muted.TLabel", DEEMIX_DARK_BG),
+        ("Card.TLabel", DEEMIX_CARD_BG),
+        ("CardMuted.TLabel", DEEMIX_CARD_BG),
+        ("Cover.TLabel", DEEMIX_INPUT_BG),
+        ("Sidebar.TLabel", DEEMIX_SIDEBAR_BG),
+        ("SidebarMuted.TLabel", DEEMIX_SIDEBAR_BG),
+    ):
+        style.map(
+            lbl_style,
+            background=[("disabled", lbl_bg), ("active", lbl_bg)],
+            foreground=[("disabled", DEEMIX_TEXT_MUTED)],
+        )
+
+    # LabelFrame Styles: uniform card header + 1px divider below title
+    style.configure(
+        "TLabelframe",
+        background=DEEMIX_CARD_BG,
+        foreground=DEEMIX_TEXT_PRIMARY,
+        relief="solid",
+        borderwidth=1,
+        bordercolor=DEEMIX_CARD_BORDER,
+        lightcolor=DEEMIX_CARD_BORDER,
+        darkcolor=DEEMIX_CARD_BORDER,
+        labeloutside=True,
+        labelmargins=(10, 4, 10, 2),
     )
     style.configure(
         "TLabelframe.Label",
-        background=APPLE_CARD_BG,
-        foreground=APPLE_TEXT_PRIMARY,
-        font=(text_family, 10, "bold"),
+        background=DEEMIX_CARD_BG,
+        foreground=DEEMIX_BLUE,
+        font=(text_family, 9, "bold"),
+        padding=(2, 0),
     )
 
     # Deemix-style hidden tab bar for main navigation notebook
     style.layout("Deemix.TNotebook.Tab", [])
-    style.configure("Deemix.TNotebook", background=APPLE_DARK_BG, tabmargins=[0, 0, 0, 0], borderwidth=0)
+    style.configure(
+        "Deemix.TNotebook",
+        background=DEEMIX_DARK_BG,
+        tabmargins=[0, 0, 0, 0],
+        borderwidth=0,
+        lightcolor=DEEMIX_DARK_BG,
+        darkcolor=DEEMIX_DARK_BG,
+    )
 
-    style.configure("TNotebook", background=APPLE_DARK_BG, tabmargins=[2, 4, 2, 0], borderwidth=0)
+    style.configure(
+        "TNotebook",
+        background=DEEMIX_DARK_BG,
+        tabmargins=[2, 4, 2, 0],
+        borderwidth=0,
+        lightcolor=DEEMIX_CARD_BORDER,
+        darkcolor=DEEMIX_CARD_BORDER,
+    )
     style.configure(
         "TNotebook.Tab",
-        background=APPLE_SIDEBAR_BG,
-        foreground=APPLE_TEXT_SECONDARY,
-        font=(text_family, 10, "bold"),
-        padding=[14, 6],
-        borderwidth=0,
+        background=DEEMIX_SIDEBAR_BG,
+        foreground=DEEMIX_TEXT_SECONDARY,
+        font=(text_family, 9, "bold"),
+        padding=[10, 5],
+        borderwidth=1,
+        bordercolor=DEEMIX_CARD_BORDER,
+        lightcolor=DEEMIX_CARD_BORDER,
+        darkcolor=DEEMIX_CARD_BORDER,
     )
     style.map(
         "TNotebook.Tab",
-        background=[("selected", APPLE_CARD_BG), ("active", APPLE_CARD_HOVER)],
-        foreground=[("selected", PROGRAM_BLUE), ("active", APPLE_TEXT_PRIMARY)],
+        background=[("selected", DEEMIX_CARD_BG), ("active", DEEMIX_CARD_HOVER)],
+        foreground=[("selected", DEEMIX_BLUE), ("active", DEEMIX_TEXT_PRIMARY)],
     )
 
+    # Entry, Combobox & Spinbox (No white inner borders!)
     style.configure(
         "TEntry",
-        fieldbackground=APPLE_DARK_BG,
-        foreground=APPLE_TEXT_PRIMARY,
-        insertcolor=APPLE_TEXT_PRIMARY,
-        bordercolor=APPLE_CARD_BORDER,
-        padding=[6, 4],
-    )
-    style.configure(
-        "TCombobox",
-        fieldbackground=APPLE_DARK_BG,
-        background=APPLE_SIDEBAR_BG,
-        foreground=APPLE_TEXT_PRIMARY,
-        arrowcolor=APPLE_TEXT_PRIMARY,
-        bordercolor=APPLE_CARD_BORDER,
-        padding=[6, 4],
+        fieldbackground=DEEMIX_INPUT_BG,
+        background=DEEMIX_INPUT_BG,
+        foreground=DEEMIX_TEXT_PRIMARY,
+        insertcolor=DEEMIX_TEXT_PRIMARY,
+        bordercolor=DEEMIX_CARD_BORDER,
+        lightcolor=DEEMIX_CARD_BORDER,
+        darkcolor=DEEMIX_CARD_BORDER,
+        padding=[8, 5],
+        relief="solid",
+        borderwidth=1,
     )
     style.map(
-        "TCombobox",
-        fieldbackground=[("readonly", APPLE_DARK_BG)],
-        selectbackground=[("readonly", PROGRAM_BLUE)],
-        selectforeground=[("readonly", "#ffffff")],
+        "TEntry",
+        fieldbackground=[("disabled", "#0c0c12"), ("readonly", DEEMIX_INPUT_BG)],
+        foreground=[("disabled", DEEMIX_TEXT_MUTED)],
+        bordercolor=[("focus", DEEMIX_BLUE)],
+        lightcolor=[("focus", DEEMIX_BLUE)],
+        darkcolor=[("focus", DEEMIX_BLUE)],
     )
 
     style.configure(
+        "TCombobox",
+        fieldbackground=DEEMIX_INPUT_BG,
+        background=DEEMIX_CARD_HOVER,
+        foreground=DEEMIX_TEXT_PRIMARY,
+        arrowcolor=DEEMIX_TEXT_SECONDARY,
+        bordercolor=DEEMIX_CARD_BORDER,
+        lightcolor=DEEMIX_CARD_BORDER,
+        darkcolor=DEEMIX_CARD_BORDER,
+        padding=[8, 4],
+        relief="solid",
+        borderwidth=1,
+    )
+    style.map(
+        "TCombobox",
+        fieldbackground=[("readonly", DEEMIX_INPUT_BG), ("disabled", "#0c0c12")],
+        background=[("active", DEEMIX_CARD_BORDER), ("readonly", DEEMIX_CARD_HOVER)],
+        foreground=[("readonly", DEEMIX_TEXT_PRIMARY), ("disabled", DEEMIX_TEXT_MUTED)],
+        selectbackground=[("readonly", DEEMIX_INPUT_BG)],
+        selectforeground=[("readonly", DEEMIX_TEXT_PRIMARY)],
+        bordercolor=[("focus", DEEMIX_BLUE)],
+        lightcolor=[("focus", DEEMIX_BLUE)],
+        darkcolor=[("focus", DEEMIX_BLUE)],
+    )
+
+    style.configure(
+        "TSpinbox",
+        fieldbackground=DEEMIX_INPUT_BG,
+        background=DEEMIX_CARD_HOVER,
+        foreground=DEEMIX_TEXT_PRIMARY,
+        insertcolor=DEEMIX_TEXT_PRIMARY,
+        arrowcolor=DEEMIX_TEXT_SECONDARY,
+        bordercolor=DEEMIX_CARD_BORDER,
+        lightcolor=DEEMIX_CARD_BORDER,
+        darkcolor=DEEMIX_CARD_BORDER,
+        padding=[6, 3],
+        relief="solid",
+        borderwidth=1,
+    )
+    style.map(
+        "TSpinbox",
+        fieldbackground=[("disabled", "#0c0c12"), ("readonly", DEEMIX_INPUT_BG)],
+        foreground=[("disabled", DEEMIX_TEXT_MUTED)],
+        bordercolor=[("focus", DEEMIX_BLUE)],
+        lightcolor=[("focus", DEEMIX_BLUE)],
+        darkcolor=[("focus", DEEMIX_BLUE)],
+    )
+
+    # Checkbuttons
+    style.configure(
         "TCheckbutton",
-        background=APPLE_CARD_BG,
-        foreground=APPLE_TEXT_PRIMARY,
+        background=DEEMIX_CARD_BG,
+        foreground=DEEMIX_TEXT_PRIMARY,
+        indicatorbackground=DEEMIX_INPUT_BG,
+        indicatorforeground=DEEMIX_BLUE,
+        upperbordercolor=DEEMIX_CARD_BORDER,
+        lowerbordercolor=DEEMIX_CARD_BORDER,
         focuscolor="",
     )
     style.map(
         "TCheckbutton",
-        background=[("active", APPLE_CARD_BG)],
-        foreground=[("active", APPLE_TEXT_PRIMARY)],
+        background=[("active", DEEMIX_CARD_BG)],
+        foreground=[("active", DEEMIX_TEXT_PRIMARY), ("disabled", DEEMIX_TEXT_MUTED)],
+        indicatorbackground=[("selected", DEEMIX_BLUE), ("active", DEEMIX_CARD_HOVER)],
+    )
+    style.configure(
+        "Dark.TCheckbutton",
+        background=DEEMIX_DARK_BG,
+        foreground=DEEMIX_TEXT_PRIMARY,
+        indicatorbackground=DEEMIX_INPUT_BG,
+        indicatorforeground=DEEMIX_BLUE,
+        focuscolor="",
+    )
+    style.map(
+        "Dark.TCheckbutton",
+        background=[("active", DEEMIX_DARK_BG)],
+        foreground=[("active", DEEMIX_TEXT_PRIMARY)],
     )
 
+    # Buttons
     style.configure(
         "TButton",
-        background=APPLE_SIDEBAR_BG,
-        foreground=APPLE_TEXT_PRIMARY,
-        bordercolor=APPLE_CARD_BORDER,
-        font=(text_family, 10),
-        padding=(8, 4),
+        background="#232334",
+        foreground=DEEMIX_TEXT_PRIMARY,
+        bordercolor="#323248",
+        lightcolor="#323248",
+        darkcolor="#323248",
+        font=(text_family, 9),
+        padding=(9, 4),
         relief="solid",
         borderwidth=1,
+        focuscolor="",
     )
     style.map(
         "TButton",
-        background=[("pressed", APPLE_CARD_BORDER), ("active", APPLE_CARD_HOVER), ("disabled", "#21262d")],
-        foreground=[("disabled", "#484f58")],
+        background=[("pressed", "#191926"), ("active", "#2e2e44"), ("disabled", "#171722")],
+        foreground=[("disabled", "#4b5563")],
+        bordercolor=[("active", "#3e3e58"), ("disabled", "#222230")],
+        lightcolor=[("active", "#3e3e58"), ("disabled", "#222230")],
+        darkcolor=[("active", "#3e3e58"), ("disabled", "#222230")],
     )
 
     style.configure(
@@ -225,15 +375,21 @@ def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.
         background=PROGRAM_BLUE,
         foreground="#ffffff",
         bordercolor=PROGRAM_BLUE_HOVER,
-        font=(text_family, 10, "bold"),
+        lightcolor=PROGRAM_BLUE_HOVER,
+        darkcolor=PROGRAM_BLUE_HOVER,
+        font=(text_family, 9, "bold"),
         padding=(12, 5),
         relief="solid",
         borderwidth=1,
+        focuscolor="",
     )
     style.map(
         "Accent.TButton",
-        background=[("pressed", PROGRAM_BLUE_ACTIVE), ("active", PROGRAM_BLUE_HOVER), ("disabled", "#21262d")],
-        foreground=[("disabled", "#484f58")],
+        background=[("pressed", PROGRAM_BLUE_ACTIVE), ("active", PROGRAM_BLUE_HOVER), ("disabled", "#171722")],
+        foreground=[("disabled", "#4b5563")],
+        bordercolor=[("active", PROGRAM_BLUE), ("disabled", "#222230")],
+        lightcolor=[("active", PROGRAM_BLUE), ("disabled", "#222230")],
+        darkcolor=[("active", PROGRAM_BLUE), ("disabled", "#222230")],
     )
 
     style.configure(
@@ -241,63 +397,78 @@ def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.
         background=PROGRAM_BLUE,
         foreground="#ffffff",
         bordercolor=PROGRAM_BLUE_HOVER,
-        font=(text_family, 11, "bold"),
-        padding=(10, 5),
+        lightcolor=PROGRAM_BLUE_HOVER,
+        darkcolor=PROGRAM_BLUE_HOVER,
+        font=(text_family, 10, "bold"),
+        padding=(10, 4),
         relief="solid",
         borderwidth=1,
+        focuscolor="",
     )
     style.map(
         "ApplePlay.TButton",
-        background=[("pressed", PROGRAM_BLUE_ACTIVE), ("active", PROGRAM_BLUE_HOVER), ("disabled", "#21262d")],
-        foreground=[("disabled", "#484f58")],
+        background=[("pressed", PROGRAM_BLUE_ACTIVE), ("active", PROGRAM_BLUE_HOVER), ("disabled", "#171722")],
+        foreground=[("disabled", "#4b5563")],
     )
 
     style.configure(
         "Sidebar.TButton",
-        background=APPLE_SIDEBAR_BG,
-        foreground=APPLE_TEXT_SECONDARY,
-        font=(text_family, 10),
+        background=DEEMIX_SIDEBAR_BG,
+        foreground=DEEMIX_TEXT_SECONDARY,
+        font=(text_family, 9),
         anchor="w",
-        padding=(10, 6),
+        padding=(12, 6),
         relief="flat",
         borderwidth=0,
+        lightcolor=DEEMIX_SIDEBAR_BG,
+        darkcolor=DEEMIX_SIDEBAR_BG,
+        focuscolor="",
     )
     style.map(
         "Sidebar.TButton",
-        background=[("active", APPLE_CARD_HOVER), ("pressed", APPLE_CARD_BORDER)],
-        foreground=[("active", APPLE_TEXT_PRIMARY)],
+        background=[("active", "#1f2032"), ("pressed", "#282a40")],
+        foreground=[("active", DEEMIX_TEXT_PRIMARY)],
     )
 
     style.configure(
         "ActiveSidebar.TButton",
-        background="#1e2238",
+        background="#1d243b",
         foreground=DEEMIX_BLUE,
-        font=(text_family, 10, "bold"),
+        font=(text_family, 9, "bold"),
         anchor="w",
-        padding=(10, 6),
+        padding=(12, 6),
         relief="flat",
         borderwidth=0,
+        lightcolor="#1d243b",
+        darkcolor="#1d243b",
+        focuscolor="",
     )
     style.map(
         "ActiveSidebar.TButton",
-        background=[("active", "#252b46"), ("pressed", "#161b2e")],
+        background=[("active", "#232c47"), ("pressed", "#181e31")],
         foreground=[("active", "#60a5fa")],
     )
 
     style.configure(
         "Chip.TButton",
-        background=DEEMIX_CARD_BG,
+        background="#242436",
         foreground=DEEMIX_TEXT_PRIMARY,
         font=(text_family, 9),
-        padding=(8, 4),
+        padding=(8, 3),
         relief="solid",
         borderwidth=1,
-        bordercolor=DEEMIX_CARD_BORDER,
+        bordercolor="#33334d",
+        lightcolor="#33334d",
+        darkcolor="#33334d",
+        focuscolor="",
     )
     style.map(
         "Chip.TButton",
-        background=[("active", DEEMIX_CARD_HOVER), ("pressed", DEEMIX_CARD_BORDER)],
+        background=[("active", DEEMIX_BLUE), ("pressed", DEEMIX_BLUE_ACTIVE)],
         foreground=[("active", "#ffffff")],
+        bordercolor=[("active", DEEMIX_BLUE)],
+        lightcolor=[("active", DEEMIX_BLUE)],
+        darkcolor=[("active", DEEMIX_BLUE)],
     )
 
     style.configure(
@@ -305,35 +476,166 @@ def configure_modern_styles(root, text_family: str, display_family: str) -> ttk.
         background="#10b981",
         foreground="#ffffff",
         bordercolor="#059669",
-        font=(text_family, 10, "bold"),
+        lightcolor="#059669",
+        darkcolor="#059669",
+        font=(text_family, 9, "bold"),
         padding=(10, 5),
         relief="solid",
         borderwidth=1,
+        focuscolor="",
     )
     style.map(
         "Success.TButton",
-        background=[("pressed", "#047857"), ("active", "#059669"), ("disabled", "#21262d")],
-        foreground=[("disabled", "#484f58")],
+        background=[("pressed", "#047857"), ("active", "#059669"), ("disabled", "#171722")],
+        foreground=[("disabled", "#4b5563")],
     )
 
+    # Progressbar
     style.configure(
         "Horizontal.TProgressbar",
         background=PROGRAM_BLUE,
-        troughcolor="#21262d",
-        bordercolor=APPLE_CARD_BORDER,
-        thickness=8,
+        troughcolor=DEEMIX_INPUT_BG,
+        bordercolor=DEEMIX_CARD_BORDER,
+        lightcolor=PROGRAM_BLUE,
+        darkcolor=PROGRAM_BLUE,
+        thickness=7,
     )
 
+    # Sliders / Scales (Sleek dark sliders instead of beige Windows 95 bars)
+    for scale_style, bg_col in (
+        ("TScale", DEEMIX_DARK_BG),
+        ("Horizontal.TScale", DEEMIX_DARK_BG),
+        ("Sidebar.Horizontal.TScale", DEEMIX_SIDEBAR_BG),
+        ("Card.Horizontal.TScale", DEEMIX_CARD_BG),
+    ):
+        style.configure(
+            scale_style,
+            background=bg_col,
+            troughcolor="#252638",
+            bordercolor=bg_col,
+            lightcolor=DEEMIX_BLUE,
+            darkcolor=DEEMIX_BLUE,
+            sliderlength=14,
+            sliderthickness=8,
+            relief="flat",
+            borderwidth=0,
+        )
+        style.map(
+            scale_style,
+            background=[("active", DEEMIX_BLUE)],
+            troughcolor=[("active", "#2e3048")],
+        )
+
+    # Minimalist Arrowless Dark Scrollbars
+    try:
+        style.layout(
+            "Vertical.TScrollbar",
+            [
+                (
+                    "Vertical.Scrollbar.trough",
+                    {
+                        "children": [("Vertical.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})],
+                        "sticky": "ns",
+                    },
+                )
+            ],
+        )
+        style.layout(
+            "Horizontal.TScrollbar",
+            [
+                (
+                    "Horizontal.Scrollbar.trough",
+                    {
+                        "children": [("Horizontal.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})],
+                        "sticky": "ew",
+                    },
+                )
+            ],
+        )
+    except Exception:
+        pass
+
+    for sb_style in ("TScrollbar", "Vertical.TScrollbar", "Horizontal.TScrollbar"):
+        style.configure(
+            sb_style,
+            background="#2c2d42",
+            troughcolor=DEEMIX_DARK_BG,
+            bordercolor=DEEMIX_DARK_BG,
+            lightcolor=DEEMIX_DARK_BG,
+            darkcolor=DEEMIX_DARK_BG,
+            arrowcolor=DEEMIX_TEXT_SECONDARY,
+            relief="flat",
+            borderwidth=0,
+            width=8,
+        )
+        style.map(
+            sb_style,
+            background=[("active", DEEMIX_BLUE), ("pressed", DEEMIX_BLUE_ACTIVE)],
+        )
+
+    # Panedwindow & Separator (No white grip squares)
+    style.configure("TPanedwindow", background=DEEMIX_DARK_BG)
     style.configure(
-        "TScrollbar",
-        background=APPLE_SIDEBAR_BG,
-        troughcolor=APPLE_DARK_BG,
-        bordercolor=APPLE_CARD_BORDER,
-        arrowcolor=APPLE_TEXT_SECONDARY,
+        "Sash",
+        sashthickness=6,
+        sashpad=1,
+        background=DEEMIX_DARK_BG,
+        bordercolor=DEEMIX_DARK_BG,
+        lightcolor=DEEMIX_DARK_BG,
+        darkcolor=DEEMIX_DARK_BG,
+        handlepad=0,
+        handlesize=0,
         relief="flat",
-        borderwidth=0,
     )
+    style.configure("TSeparator", background=DEEMIX_CARD_BORDER)
+
     return style
+
+
+def harmonize_widget_surfaces(widget, context: str = "dark") -> None:
+    """Recursively align child frame/label/scale styles with their parent card or sidebar surface."""
+    try:
+        cls = widget.winfo_class()
+        st = ""
+        try:
+            st = str(widget.cget("style") or "")
+        except Exception:
+            pass
+
+        if cls == "TLabelframe" or st in {"Card.TFrame", "CardInner.TFrame"}:
+            context = "card"
+        elif st in {"Sidebar.TFrame", "Header.TFrame"}:
+            context = "sidebar"
+        elif st == "CoverBox.TFrame":
+            context = "cover"
+
+        if cls == "TFrame" and not st:
+            if context == "card":
+                widget.configure(style="CardInner.TFrame")
+            elif context == "sidebar":
+                widget.configure(style="Sidebar.TFrame")
+            elif context == "cover":
+                widget.configure(style="CoverBox.TFrame")
+        elif cls == "TLabel" and not st:
+            if context == "card":
+                widget.configure(style="Card.TLabel")
+            elif context == "sidebar":
+                widget.configure(style="Sidebar.TLabel")
+            elif context == "cover":
+                widget.configure(style="Cover.TLabel")
+        elif cls == "TScale" and not st:
+            if context == "card":
+                widget.configure(style="Card.Horizontal.TScale")
+            elif context == "sidebar":
+                widget.configure(style="Sidebar.Horizontal.TScale")
+    except Exception:
+        pass
+
+    try:
+        for child in widget.winfo_children():
+            harmonize_widget_surfaces(child, context)
+    except Exception:
+        pass
 
 
 def format_explicit_badge(explicit: bool = False) -> str:
@@ -394,20 +696,15 @@ def format_quality_badge(quality: str, explicit: bool = False) -> str:
 
 def configure_treeview_status_tags(tree) -> None:
     try:
-        tree.tag_configure("completed", foreground="#10b981")     # Apple Green
-        tree.tag_configure("downloading", foreground=PROGRAM_BLUE)   # Signature Blue
-        tree.tag_configure("pending", foreground="#6366f1")       # Indigo
+        tree.tag_configure("completed", foreground="#10b981")     # Emerald Green
+        tree.tag_configure("downloading", foreground=PROGRAM_BLUE)   # Deemix Electric Blue
+        tree.tag_configure("pending", foreground="#818cf8")       # Soft Indigo
         tree.tag_configure("failed", foreground="#ef4444")        # Crimson Red
-        tree.tag_configure("cancelled", foreground="#64748b")     # Slate Gray
-        tree.tag_configure("interrupted", foreground="#8b5cf6")   # Purple
-        tree.tag_configure("finalizing", foreground="#f59e0b")    # Amber / Gold
-        tree.tag_configure("converting", foreground="#f59e0b")    # Amber
-        tree.tag_configure("skipped", foreground="#94a3b8")       # Muted Gray
-        tree.tag_configure("partial_error", foreground="#f97316") # Orange
-        tree.tag_configure("with_errors", foreground="#f97316")   # Orange
+        tree.tag_configure("cancelled", foreground="#94a3b8")     # Slate Gray
+        tree.tag_configure("odd", background="#161620")           # Subtle Zebra Stripe
+        tree.tag_configure("even", background=DEEMIX_INPUT_BG)    # Base Dark
     except Exception:
         pass
-
 
 
 def desktop_work_area(root) -> tuple[int, int, int, int]:
@@ -433,17 +730,16 @@ def desktop_work_area(root) -> tuple[int, int, int, int]:
 
 def window_dimensions(
     area: tuple[int, int, int, int],
-    max_width: int = 1180,
-    max_height: int = 820,
+    max_width: int = 1280,
+    max_height: int = 840,
 ) -> tuple[int, int, int, int]:
     left, top, right, bottom = area
-    # Leave room for the native title bar, resize borders and desktop margins.
     width = min(max_width, max(1, right - left - 50))
     height = min(max_height, max(1, bottom - top - 80))
     return width, height, left + (right - left - width) // 2, top + 20
 
 
-def fit_window(root, *, max_width: int = 1180, max_height: int = 820) -> None:
+def fit_window(root, *, max_width: int = 1280, max_height: int = 840) -> None:
     width, height, x, y = window_dimensions(
         desktop_work_area(root),
         max_width=max_width,
@@ -460,17 +756,16 @@ class ScrollablePage(ttk.Frame):
         super().__init__(parent)
         self.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
-        self.canvas = Canvas(self, highlightthickness=0, borderwidth=0, takefocus=False, bg=APPLE_DARK_BG)
+        self.canvas = Canvas(self, highlightthickness=0, borderwidth=0, takefocus=False, bg=DEEMIX_DARK_BG)
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self.vertical = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.horizontal = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
         self.canvas.configure(yscrollcommand=self.vertical.set, xscrollcommand=self.horizontal.set)
-        self.body = ttk.Frame(self.canvas, padding=12)
+        self.body = ttk.Frame(self.canvas, padding=10)
         self.window = self.canvas.create_window(0, 0, anchor="nw", window=self.body)
         self.pending = False
         self.body.bind("<Configure>", self._schedule_layout)
         self.canvas.bind("<Configure>", self._schedule_layout)
-        # The toplevel bind tag receives events from the page's children as well.
         self.winfo_toplevel().bind("<MouseWheel>", self._mousewheel, add="+")
         self.winfo_toplevel().bind("<FocusIn>", self._reveal_focus, add="+")
 
@@ -502,8 +797,7 @@ class ScrollablePage(ttk.Frame):
     def _mousewheel(self, event):
         if not self._contains(event.widget) or not self.vertical.winfo_ismapped():
             return
-        # Let editable text widgets / dropdowns keep their own wheel behavior.
-        if event.widget.winfo_class() in {"Text", "TCombobox"}:
+        if event.widget.winfo_class() in {"Text", "TCombobox", "Treeview"}:
             return
         self.canvas.yview_scroll(-int(event.delta / 120), "units")
 
@@ -529,7 +823,7 @@ class ScrollablePage(ttk.Frame):
 
 def wrapping_label(parent, **kwargs):
     label = ttk.Label(parent, width=1, wraplength=480, justify="left", **kwargs)
-    label.pack(fill="x", pady=(0, 6))
+    label.pack(fill="x", pady=(0, 4))
     label.bind("<Configure>", lambda event: label.configure(wraplength=max(1, event.width)))
     return label
 
@@ -575,11 +869,11 @@ class ToolTip:
         ttk.Label(
             self.window,
             text=self.text,
-            padding=(7, 4),
+            padding=(8, 4),
             relief="solid",
             borderwidth=1,
-            background="#21262d",
-            foreground="#f0f6fc",
+            background=DEEMIX_CARD_BG,
+            foreground=DEEMIX_TEXT_PRIMARY,
         ).pack()
 
     def _hide(self, _event=None):
@@ -598,19 +892,20 @@ def add_tooltip(widget, text: str):
 
 
 def build_brand(parent, logo_path, family="Segoe UI"):
-    brand = ttk.Frame(parent)
+    brand = ttk.Frame(parent, style="Header.TFrame")
     # Crop only the blue C² symbol and use it as the product-name initial.
     brand.source_image = PhotoImage(file=str(logo_path))
-    brand.logo_image = PhotoImage(width=36, height=40)
+    brand.logo_image = PhotoImage(width=34, height=36)
     brand.logo_image.tk.call(
         brand.logo_image, "copy", brand.source_image,
         "-from", 58, 48, 305, 327, "-to", 0, 0, "-subsample", 7, 7,
     )
-    ttk.Label(brand, image=brand.logo_image).pack(side="left")
+    ttk.Label(brand, image=brand.logo_image, style="Sidebar.TLabel").pack(side="left")
     ttk.Label(
         brand,
-        text="² - Downloader",
-        font=(family, 15, "bold"),
-        foreground="#172b4d",
+        text="² Downloader",
+        font=(family, 14, "bold"),
+        foreground=DEEMIX_TEXT_PRIMARY,
+        style="Sidebar.TLabel",
     ).pack(side="left", padx=(3, 0))
     return brand

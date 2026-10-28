@@ -76,6 +76,7 @@ class QueueUI:
             self.episode_tree.column(name, width=width, minwidth=width if name != "title" else 130,
                                      stretch=name == "title", anchor="w" if name == "title" else "center")
         self.episode_tree.grid(row=0, column=0, sticky="nsew")
+        table.rowconfigure(0, weight=1)
         table.columnconfigure(0, weight=1)
         ybar = ttk.Scrollbar(table, orient="vertical", command=self.episode_tree.yview)
         ybar.grid(row=0, column=1, sticky="ns")
